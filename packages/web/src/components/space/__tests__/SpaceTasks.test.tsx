@@ -215,9 +215,18 @@ describe('SpaceTasks', () => {
 
 	it('shows empty state for completed tab', () => {
 		mockTasks.value = [makeTask('t1', 'open')];
-		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
-		fireEvent.click(getByText('Completed'));
+		const { getAllByText, getByText } = render(<SpaceTasks spaceId="space-1" />);
+		fireEvent.click(getAllByText('Completed')[0]);
 		expect(getByText('No completed tasks')).toBeTruthy();
+	});
+
+	it('treats legacy archived routes as completed', async () => {
+		mockCurrentSpaceTasksFilterTabSignal.value = 'archived';
+		mockTasks.value = [makeTask('t1', 'archived')];
+		const { findByText, getAllByText } = render(<SpaceTasks spaceId="space-1" />);
+		expect(getAllByText('Completed')[0].className).toContain('text-green-400');
+		expect(await findByText('Task t1')).toBeTruthy();
+		expect(await findByText(/Archived \(1\)/)).toBeTruthy();
 	});
 
 	it('displays tasks in active tab (open + in_progress)', async () => {
@@ -254,8 +263,8 @@ describe('SpaceTasks', () => {
 			makeTask('t2', 'cancelled'),
 			makeTask('t3', 'archived'),
 		];
-		const { getByText, findByText } = render(<SpaceTasks spaceId="space-1" />);
-		fireEvent.click(getByText('Completed'));
+		const { getAllByText, getByText, findByText } = render(<SpaceTasks spaceId="space-1" />);
+		fireEvent.click(getAllByText('Completed')[0]);
 		expect(await findByText('Task t1')).toBeTruthy();
 		expect(await findByText('Task t2')).toBeTruthy();
 		expect(await findByText('Task t3')).toBeTruthy();
@@ -282,17 +291,27 @@ describe('SpaceTasks', () => {
 		expect(text.some((t) => t?.includes('Archived'))).toBe(false);
 	});
 
-	it('shows Scheduled in the mobile More dropdown and navigates when selected', async () => {
-		mockTasks.value = [makeTask('t1', 'open')];
+	it('shows secondary tabs and Scheduled in the mobile More dropdown', async () => {
+		mockTasks.value = [
+			makeTask('t1', 'open'),
+			makeTask('t2', 'draft'),
+			makeTask('t3', 'done'),
+			makeTask('t4', 'archived'),
+		];
 		mockSchedules.value = [makeSchedule('s1')];
 		const { getByLabelText, findByRole } = render(<SpaceTasks spaceId="space-1" />);
 
 		fireEvent.click(getByLabelText('More task tabs'));
+		const draftsItem = await findByRole('menuitem', { name: /Drafts/ });
+		const completedItem = await findByRole('menuitem', { name: /Completed/ });
 		const scheduledItem = await findByRole('menuitem', { name: /Scheduled/ });
+		expect(draftsItem.textContent).toContain('1');
+		expect(completedItem.textContent).toContain('2');
 		expect(scheduledItem.textContent).toContain('1');
-		fireEvent.click(scheduledItem);
 
-		expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('', 'scheduled');
+		fireEvent.click(completedItem);
+
+		expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('', 'completed');
 	});
 
 	it('sorts tasks by updatedAt descending', async () => {
@@ -349,14 +368,14 @@ describe('SpaceTasks', () => {
 
 	it('switches tabs and shows filtered tasks', async () => {
 		mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
-		const { getByText, findByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
+		const { getAllByText, findByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
 
 		// Active tab shows t1
 		expect(await findByText('Task t1')).toBeTruthy();
 		expect(queryByText('Task t2')).toBeNull();
 
 		// Switch to completed
-		fireEvent.click(getByText('Completed'));
+		fireEvent.click(getAllByText('Completed')[0]);
 		expect(await findByText('Task t2')).toBeTruthy();
 		expect(queryByText('Task t1')).toBeNull();
 	});

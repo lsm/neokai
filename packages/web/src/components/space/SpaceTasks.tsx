@@ -20,6 +20,7 @@ import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
 import { Dropdown } from '../ui/Dropdown';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
+type LegacyTaskFilterTab = TaskFilterTab | 'archived';
 
 /** Block reasons that indicate a task needs human attention */
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
@@ -660,7 +661,8 @@ interface SpaceTasksProps {
 export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps) {
 	const tasks = spaceStore.tasks.value;
 	const schedules = spaceStore.schedules.value;
-	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value as TaskFilterTab;
+	const rawActiveTab = currentSpaceTasksFilterTabSignal.value as LegacyTaskFilterTab;
+	const activeTab: TaskFilterTab = rawActiveTab === 'archived' ? 'completed' : rawActiveTab;
 	const spaceId = currentSpaceIdSignal.value ?? '';
 
 	// Load schedules when the tab is switched to 'scheduled' or the active space changes.
@@ -727,9 +729,14 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 		{ key: 'completed', label: 'Completed', count: counts.completed, variant: 'green' },
 	];
 	const overflowTabs: TabConfig[] = [
+		...secondaryTabs,
 		{ key: 'scheduled', label: 'Scheduled', count: counts.scheduled },
 	];
-	const desktopTabs = [...primaryTabs, ...secondaryTabs, ...overflowTabs];
+	const desktopTabs = [
+		...primaryTabs,
+		...secondaryTabs,
+		{ key: 'scheduled' as const, label: 'Scheduled', count: counts.scheduled },
+	];
 
 	return (
 		<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
