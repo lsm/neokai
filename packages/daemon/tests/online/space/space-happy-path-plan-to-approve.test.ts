@@ -24,8 +24,8 @@
  *
  * ## Running
  *
- *   NEOKAI_USE_DEV_PROXY=1 bun test \
- *     packages/daemon/tests/online/space/space-happy-path-plan-to-approve.test.ts
+ *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test \
+ *     ./tests/online/space/space-happy-path-plan-to-approve.test.ts
  *
  * MODES:
  * - Dev Proxy (recommended): NEOKAI_USE_DEV_PROXY=1 — no real Anthropic calls needed
