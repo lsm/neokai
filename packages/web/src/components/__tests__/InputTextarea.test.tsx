@@ -59,89 +59,6 @@ describe('InputTextarea', () => {
 		});
 	});
 
-	describe('Auto-resize viewport safety', () => {
-		it('defers textarea resize while keyboard is open on touch Safari', () => {
-			Object.defineProperty(navigator, 'userAgent', {
-				configurable: true,
-				value:
-					'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1',
-			});
-			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
-			document.documentElement.classList.add('keyboard-open');
-
-			const originalRequestAnimationFrame = window.requestAnimationFrame;
-			const originalCancelAnimationFrame = window.cancelAnimationFrame;
-			const callbacks: FrameRequestCallback[] = [];
-			window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-				callbacks.push(callback);
-				return callbacks.length;
-			});
-			window.cancelAnimationFrame = vi.fn();
-
-			const { container, rerender } = render(
-				<InputTextarea
-					content="one line"
-					onContentChange={() => {}}
-					onKeyDown={() => {}}
-					onSubmit={() => {}}
-				/>
-			);
-			const textarea = container.querySelector('textarea')!;
-			Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 120 });
-			textarea.style.height = '40px';
-
-			rerender(
-				<InputTextarea
-					content="one line\ntwo lines\nthree lines"
-					onContentChange={() => {}}
-					onKeyDown={() => {}}
-					onSubmit={() => {}}
-				/>
-			);
-
-			expect(textarea.style.height).toBe('40px');
-			expect(window.requestAnimationFrame).toHaveBeenCalled();
-
-			callbacks.at(-1)?.(performance.now());
-			expect(textarea.style.height).toBe('120px');
-
-			window.requestAnimationFrame = originalRequestAnimationFrame;
-			window.cancelAnimationFrame = originalCancelAnimationFrame;
-		});
-
-		it('continues growing textarea while keyboard is open on non-Safari browsers', () => {
-			Object.defineProperty(navigator, 'userAgent', {
-				configurable: true,
-				value:
-					'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',
-			});
-			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
-			document.documentElement.classList.add('keyboard-open');
-
-			const { container, rerender } = render(
-				<InputTextarea
-					content="one line"
-					onContentChange={() => {}}
-					onKeyDown={() => {}}
-					onSubmit={() => {}}
-				/>
-			);
-			const textarea = container.querySelector('textarea')!;
-			Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 120 });
-
-			rerender(
-				<InputTextarea
-					content="one line\ntwo lines\nthree lines"
-					onContentChange={() => {}}
-					onKeyDown={() => {}}
-					onSubmit={() => {}}
-				/>
-			);
-
-			expect(textarea.style.height).toBe('120px');
-		});
-	});
-
 	describe('Input Handling - Bug Fix Coverage', () => {
 		it('should call onContentChange with new value when typing', () => {
 			const onContentChange = vi.fn(() => {});
@@ -1005,28 +922,18 @@ describe('InputTextarea', () => {
 		});
 	});
 
-	describe('Auto-resize timing (autoscroll race regression)', () => {
-		/**
-		 * Regression test for: messages appearing behind the chat composer
-		 * when sending multiline messages with autoscroll enabled.
-		 *
-		 * Root cause: the textarea height was previously updated inside a
-		 * requestAnimationFrame callback (one frame later). When a new message
-		 * caused the parent to recompute scroll/footer padding, the footer height
-		 * still reflected the OLD textarea size, so the scroller stopped short
-		 * and the new message was hidden behind the composer.
-		 *
-		 * Fix: switched to useLayoutEffect with a synchronous height update so
-		 * onHeightChange fires before the browser paints — the parent's
-		 * syncMessagesContainerPadding always sees the up-to-date footer height.
-		 *
-		 * What this test guarantees:
-		 * - onHeightChange is invoked synchronously during render commit
-		 *   (no rAF, no setTimeout). If anyone reverts to a deferred resize,
-		 *   this test fails.
-		 */
-		it('invokes onHeightChange synchronously when content changes', () => {
+	describe('Auto-resize timing', () => {
+		it('defers onHeightChange until the next animation frame when content changes', () => {
 			const onHeightChange = vi.fn();
+			const callbacks: FrameRequestCallback[] = [];
+			const originalRequestAnimationFrame = window.requestAnimationFrame;
+			const originalCancelAnimationFrame = window.cancelAnimationFrame;
+			window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+				callbacks.push(callback);
+				return callbacks.length;
+			});
+			window.cancelAnimationFrame = vi.fn();
+
 			const { rerender } = render(
 				<InputTextarea
 					content="line one"
@@ -1036,8 +943,6 @@ describe('InputTextarea', () => {
 					onHeightChange={onHeightChange}
 				/>
 			);
-
-			// Cleared after initial mount so we can observe the next pass cleanly
 			onHeightChange.mockClear();
 
 			rerender(
@@ -1050,23 +955,12 @@ describe('InputTextarea', () => {
 				/>
 			);
 
-			// Must be called synchronously — no awaiting frames or timers.
+			expect(onHeightChange).not.toHaveBeenCalled();
+			callbacks.at(-1)?.(performance.now());
 			expect(onHeightChange).toHaveBeenCalled();
-		});
 
-		it('invokes onHeightChange on initial mount (sync, before paint)', () => {
-			const onHeightChange = vi.fn();
-			render(
-				<InputTextarea
-					content="hello"
-					onContentChange={() => {}}
-					onKeyDown={() => {}}
-					onSubmit={() => {}}
-					onHeightChange={onHeightChange}
-				/>
-			);
-
-			expect(onHeightChange).toHaveBeenCalled();
+			window.requestAnimationFrame = originalRequestAnimationFrame;
+			window.cancelAnimationFrame = originalCancelAnimationFrame;
 		});
 	});
 });

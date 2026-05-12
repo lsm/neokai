@@ -27,7 +27,6 @@
 import type { ComponentChildren } from 'preact';
 import type { MutableRef } from 'preact/hooks';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { isTouchSafari } from '../lib/browser-detection.ts';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
@@ -114,8 +113,6 @@ export function InputTextarea({
 }: InputTextareaProps) {
 	const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const textareaRef = externalTextareaRef ?? internalTextareaRef;
-	const shouldDeferKeyboardResizeRef = useRef(isTouchSafari());
-	const resizeFrameRef = useRef<number | null>(null);
 	const [isMultiline, setIsMultiline] = useState(false);
 
 	// Sync content prop to textarea DOM only when they differ
@@ -147,48 +144,26 @@ export function InputTextarea({
 	}, [content]);
 
 	// Auto-resize textarea.
-	// Uses useLayoutEffect so the height is recalculated synchronously
-	// before paint. This ensures the composer padding (driven by
-	// syncMessagesContainerPadding in MessageInput) always measures the
-	// correct footer height before auto-scroll fires on a new message.
-	useLayoutEffect(() => {
+	// Uses requestAnimationFrame to avoid forcing synchronous layout while the
+	// browser is processing textarea input/caret changes. This is especially
+	// important on iOS Safari, where pre-paint footer height changes can trigger
+	// page/browser-chrome re-anchoring while the keyboard is open.
+	useEffect(() => {
 		const textarea = textareaRef.current;
 		if (!textarea) return;
 
-		const resizeTextarea = () => {
-			textarea.style.height = 'auto';
-			textarea.style.minHeight = '40px';
+		textarea.style.height = 'auto';
+		textarea.style.minHeight = '40px';
+
+		const rafId = requestAnimationFrame(() => {
 			const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
 			textarea.style.height = `${newHeight}px`;
 			setIsMultiline(newHeight > 45);
 			onHeightChange?.(newHeight);
-		};
+		});
 
-		if (
-			shouldDeferKeyboardResizeRef.current &&
-			document.documentElement.classList.contains('keyboard-open')
-		) {
-			if (resizeFrameRef.current !== null) {
-				cancelAnimationFrame(resizeFrameRef.current);
-			}
-			resizeFrameRef.current = requestAnimationFrame(() => {
-				resizeFrameRef.current = null;
-				resizeTextarea();
-			});
-			return;
-		}
-
-		resizeTextarea();
+		return () => cancelAnimationFrame(rafId);
 	}, [content, onHeightChange]);
-
-	useEffect(() => {
-		return () => {
-			if (resizeFrameRef.current !== null) {
-				cancelAnimationFrame(resizeFrameRef.current);
-				resizeFrameRef.current = null;
-			}
-		};
-	}, []);
 
 	// Focus on mount
 	useEffect(() => {
