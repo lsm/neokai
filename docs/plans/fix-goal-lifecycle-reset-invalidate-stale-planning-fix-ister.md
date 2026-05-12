@@ -210,7 +210,7 @@ All four fixes target three existing files with well-established patterns. A new
      - Creates a goal, transitions it to `needs_human` status
      - Updates `description` via `update_goal`
      - Asserts via `goal.get` RPC: `status === 'active'`
-4. Run the new test with `NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/room/goal-lifecycle-reset.test.ts` to verify it passes.
+4. Run the new test with `cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/room/goal-lifecycle-reset.test.ts` to verify it passes.
 5. Run `bun run check` to verify lint, typecheck, and knip pass.
 6. Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 

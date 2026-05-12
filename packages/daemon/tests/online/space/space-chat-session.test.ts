@@ -10,7 +10,7 @@
  *
  * ## Running
  *
- *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/space/space-chat-session.test.ts
+ *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/space/space-chat-session.test.ts
  *
  * MODES:
  * - Dev Proxy (recommended): Set NEOKAI_USE_DEV_PROXY=1 for offline testing

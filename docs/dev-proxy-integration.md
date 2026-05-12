@@ -13,7 +13,7 @@ Dev Proxy is a Microsoft tool that intercepts HTTP requests and can return mock 
 For daemon online tests, use:
 
 ```bash
-NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts
 ```
 
 When `NEOKAI_USE_DEV_PROXY=1` is enabled in the daemon test helper:
@@ -35,7 +35,7 @@ To confirm requests were mocked:
 
 ```bash
 # Optional: persist logs to .devproxy/devproxy.log when helper stops proxy
-NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+cd packages/daemon && NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts
 tail -n 120 .devproxy/devproxy.log
 
 # Or read directly from devproxy
@@ -288,7 +288,7 @@ export NODE_USE_ENV_PROXY=1
 export NODE_EXTRA_CA_CERTS=~/.proxy/rootCA.pem
 
 # Run tests
-NEOKAI_TEST_ONLINE=true bun test packages/daemon/tests/online/
+cd packages/daemon && NEOKAI_TEST_ONLINE=true bun test ./tests/online/
 ```
 
 ### Using NEOKAI_USE_DEV_PROXY Environment Variable
@@ -305,7 +305,7 @@ To use it:
 
 ```bash
 # Run tests with Dev Proxy (the helper starts/stops proxy automatically)
-NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/agent/agent-session-sdk.test.ts
+cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
 ```
 
 This approach is cleaner than manually setting `HTTP_PROXY` and `HTTPS_PROXY`.
@@ -327,7 +327,7 @@ The existing `NEOKAI_AGENT_SDK_MOCK=1` mode continues to work for backwards comp
 
 ```bash
 # Old approach (still works)
-NEOKAI_AGENT_SDK_MOCK=1 bun test packages/daemon/tests/online/agent/agent-session-sdk.test.ts
+cd packages/daemon && NEOKAI_AGENT_SDK_MOCK=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
 ```
 
 ### Integration with NeoKai Codebase

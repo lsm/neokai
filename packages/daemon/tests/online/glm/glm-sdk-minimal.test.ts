@@ -7,7 +7,7 @@
  * - 'default' (sonnet) model → GLM-5
  * - 'opus' model → GLM-5
  *
- * Run with: GLM_API_KEY=xxx bun test packages/daemon/tests/online/glm/glm-sdk-minimal.test.ts
+ * Run with: cd packages/daemon && GLM_API_KEY=xxx bun test ./tests/online/glm/glm-sdk-minimal.test.ts
  *
  * KEY FINDINGS:
  * 1. SDK works with GLM via ANTHROPIC_AUTH_TOKEN env var (in parent process)

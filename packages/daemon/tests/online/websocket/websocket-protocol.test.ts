@@ -13,7 +13,7 @@
  * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
  *
  * Run with Dev Proxy:
- *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/websocket/websocket-protocol.test.ts
+ *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/websocket/websocket-protocol.test.ts
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
