@@ -9,7 +9,6 @@ import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:te
 import { SessionManager, CleanupState } from '../../../../src/lib/session/session-manager';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -24,7 +23,6 @@ describe('SessionManager', () => {
 	let mockMessageHub: MessageHub;
 	let mockAuthManager: AuthManager;
 	let mockSettingsManager: SettingsManager;
-	let mockDaemonHub: DaemonHub;
 	let mockInternalEventBus: InternalEventBus<any>;
 	let mockJobQueue: JobQueueRepository;
 	let mockJobProcessor: JobQueueProcessor;
@@ -100,14 +98,6 @@ describe('SessionManager', () => {
 		} as unknown as SettingsManager;
 
 		// Event bus mocks - capture handlers for testing
-		mockDaemonHub = {
-			on: mock((event: string, handler: (...args: unknown[]) => unknown) => {
-				eventHandlers.set(event, handler);
-				return () => eventHandlers.delete(event);
-			}),
-			emit: mock(async () => {}),
-			initialize: mock(async () => {}),
-		} as unknown as DaemonHub;
 		mockInternalEventBus = {
 			publish: mock(async () => {}),
 			publishAsync: mock(() => {}),
@@ -144,13 +134,12 @@ describe('SessionManager', () => {
 			mockMessageHub,
 			mockAuthManager,
 			mockSettingsManager,
-			mockDaemonHub,
+			mockInternalEventBus,
 			config as Parameters<typeof SessionManager>[5],
 			mockJobQueue,
 			mockJobProcessor,
 			undefined, // skillsManager
-			undefined, // appMcpServerRepo
-			mockInternalEventBus
+			undefined // appMcpServerRepo
 		);
 	});
 
@@ -391,7 +380,7 @@ describe('SessionManager', () => {
 		it('should emit session.updated event', async () => {
 			await sessionManager.updateSession('test-id', { title: 'Updated' });
 
-			expect(mockDaemonHub.emit).toHaveBeenCalledWith(
+			expect(mockInternalEventBus.publish).toHaveBeenCalledWith(
 				'session.updated',
 				expect.objectContaining({
 					sessionId: 'test-id',
@@ -657,11 +646,10 @@ describe('SessionManager', () => {
 			expect(mockDb.deleteMessagesAfter).not.toHaveBeenCalled();
 			expect(mockDb.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
 			expect(cleanupSpy).toHaveBeenCalled();
-			expect(mockDaemonHub.emit).toHaveBeenCalledWith('session.errorClear', {
+			expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.errorClear', {
 				sessionId: 'test-id',
 			});
 			expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.reset', {
-				namespaceId: 'test-id',
 				sessionId: 'test-id',
 				session: expect.objectContaining({ id: 'test-id' }),
 				restartQuery: false,
@@ -734,7 +722,6 @@ describe('SessionManager', () => {
 				expect(result).toEqual({ success: true });
 				expect(freshSession).not.toBe(oldSession);
 				expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.reset', {
-					namespaceId: 'test-id',
 					sessionId: 'test-id',
 					session: expect.objectContaining({ id: 'test-id' }),
 					restartQuery: true,
@@ -843,7 +830,7 @@ describe('SessionManager', () => {
 		});
 	});
 
-	describe('DaemonHub subscriptions', () => {
+	describe('InternalEventBus subscriptions', () => {
 		describe('message.persisted handler', () => {
 			it('should handle message persisted events', async () => {
 				const handler = eventHandlers.get('message.persisted');

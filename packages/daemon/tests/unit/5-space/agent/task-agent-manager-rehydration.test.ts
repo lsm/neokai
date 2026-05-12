@@ -26,16 +26,21 @@ import type { Space } from '@neokai/shared';
 import type { AgentProcessingState } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
-// Minimal in-process DaemonHub for tests
+// Minimal in-process InternalEventBus for tests
 // ---------------------------------------------------------------------------
 
 type EventHandler = (data: Record<string, unknown>) => void;
 
-class TestDaemonHub {
+class TestInternalEventBus {
 	private listeners = new Map<string, Map<string, EventHandler>>();
 
-	on(event: string, handler: EventHandler, opts?: { sessionId?: string }): () => void {
-		const key = opts?.sessionId ? `${event}:${opts.sessionId}` : `${event}:*`;
+	subscribe(
+		event: string,
+		handler: EventHandler,
+		opts?: { sessionId?: string; namespaceId?: string; subscriberName?: string }
+	): () => void {
+		const scope = opts?.sessionId ?? opts?.namespaceId;
+		const key = scope ? `${event}:${scope}` : `${event}:*`;
 		if (!this.listeners.has(key)) {
 			this.listeners.set(key, new Map());
 		}
@@ -46,7 +51,10 @@ class TestDaemonHub {
 		};
 	}
 
-	emit(event: string, data: Record<string, unknown>): Promise<void> {
+	async publish(
+		event: string,
+		data: Record<string, unknown>
+	): Promise<{ delivered: number; failures: [] }> {
 		const sessionId = (data as { sessionId?: string }).sessionId;
 		if (sessionId) {
 			const key = `${event}:${sessionId}`;
@@ -57,7 +65,11 @@ class TestDaemonHub {
 		for (const handler of this.listeners.get(`${event}:*`)?.values() ?? []) {
 			handler(data);
 		}
-		return Promise.resolve();
+		return { delivered: 0, failures: [] };
+	}
+
+	publishAsync(event: string, data: Record<string, unknown>): void {
+		void this.publish(event, data);
 	}
 }
 
@@ -214,7 +226,7 @@ interface TestCtx {
 	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	workflowManager: SpaceWorkflowManager;
-	daemonHub: TestDaemonHub;
+	internalEventBus: TestInternalEventBus;
 	sessionManagerDeleteCalls: string[];
 	registeredSessions: string[];
 	mockDb: {
@@ -258,7 +270,7 @@ function makeCtx(): TestCtx {
 		taskRepo,
 		nodeExecutionRepo,
 	});
-	const daemonHub = new TestDaemonHub();
+	const internalEventBus = new TestInternalEventBus();
 	const space = makeSpace(spaceId, workspacePath);
 
 	const createdSessions = new Map<string, MockAgentSession>();
@@ -335,7 +347,7 @@ function makeCtx(): TestCtx {
 			mockSpaceRuntimeService as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 		taskRepo,
 		workflowRunRepo,
-		daemonHub: daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+		internalEventBus: internalEventBus as never,
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
@@ -352,7 +364,7 @@ function makeCtx(): TestCtx {
 		nodeExecutionRepo,
 		taskManager,
 		workflowManager,
-		daemonHub,
+		internalEventBus,
 		sessionManagerDeleteCalls,
 		registeredSessions,
 		mockDb,
@@ -749,7 +761,7 @@ describe('TaskAgentManager.rehydrateSubSession (lazy rehydration)', () => {
 		expect(taskAgentSession).toBeDefined();
 		const msgsBefore = taskAgentSession._enqueuedMessages.length;
 
-		ctx.daemonHub.emit('session.updated', {
+		ctx.internalEventBus.publish('session.updated', {
 			sessionId: subSessionId,
 			processingState: { status: 'idle' },
 		});

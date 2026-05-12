@@ -39,17 +39,22 @@ import type { AgentProcessingState } from '@neokai/shared';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
 
 // ---------------------------------------------------------------------------
-// Minimal in-process DaemonHub
+// Minimal in-process InternalEventBus
 // ---------------------------------------------------------------------------
 
 type EventHandler = (data: Record<string, unknown>) => void;
 
-class TestDaemonHub {
+class TestInternalEventBus {
 	private listeners = new Map<string, Map<string, EventHandler>>();
 	readonly emitted: Array<{ event: string; data: Record<string, unknown> }> = [];
 
-	on(event: string, handler: EventHandler, opts?: { sessionId?: string }): () => void {
-		const key = opts?.sessionId ? `${event}:${opts.sessionId}` : `${event}:*`;
+	subscribe(
+		event: string,
+		handler: EventHandler,
+		opts?: { sessionId?: string; namespaceId?: string; subscriberName?: string }
+	): () => void {
+		const scope = opts?.sessionId ?? opts?.namespaceId;
+		const key = scope ? `${event}:${scope}` : `${event}:*`;
 		if (!this.listeners.has(key)) this.listeners.set(key, new Map());
 		const id = Math.random().toString(36).slice(2);
 		this.listeners.get(key)!.set(id, handler);
@@ -58,7 +63,10 @@ class TestDaemonHub {
 		};
 	}
 
-	emit(event: string, data: Record<string, unknown>): Promise<void> {
+	async publish(
+		event: string,
+		data: Record<string, unknown>
+	): Promise<{ delivered: number; failures: [] }> {
 		this.emitted.push({ event, data });
 		const sessionId = (data as { sessionId?: string }).sessionId;
 		if (sessionId) {
@@ -66,7 +74,11 @@ class TestDaemonHub {
 			for (const handler of this.listeners.get(key)?.values() ?? []) handler(data);
 		}
 		for (const handler of this.listeners.get(`${event}:*`)?.values() ?? []) handler(data);
-		return Promise.resolve();
+		return { delivered: 0, failures: [] };
+	}
+
+	publishAsync(event: string, data: Record<string, unknown>): void {
+		void this.publish(event, data);
 	}
 }
 
@@ -285,7 +297,7 @@ function makeCtx(): TestCtx {
 		taskRepo,
 		nodeExecutionRepo,
 	});
-	const daemonHub = new TestDaemonHub();
+	const internalEventBus = new TestInternalEventBus();
 	const space = makeSpace(spaceId, workspacePath);
 
 	const createdSessions = new Map<string, MockAgentSession>();
@@ -346,7 +358,7 @@ function makeCtx(): TestCtx {
 		taskRepo,
 		workflowRunRepo,
 		nodeExecutionRepo,
-		daemonHub: daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+		internalEventBus: internalEventBus as never,
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',

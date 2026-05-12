@@ -328,6 +328,10 @@ interface MockInternalEventBus {
 function makeMockInternalEventBus(): MockInternalEventBus {
 	const emittedEvents: Array<{ name: string; payload: Record<string, unknown> }> = [];
 	const bus = {
+		publish: mock(async (name: string, payload: Record<string, unknown>) => {
+			emittedEvents.push({ name, payload });
+			return { delivered: 0, failures: [] };
+		}),
 		publishAsync: mock((name: string, payload: Record<string, unknown>) => {
 			emittedEvents.push({ name, payload });
 		}),

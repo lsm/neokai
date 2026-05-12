@@ -130,7 +130,6 @@ import {
 	type SessionLifecycleConfig,
 } from '../../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import type { SessionCache, AgentSessionFactory } from '../../../../src/lib/session/session-cache';
@@ -144,7 +143,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
 	let mockInternalEventBus: InternalEventBus<any>;
-	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -218,17 +216,10 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 		mockAgentSessionFactory = mock(() => mockAgentSession) as unknown as AgentSessionFactory;
 
 		mockInternalEventBus = {
-			on: mock(() => () => {}),
 			publish: mock(async () => {}),
 			publishAsync: mock(() => {}),
 			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
 		} as unknown as InternalEventBus<any>;
-
-		mockDaemonHub = {
-			emit: mock(async () => {}),
-			on: mock(() => {}),
-			off: mock(() => {}),
-		} as unknown as DaemonHub;
 
 		mockMessageHub = {
 			event: mock(async () => {}),
@@ -253,12 +244,11 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
+			mockInternalEventBus,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
-			mockAgentSessionFactory,
-			mockInternalEventBus,
-			mockDaemonHub
+			mockAgentSessionFactory
 		);
 	});
 

@@ -24,7 +24,6 @@ import type { SpaceTaskRepository } from '../../../../src/storage/repositories/s
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub.ts';
 import type { McpServerConfig, Session, Space } from '@neokai/shared';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -34,7 +33,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { SpaceAgentManager as AgentMgr } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
-import { createTestDaemonHub } from '../../../helpers/database.ts';
+import { createTestInternalEventBus } from '../../../helpers/database.ts';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -427,7 +426,8 @@ describe('SpaceRuntimeService', () => {
 
 		function buildConfigWithSession(
 			sessionManager: SessionManager,
-			spaceManager: SpaceManager = createMockSpaceManager()
+			spaceManager: SpaceManager = createMockSpaceManager(),
+			internalEventBus?: SpaceRuntimeServiceConfig['internalEventBus']
 		): SpaceRuntimeServiceConfig {
 			return {
 				db: {} as BunDatabase,
@@ -438,6 +438,7 @@ describe('SpaceRuntimeService', () => {
 				taskRepo: {} as SpaceTaskRepository,
 				tickIntervalMs: 60_000,
 				sessionManager,
+				internalEventBus,
 			};
 		}
 
@@ -555,23 +556,24 @@ describe('SpaceRuntimeService', () => {
 			await svc.stop();
 		});
 
-		test('start() subscribes to space.created events when daemonHub provided', async () => {
+		test('start() subscribes to space.created events when internalEventBus provided', async () => {
 			const session = makeSession();
 			const sessionManager = makeSessionManager(session);
-			const daemonHub: DaemonHub = {
-				on: mock(() => () => {}),
-				emit: mock(async () => {}),
-			} as unknown as DaemonHub;
+			const internalEventBus = {
+				subscribe: mock(() => () => {}),
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
+				publishAsync: mock(() => {}),
+			} as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
 			const config: SpaceRuntimeServiceConfig = {
-				...buildConfigWithSession(sessionManager),
-				daemonHub,
+				...buildConfigWithSession(sessionManager, createMockSpaceManager(), internalEventBus),
 			};
 			const svc = new SpaceRuntimeService(config);
 
 			svc.start();
 
-			// DaemonHub.on should have been called with 'space.created'
-			const onCalls = (daemonHub.on as Mock<typeof daemonHub.on>).mock.calls;
+			// InternalEventBus.on should have been called with 'space.created'
+			const onCalls = (internalEventBus.subscribe as Mock<typeof internalEventBus.subscribe>).mock
+				.calls;
 			const spaceCreatedCall = onCalls.find(([event]) => event === 'space.created');
 			expect(spaceCreatedCall).toBeDefined();
 
@@ -591,13 +593,17 @@ describe('SpaceRuntimeService', () => {
 					return () => {};
 				}),
 			} as unknown as SessionManager;
-			const daemonHub: DaemonHub = {
-				on: mock(() => () => {}),
-				emit: mock(async () => {}),
-			} as unknown as DaemonHub;
+			const internalEventBus = {
+				subscribe: mock(() => () => {}),
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
+				publishAsync: mock(() => {}),
+			} as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
 			const config: SpaceRuntimeServiceConfig = {
-				...buildConfigWithSession(sessionManagerWithSubscriber),
-				daemonHub,
+				...buildConfigWithSession(
+					sessionManagerWithSubscriber,
+					createMockSpaceManager(),
+					internalEventBus
+				),
 			};
 			const svc = new SpaceRuntimeService(config);
 
@@ -630,26 +636,26 @@ describe('SpaceRuntimeService', () => {
 			const unsubFn = mock(() => {});
 			const session = makeSession();
 			const sessionManager = makeSessionManager(session);
-			const daemonHub: DaemonHub = {
-				on: mock(() => unsubFn as unknown as () => void),
-				emit: mock(async () => {}),
-			} as unknown as DaemonHub;
+			const internalEventBus = {
+				subscribe: mock(() => unsubFn as unknown as () => void),
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
+				publishAsync: mock(() => {}),
+			} as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
 			const config: SpaceRuntimeServiceConfig = {
-				...buildConfigWithSession(sessionManager),
-				daemonHub,
+				...buildConfigWithSession(sessionManager, createMockSpaceManager(), internalEventBus),
 			};
 			const svc = new SpaceRuntimeService(config);
 
 			svc.start();
 			await svc.stop();
 
-			// Seven DaemonHub subscriptions are registered: space.created,
+			// Seven InternalEventBus subscriptions are registered: space.created,
 			// spaceWorkflow.updated (mid-run gate poll refresh), session.created,
 			// session.deleted (which releases per-session db-query servers),
 			// space.archived, space.deleted (tear down notification services),
 			// and space.updated (refresh autonomy level).
 			// Hard-reset reprovisioning uses SessionManager's awaited in-process
-			// subscriber instead of DaemonHub.
+			// subscriber instead of InternalEventBus.
 			expect(unsubFn).toHaveBeenCalledTimes(7);
 		});
 	});
@@ -846,7 +852,7 @@ describe('SpaceRuntimeService', () => {
 		});
 	});
 
-	// ─── daemonHub session.created subscription regression (Task #137) ───────
+	// ─── internalEventBus session.created subscription regression (Task #137) ───────
 	//
 	// Before this fix, subscribeToSpaceEvents() registered the session.created
 	// and session.deleted handlers with `{ sessionId: 'global' }`. TypedHub
@@ -859,10 +865,10 @@ describe('SpaceRuntimeService', () => {
 	// coder / room_chat / general sessions silently came up missing
 	// `space-agent-tools` and `db-query`.
 	//
-	// These tests use a real DaemonHub so the bug reproduces end-to-end if the
+	// These tests use a real InternalEventBus so the bug reproduces end-to-end if the
 	// `{ sessionId: 'global' }` filter is reintroduced.
 
-	describe('daemonHub session.created subscription (Task #137 regression)', () => {
+	describe('internalEventBus session.created subscription (Task #137 regression)', () => {
 		function makeMemberAgentSession() {
 			return {
 				mergeRuntimeMcpServers: mock((_: Record<string, McpServerConfig>) => {}),
@@ -887,14 +893,14 @@ describe('SpaceRuntimeService', () => {
 			} as unknown as Session;
 		}
 
-		test('attaches space-agent-tools when daemonHub emits session.created with a UUID sessionId', async () => {
+		test('attaches space-agent-tools when internalEventBus emits session.created with a UUID sessionId', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = {
 				getSessionAsync: mock(async () => agent),
 				listSessions: mock(() => [] as Session[]),
 			} as unknown as SessionManager;
 
-			const daemonHub = await createTestDaemonHub('space-rts-test-created');
+			const internalEventBus = await createTestInternalEventBus('space-rts-test-created');
 			const svc = new SpaceRuntimeService({
 				db: {} as BunDatabase,
 				spaceManager: createMockSpaceManager(mockSpace),
@@ -904,7 +910,7 @@ describe('SpaceRuntimeService', () => {
 				taskRepo: {} as SpaceTaskRepository,
 				tickIntervalMs: 60_000,
 				sessionManager,
-				daemonHub,
+				internalEventBus,
 			});
 			svc.start();
 
@@ -912,7 +918,7 @@ describe('SpaceRuntimeService', () => {
 			// Emit with the actual session UUID — exactly what SessionLifecycle.create
 			// does. With the broken `{ sessionId: 'global' }` filter, neither
 			// dispatchLocally nor the cross-transport hubHandler matches this.
-			await daemonHub.emit('session.created', { sessionId: session.id, session });
+			await internalEventBus.publish('session.created', { sessionId: session.id, session });
 
 			// Allow microtasks to flush (dispatchLocally schedules via queueMicrotask
 			// and does not await the async handler).
@@ -924,7 +930,6 @@ describe('SpaceRuntimeService', () => {
 			expect(additional).toHaveProperty('space-agent-tools');
 
 			await svc.stop();
-			await daemonHub.close();
 		});
 
 		test('does NOT attach for sessions without context.spaceId (non-space sessions)', async () => {
@@ -934,7 +939,7 @@ describe('SpaceRuntimeService', () => {
 				listSessions: mock(() => [] as Session[]),
 			} as unknown as SessionManager;
 
-			const daemonHub = await createTestDaemonHub('space-rts-test-non-space');
+			const internalEventBus = await createTestInternalEventBus('space-rts-test-non-space');
 			const svc = new SpaceRuntimeService({
 				db: {} as BunDatabase,
 				spaceManager: createMockSpaceManager(mockSpace),
@@ -944,12 +949,12 @@ describe('SpaceRuntimeService', () => {
 				taskRepo: {} as SpaceTaskRepository,
 				tickIntervalMs: 60_000,
 				sessionManager,
-				daemonHub,
+				internalEventBus,
 			});
 			svc.start();
 
 			const nonSpaceSession = makeMemberSession({ context: undefined });
-			await daemonHub.emit('session.created', {
+			await internalEventBus.publish('session.created', {
 				sessionId: nonSpaceSession.id,
 				session: nonSpaceSession,
 			});
@@ -958,7 +963,6 @@ describe('SpaceRuntimeService', () => {
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 
 			await svc.stop();
-			await daemonHub.close();
 		});
 
 		test('does NOT attach for space_chat sessions (handled by setupSpaceAgentSession)', async () => {
@@ -968,7 +972,7 @@ describe('SpaceRuntimeService', () => {
 				listSessions: mock(() => [] as Session[]),
 			} as unknown as SessionManager;
 
-			const daemonHub = await createTestDaemonHub('space-rts-test-space-chat');
+			const internalEventBus = await createTestInternalEventBus('space-rts-test-space-chat');
 			const svc = new SpaceRuntimeService({
 				db: {} as BunDatabase,
 				spaceManager: createMockSpaceManager(mockSpace),
@@ -978,7 +982,7 @@ describe('SpaceRuntimeService', () => {
 				taskRepo: {} as SpaceTaskRepository,
 				tickIntervalMs: 60_000,
 				sessionManager,
-				daemonHub,
+				internalEventBus,
 			});
 			svc.start();
 
@@ -986,7 +990,7 @@ describe('SpaceRuntimeService', () => {
 				type: 'space_chat',
 				id: `space:chat:${mockSpace.id}`,
 			});
-			await daemonHub.emit('session.created', {
+			await internalEventBus.publish('session.created', {
 				sessionId: chatSession.id,
 				session: chatSession,
 			});
@@ -995,7 +999,6 @@ describe('SpaceRuntimeService', () => {
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 
 			await svc.stop();
-			await daemonHub.close();
 		});
 
 		test('does NOT attach for space_task_agent sessions (handled by TaskAgentManager)', async () => {
@@ -1005,7 +1008,7 @@ describe('SpaceRuntimeService', () => {
 				listSessions: mock(() => [] as Session[]),
 			} as unknown as SessionManager;
 
-			const daemonHub = await createTestDaemonHub('space-rts-test-task-agent');
+			const internalEventBus = await createTestInternalEventBus('space-rts-test-task-agent');
 			const svc = new SpaceRuntimeService({
 				db: {} as BunDatabase,
 				spaceManager: createMockSpaceManager(mockSpace),
@@ -1015,12 +1018,12 @@ describe('SpaceRuntimeService', () => {
 				taskRepo: {} as SpaceTaskRepository,
 				tickIntervalMs: 60_000,
 				sessionManager,
-				daemonHub,
+				internalEventBus,
 			});
 			svc.start();
 
 			const taskAgentSession = makeMemberSession({ type: 'space_task_agent' });
-			await daemonHub.emit('session.created', {
+			await internalEventBus.publish('session.created', {
 				sessionId: taskAgentSession.id,
 				session: taskAgentSession,
 			});
@@ -1029,7 +1032,6 @@ describe('SpaceRuntimeService', () => {
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 
 			await svc.stop();
-			await daemonHub.close();
 		});
 
 		test('does NOT attach for workflow node-agent sub-sessions (session ID contains :task:…:exec:)', async () => {
@@ -1037,7 +1039,7 @@ describe('SpaceRuntimeService', () => {
 				getSessionAsync: mock(async () => null),
 				listSessions: mock(() => [] as Session[]),
 			} as unknown as SessionManager;
-			const daemonHub = await createTestDaemonHub('space-rts-test-sub-session-guard');
+			const internalEventBus = await createTestInternalEventBus('space-rts-test-sub-session-guard');
 			const agent = makeMemberAgentSession();
 			const svc = new SpaceRuntimeService({
 				db: {} as BunDatabase,
@@ -1048,7 +1050,7 @@ describe('SpaceRuntimeService', () => {
 				taskRepo: {} as SpaceTaskRepository,
 				tickIntervalMs: 60_000,
 				sessionManager,
-				daemonHub,
+				internalEventBus,
 				getSessionAsync: mock(async () => agent),
 			});
 
@@ -1059,7 +1061,7 @@ describe('SpaceRuntimeService', () => {
 				type: 'worker',
 				id: `space:${mockSpace.id}:task:task-1:exec:exec-a`,
 			});
-			await daemonHub.emit('session.created', {
+			await internalEventBus.publish('session.created', {
 				sessionId: subSession.id,
 				session: subSession,
 			});
@@ -1068,10 +1070,9 @@ describe('SpaceRuntimeService', () => {
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 
 			await svc.stop();
-			await daemonHub.close();
 		});
 
-		test('session.deleted handler runs when daemonHub emits with a UUID sessionId', async () => {
+		test('session.deleted handler runs when internalEventBus emits with a UUID sessionId', async () => {
 			// Arrange a service in a state where it has a per-session db-query
 			// server cached for the deleted session, so we can observe whether the
 			// handler ran by checking the cache state after the emit.
@@ -1080,7 +1081,7 @@ describe('SpaceRuntimeService', () => {
 				listSessions: mock(() => [] as Session[]),
 			} as unknown as SessionManager;
 
-			const daemonHub = await createTestDaemonHub('space-rts-test-deleted');
+			const internalEventBus = await createTestInternalEventBus('space-rts-test-deleted');
 			const svc = new SpaceRuntimeService({
 				db: {} as BunDatabase,
 				spaceManager: createMockSpaceManager(mockSpace),
@@ -1090,7 +1091,7 @@ describe('SpaceRuntimeService', () => {
 				taskRepo: {} as SpaceTaskRepository,
 				tickIntervalMs: 60_000,
 				sessionManager,
-				daemonHub,
+				internalEventBus,
 			});
 
 			// Stub a db-query server entry so we can observe its removal as proof
@@ -1107,7 +1108,7 @@ describe('SpaceRuntimeService', () => {
 
 			svc.start();
 
-			await daemonHub.emit('session.deleted', { sessionId: 'worker-session-uuid-456' });
+			await internalEventBus.publish('session.deleted', { sessionId: 'worker-session-uuid-456' });
 			await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
 			// Handler ran → the cached server was closed and removed.
@@ -1115,7 +1116,6 @@ describe('SpaceRuntimeService', () => {
 			expect(memberDbQueryServers.has('worker-session-uuid-456')).toBe(false);
 
 			await svc.stop();
-			await daemonHub.close();
 		});
 	});
 

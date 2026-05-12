@@ -10,7 +10,7 @@
  *   6. ensureTaskAgentSession — open→in_progress promotion, kickoff:false option
  *
  * Strategy: AgentSession.fromInit() is spied upon to return controllable mock
- * sessions. Real SQLite DB is used for space/task repositories. DaemonHub is
+ * sessions. Real SQLite DB is used for space/task repositories. InternalEventBus is
  * implemented as a minimal in-process event bus.
  */
 
@@ -32,17 +32,22 @@ import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { Space, SpaceTask, AgentProcessingState } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
-// Minimal in-process DaemonHub for tests
+// Minimal in-process InternalEventBus for tests
 // ---------------------------------------------------------------------------
 
 type EventHandler = (data: Record<string, unknown>) => void;
 
-class TestDaemonHub {
+class TestInternalEventBus {
 	private listeners = new Map<string, Map<string, EventHandler>>();
 	readonly emitted: Array<{ event: string; data: Record<string, unknown> }> = [];
 
-	on(event: string, handler: EventHandler, opts?: { sessionId?: string }): () => void {
-		const key = opts?.sessionId ? `${event}:${opts.sessionId}` : `${event}:*`;
+	subscribe(
+		event: string,
+		handler: EventHandler,
+		opts?: { sessionId?: string; namespaceId?: string; subscriberName?: string }
+	): () => void {
+		const scope = opts?.sessionId ?? opts?.namespaceId;
+		const key = scope ? `${event}:${scope}` : `${event}:*`;
 		if (!this.listeners.has(key)) {
 			this.listeners.set(key, new Map());
 		}
@@ -53,7 +58,10 @@ class TestDaemonHub {
 		};
 	}
 
-	emit(event: string, data: Record<string, unknown>): Promise<void> {
+	async publish(
+		event: string,
+		data: Record<string, unknown>
+	): Promise<{ delivered: number; failures: [] }> {
 		this.emitted.push({ event, data });
 		const sessionId = (data as { sessionId?: string }).sessionId;
 		if (sessionId) {
@@ -65,7 +73,11 @@ class TestDaemonHub {
 		for (const handler of this.listeners.get(`${event}:*`)?.values() ?? []) {
 			handler(data);
 		}
-		return Promise.resolve();
+		return { delivered: 0, failures: [] };
+	}
+
+	publishAsync(event: string, data: Record<string, unknown>): void {
+		void this.publish(event, data);
 	}
 }
 
@@ -239,7 +251,7 @@ interface TestCtx {
 	workflowManager: SpaceWorkflowManager;
 	spaceManager: SpaceManager;
 	runtime: SpaceRuntime;
-	daemonHub: TestDaemonHub;
+	internalEventBus: TestInternalEventBus;
 	/**
 	 * Task #85: `deleteSession` has been removed from `SessionManager`. The
 	 * mock still exposes a stub so any accidental call surfaces here, but
@@ -292,7 +304,7 @@ function makeCtx(): TestCtx {
 		taskRepo,
 		nodeExecutionRepo,
 	});
-	const daemonHub = new TestDaemonHub();
+	const internalEventBus = new TestInternalEventBus();
 	const space = makeSpace(spaceId, workspacePath);
 
 	const createdSessions = new Map<string, MockAgentSession>();
@@ -374,7 +386,7 @@ function makeCtx(): TestCtx {
 			mockSpaceRuntimeService as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 		taskRepo,
 		workflowRunRepo,
-		daemonHub: daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+		internalEventBus: internalEventBus as never,
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
@@ -409,7 +421,7 @@ function makeCtx(): TestCtx {
 		workflowManager,
 		spaceManager,
 		runtime,
-		daemonHub,
+		internalEventBus,
 		sessionManagerDeleteCalls,
 		sessionManagerArchiveCalls,
 		sessionManagerInterruptCalls,
@@ -507,8 +519,7 @@ describe('Task Agent Session Lifecycle', () => {
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
-				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+				internalEventBus: ctx.internalEventBus as never,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -580,8 +591,7 @@ describe('Task Agent Session Lifecycle', () => {
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
-				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+				internalEventBus: ctx.internalEventBus as never,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -655,8 +665,7 @@ describe('Task Agent Session Lifecycle', () => {
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
-				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+				internalEventBus: ctx.internalEventBus as never,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -750,8 +759,7 @@ describe('Task Agent Session Lifecycle', () => {
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
-				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+				internalEventBus: ctx.internalEventBus as never,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -817,8 +825,7 @@ describe('Task Agent Session Lifecycle', () => {
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
-				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+				internalEventBus: ctx.internalEventBus as never,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -884,8 +891,7 @@ describe('Task Agent Session Lifecycle', () => {
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
-				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+				internalEventBus: ctx.internalEventBus as never,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -928,7 +934,7 @@ describe('Task Agent Session Lifecycle', () => {
 			// Emit an idle event before cleanup — callback should fire
 			const subSession = ctx.createdSessions.get(subSessionId)!;
 			subSession._sdkMessageCount = 1;
-			ctx.daemonHub.emit('session.updated', {
+			ctx.internalEventBus.publish('session.updated', {
 				sessionId: subSessionId,
 				processingState: { status: 'idle' },
 			});
@@ -1168,7 +1174,7 @@ describe('Task Agent Session Lifecycle', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
 			// Fire `space.task.updated` with status='archived'.
-			await ctx.daemonHub.emit('space.task.updated', {
+			await ctx.internalEventBus.publish('space.task.updated', {
 				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: ctx.spaceId,
@@ -1200,7 +1206,7 @@ describe('Task Agent Session Lifecycle', () => {
 
 			// Fire a series of non-archived status events.
 			for (const status of ['in_progress', 'review', 'done', 'cancelled'] as const) {
-				await ctx.daemonHub.emit('space.task.updated', {
+				await ctx.internalEventBus.publish('space.task.updated', {
 					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: ctx.spaceId,
@@ -1234,7 +1240,7 @@ describe('Task Agent Session Lifecycle', () => {
 
 			// Fire `space.task.updated` with status='archived' AND the
 			// system_reconcile marker — the listener must skip cleanup.
-			await ctx.daemonHub.emit('space.task.updated', {
+			await ctx.internalEventBus.publish('space.task.updated', {
 				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: ctx.spaceId,
@@ -1264,7 +1270,7 @@ describe('Task Agent Session Lifecycle', () => {
 				workspacePath: '/tmp/ws',
 			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
-			await ctx.daemonHub.emit('space.task.updated', {
+			await ctx.internalEventBus.publish('space.task.updated', {
 				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: ctx.spaceId,
@@ -1497,7 +1503,7 @@ describe('Task Agent Session Lifecycle', () => {
 
 			expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
 
-			// Step 3: Simulate sub-session completion via DaemonHub event
+			// Step 3: Simulate sub-session completion via InternalEventBus event
 			const subSession = ctx.createdSessions.get(subSessionId)!;
 			subSession._sdkMessageCount = 3;
 
@@ -1506,7 +1512,7 @@ describe('Task Agent Session Lifecycle', () => {
 				completionFired = true;
 			});
 
-			ctx.daemonHub.emit('session.updated', {
+			ctx.internalEventBus.publish('session.updated', {
 				sessionId: subSessionId,
 				processingState: { status: 'idle' },
 			});

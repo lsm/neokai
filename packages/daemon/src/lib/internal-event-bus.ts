@@ -304,6 +304,16 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		if (!sessionMap) return 0;
 		return sessionMap.get(sessionId)?.size ?? 0;
 	}
+
+	/**
+	 * Return the number of registered handlers for a specific namespace scope.
+	 */
+	getHandlerCountForNamespace<K extends keyof TEventMap & string>(
+		event: K,
+		namespaceId: string
+	): number {
+		return this.getHandlerCountForSession(event, namespaceId);
+	}
 }
 
 /**

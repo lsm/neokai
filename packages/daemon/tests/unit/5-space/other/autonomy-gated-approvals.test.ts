@@ -1249,7 +1249,11 @@ describe('Human approval path — not subject to autonomy checks', () => {
 		const mockWorkflowManager = {
 			getWorkflow: () => null,
 		};
-		const mockDaemonHub = { emit: async () => {}, publishAsync: () => {} };
+		const mockInternalEventBus = {
+			publish: async () => ({ delivered: 0, failures: [] }),
+			publishAsync: () => {},
+			subscribe: () => () => {},
+		};
 
 		setupSpaceWorkflowRunHandlers(
 			mockHub as never,
@@ -1259,7 +1263,7 @@ describe('Human approval path — not subject to autonomy checks', () => {
 			mockGateDataRepo as never,
 			{ createOrGetRuntime: async () => ({}), notifyGateDataChanged: async () => {} } as never,
 			(() => ({ listTasksByWorkflowRun: async () => [], cancelTask: async () => {} })) as never,
-			mockDaemonHub as never,
+			mockInternalEventBus as never,
 			{ listByWorkflowRun: () => [] } as never,
 			{ getTaskWorktreePath: async () => null } as never,
 			{ listByRun: () => [] } as never,

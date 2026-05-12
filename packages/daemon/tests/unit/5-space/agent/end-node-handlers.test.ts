@@ -86,7 +86,7 @@ interface MockBusCtx {
 function makeMockBus(): MockBusCtx {
 	const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
 	const bus = {
-		publishAsync: mock((name: string, payload: Record<string, unknown>) => {
+		publish: mock(async (name: string, payload: Record<string, unknown>) => {
 			emitted.push({ name, payload });
 		}),
 	} as unknown as InternalEventBus<DaemonInternalEventMap>;

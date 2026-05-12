@@ -162,7 +162,7 @@ function makeConfig(
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		taskManager: ctx.taskManager,
 		messageInjector: options?.messageInjector ?? (async () => {}),
-		daemonHub: options?.daemonHub,
+		daemonHub: options?.internalEventBus,
 	};
 }
 

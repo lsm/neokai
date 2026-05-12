@@ -42,6 +42,12 @@ export async function createTestInternalEventBus(
 }
 
 /**
+ * Backwards-compatible test helper alias while remaining fixtures migrate their
+ * local variable names from daemonHub to InternalEventBus.
+ */
+export const createTestDaemonHub = createTestInternalEventBus;
+
+/**
  * Create a test session with default values
  */
 export function createTestSession(id: string): Session {

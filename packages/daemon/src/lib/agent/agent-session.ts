@@ -1084,6 +1084,8 @@ export class AgentSession
 			unsubscribe = this.internalEventBus.subscribe(
 				'session.updated',
 				(payload) => {
+					if (payload.sessionId && payload.sessionId !== this.session.id) return;
+
 					// Fast path: payload carries the new id
 					const payloadId = payload.session?.sdkSessionId;
 					if (typeof payloadId === 'string' && payloadId.length > 0) {

@@ -42,16 +42,21 @@ import {
 } from '../../../../src/lib/internal-event-bus';
 
 // ---------------------------------------------------------------------------
-// Minimal in-process DaemonHub
+// Minimal in-process InternalEventBus
 // ---------------------------------------------------------------------------
 
 type EventHandler = (data: Record<string, unknown>) => void;
 
-class TestDaemonHub {
+class TestInternalEventBus {
 	private listeners = new Map<string, Map<string, EventHandler>>();
 
-	on(event: string, handler: EventHandler, opts?: { sessionId?: string }): () => void {
-		const key = opts?.sessionId ? `${event}:${opts.sessionId}` : `${event}:*`;
+	subscribe(
+		event: string,
+		handler: EventHandler,
+		opts?: { sessionId?: string; namespaceId?: string; subscriberName?: string }
+	): () => void {
+		const scope = opts?.sessionId ?? opts?.namespaceId;
+		const key = scope ? `${event}:${scope}` : `${event}:*`;
 		if (!this.listeners.has(key)) this.listeners.set(key, new Map());
 		const id = Math.random().toString(36).slice(2);
 		this.listeners.get(key)!.set(id, handler);
@@ -60,13 +65,20 @@ class TestDaemonHub {
 		};
 	}
 
-	emit(event: string, data: Record<string, unknown>): Promise<void> {
+	async publish(
+		event: string,
+		data: Record<string, unknown>
+	): Promise<{ delivered: number; failures: [] }> {
 		const sessionId = (data as { sessionId?: string }).sessionId;
 		if (sessionId) {
 			for (const h of this.listeners.get(`${event}:${sessionId}`)?.values() ?? []) h(data);
 		}
 		for (const h of this.listeners.get(`${event}:*`)?.values() ?? []) h(data);
-		return Promise.resolve();
+		return { delivered: 0, failures: [] };
+	}
+
+	publishAsync(event: string, data: Record<string, unknown>): void {
+		void this.publish(event, data);
 	}
 }
 
@@ -225,7 +237,7 @@ function buildManager(opts: {
 		taskRepo,
 		nodeExecutionRepo,
 	});
-	const daemonHub = new TestDaemonHub();
+	const internalEventBus = new TestInternalEventBus();
 	const space = makeSpace(spaceId);
 
 	const createdSessions = new Map<string, MockAgentSession>();
@@ -249,7 +261,6 @@ function buildManager(opts: {
 			init: unknown,
 			_db: unknown,
 			_hub: unknown,
-			_dHub: unknown,
 			_internalEventBus: unknown,
 			_key: unknown,
 			_model: unknown,
@@ -303,7 +314,7 @@ function buildManager(opts: {
 		taskRepo,
 		workflowRunRepo,
 		gateDataRepo,
-		daemonHub: daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
+		internalEventBus: internalEventBus as never,
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
@@ -962,7 +973,6 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 				sessionId: string,
 				_db: unknown,
 				_hub: unknown,
-				_dHub: unknown,
 				_internalEventBus: unknown,
 				_key: unknown,
 				skillsMgr: unknown,
@@ -1023,7 +1033,6 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 				sessionId: string,
 				_db: unknown,
 				_hub: unknown,
-				_dHub: unknown,
 				_internalEventBus: unknown,
 				_key: unknown,
 				skillsMgr: unknown,

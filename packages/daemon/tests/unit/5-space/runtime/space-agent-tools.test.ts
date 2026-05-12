@@ -2913,7 +2913,7 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
 	test('publishes space.task.updated event via InternalEventBus', async () => {
 		const emitted: Array<Record<string, unknown>> = [];
 		const mockBus = {
-			publishAsync(event: string, payload: Record<string, unknown>) {
+			async publish(event: string, payload: Record<string, unknown>) {
 				if (event === 'space.task.updated') {
 					emitted.push(payload);
 				}
