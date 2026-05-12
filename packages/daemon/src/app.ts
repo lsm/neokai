@@ -307,7 +307,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobQueue,
 		jobProcessor,
 		skillsManager,
-		db.appMcpServers
+		db.appMcpServers,
+		internalEventBus
 	);
 
 	// Register session title generation handler before jobProcessor starts

@@ -14,6 +14,7 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
 import type { SettingsManager } from '../settings-manager';
@@ -29,6 +30,7 @@ export interface SDKRuntimeConfigContext {
 	readonly session: Session;
 	readonly db: Database;
 	readonly daemonHub: DaemonHub;
+	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly settingsManager: SettingsManager;
 	readonly logger: Logger;
 	readonly contextTracker: ContextTracker;
@@ -70,7 +72,7 @@ export class SDKRuntimeConfig {
 	 * SDK API which is treated as on/off (0 = disabled, any value = adaptive) on Opus 4.6.
 	 */
 	async setMaxThinkingTokens(tokens: number | null): Promise<ConfigUpdateResult> {
-		const { session, db, daemonHub, logger, queryObject, firstMessageReceived } = this.ctx;
+		const { session, db, logger, queryObject, firstMessageReceived } = this.ctx;
 
 		try {
 			// If query not running or transport not ready, just update config
@@ -92,7 +94,7 @@ export class SDKRuntimeConfig {
 			db.updateSession(session.id, { config: session.config });
 
 			// Emit event for UI update
-			await daemonHub.emit('session.updated', {
+			await this.ctx.daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'thinking-tokens',
 				session: { config: session.config },
@@ -110,7 +112,7 @@ export class SDKRuntimeConfig {
 	 * Set permission mode at runtime
 	 */
 	async setPermissionMode(mode: string): Promise<ConfigUpdateResult> {
-		const { session, db, daemonHub, logger, queryObject, firstMessageReceived } = this.ctx;
+		const { session, db, logger, queryObject, firstMessageReceived } = this.ctx;
 
 		try {
 			// If query not running or transport not ready, just update config
@@ -132,7 +134,7 @@ export class SDKRuntimeConfig {
 			db.updateSession(session.id, { config: session.config });
 
 			// Emit event for UI update
-			await daemonHub.emit('session.updated', {
+			await this.ctx.daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'permission-mode',
 				session: { config: session.config },
@@ -174,7 +176,7 @@ export class SDKRuntimeConfig {
 	 * Update tools configuration and restart query to apply changes
 	 */
 	async updateToolsConfig(tools: Session['config']['tools']): Promise<ConfigUpdateResult> {
-		const { session, db, daemonHub, logger } = this.ctx;
+		const { session, db, logger } = this.ctx;
 
 		try {
 			// 1. Update session config in memory and DB
@@ -189,7 +191,7 @@ export class SDKRuntimeConfig {
 			await this.refreshContextUsage();
 
 			// 3. Emit event for StateManager
-			await daemonHub.emit('session.updated', {
+			await this.ctx.daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'config',
 				session: { config: session.config },
@@ -210,7 +212,7 @@ export class SDKRuntimeConfig {
 	 * Silently skips when there is no live query handle (e.g. pre-start).
 	 */
 	private async refreshContextUsage(): Promise<void> {
-		const { session, daemonHub, contextTracker, queryObject, logger } = this.ctx;
+		const { session, contextTracker, queryObject, logger } = this.ctx;
 		if (!queryObject) return;
 
 		try {
@@ -219,7 +221,7 @@ export class SDKRuntimeConfig {
 			const contextInfo = await fetcher.fetch(queryObject, modelInfo);
 			if (!contextInfo) return;
 			contextTracker.updateWithDetailedBreakdown(contextInfo);
-			await daemonHub.emit('context.updated', {
+			await this.ctx.daemonHub.emit('context.updated', {
 				sessionId: session.id,
 				contextInfo,
 			});

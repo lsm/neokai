@@ -21,6 +21,7 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { SDKMessageHandler } from './sdk-message-handler';
 import type { InterruptHandler } from './interrupt-handler';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
 import { ErrorCategory } from '../error-manager';
@@ -50,6 +51,7 @@ export interface QueryLifecycleManagerContext {
 	readonly db: Database;
 	readonly messageHub: MessageHub;
 	readonly daemonHub: DaemonHub;
+	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly stateManager: ProcessingStateManager;
 	readonly messageHandler: SDKMessageHandler;
 	readonly interruptHandler: InterruptHandler;
@@ -325,14 +327,16 @@ export class QueryLifecycleManager {
 	 * starts cleanly without stale error artifacts from the interrupted query.
 	 */
 	async restart(): Promise<void> {
-		const { session, daemonHub, messageHandler } = this.ctx;
+		const { session, messageHandler } = this.ctx;
 
 		try {
 			// Clear error state and circuit breaker before stopping.
 			// The interrupt during stop() may produce transient errors that should
 			// not persist into the new query's lifecycle.
 			messageHandler.resetCircuitBreaker();
-			await daemonHub.emit('session.errorClear', { sessionId: session.id });
+			await this.ctx.daemonHub.emit('session.errorClear', {
+				sessionId: session.id,
+			});
 
 			// stop() now awaits processExitedPromise, so the old SDK subprocess is
 			// guaranteed to have exited before we proceed. No arbitrary delay needed.
@@ -394,8 +398,7 @@ export class QueryLifecycleManager {
 	 */
 	async reset(options?: { restartAfter?: boolean }): Promise<{ success: boolean; error?: string }> {
 		const { restartAfter = true } = options ?? {};
-		const { session, db, messageQueue, messageHub, daemonHub, stateManager, messageHandler } =
-			this.ctx;
+		const { session, db, messageQueue, messageHub, stateManager, messageHandler } = this.ctx;
 
 		// Early return if no query is running
 		if (!this.ctx.queryObject && !this.ctx.queryPromise) {
@@ -425,7 +428,9 @@ export class QueryLifecycleManager {
 			messageQueue.clear();
 			this.ctx.pendingRestartReason = null;
 			messageHandler.resetCircuitBreaker();
-			await daemonHub.emit('session.errorClear', { sessionId: session.id });
+			await this.ctx.daemonHub.emit('session.errorClear', {
+				sessionId: session.id,
+			});
 
 			// Stop the query with shorter timeout and catch errors
 			await this.stop({
@@ -598,7 +603,7 @@ export class QueryLifecycleManager {
 		messageId: string,
 		messageContent: string | MessageContent[]
 	): Promise<void> {
-		const { session, messageQueue, stateManager, daemonHub } = this.ctx;
+		const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
 		const queryStartResult = await this.ensureQueryStarted();
 		if (queryStartResult === 'blocked') {
@@ -626,9 +631,8 @@ export class QueryLifecycleManager {
 			throw error;
 		}
 
-		daemonHub.emit('message.sent', { sessionId: session.id }).catch((error) => {
-			this.logger.warn('Failed to emit message.sent event', error);
-		});
+		// Telemetry event — no subscriber yet; kept for forward-compat
+		internalEventBus.publishAsync('message.sent', { namespaceId: 'global', sessionId: session.id });
 	}
 
 	private async handleQueuedMessageFailure(
@@ -693,7 +697,7 @@ export class QueryLifecycleManager {
 	}
 
 	private async markEnqueuedMessageFailed(messageId: string): Promise<void> {
-		const { session, db, daemonHub } = this.ctx;
+		const { session, db, internalEventBus } = this.ctx;
 		const enqueuedMessage = db
 			.getMessagesByStatus(session.id, 'enqueued')
 			.find((message) => message.uuid === messageId);
@@ -703,7 +707,8 @@ export class QueryLifecycleManager {
 
 		db.updateMessageStatus([enqueuedMessage.dbId], 'failed');
 		try {
-			await daemonHub.emit('messages.statusChanged', {
+			await internalEventBus.publish('messages.statusChanged', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				messageIds: [enqueuedMessage.dbId],
 				status: 'failed',

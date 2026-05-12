@@ -22,6 +22,7 @@ import type {
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
 import {
 	messageUuidExistsInSessionFile,
@@ -76,6 +77,7 @@ export interface RewindHandlerContext {
 	readonly session: Session;
 	readonly db: Database;
 	readonly daemonHub: DaemonHub;
+	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly lifecycleManager: QueryLifecycleManager;
 	readonly logger: Logger;
 	readonly queryObject: Query | null;
@@ -180,7 +182,7 @@ export class RewindHandler {
 	 * Execute a rewind operation
 	 */
 	async executeRewind(checkpointId: string, mode: RewindMode): Promise<RewindResult> {
-		const { session, daemonHub, queryObject, firstMessageReceived, logger } = this.ctx;
+		const { session, internalEventBus, queryObject, firstMessageReceived, logger } = this.ctx;
 
 		// Validate checkpoint exists
 		const rewindPoint = this.getRewindPoint(checkpointId);
@@ -198,7 +200,12 @@ export class RewindHandler {
 		}
 
 		// Emit rewind.started event
-		await daemonHub.emit('rewind.started', { sessionId: session.id, checkpointId, mode });
+		await internalEventBus.publish('rewind.started', {
+			namespaceId: session.id,
+			sessionId: session.id,
+			checkpointId,
+			mode,
+		});
 
 		try {
 			// Mode 1: files only
@@ -206,7 +213,8 @@ export class RewindHandler {
 				const sdkResult = await queryObject.rewindFiles(checkpointId);
 
 				if (!sdkResult.canRewind) {
-					await daemonHub.emit('rewind.failed', {
+					await internalEventBus.publish('rewind.failed', {
+						namespaceId: session.id,
 						sessionId: session.id,
 						checkpointId,
 						mode,
@@ -215,7 +223,8 @@ export class RewindHandler {
 					return { success: false, error: sdkResult.error };
 				}
 
-				await daemonHub.emit('rewind.completed', {
+				await internalEventBus.publish('rewind.completed', {
+					namespaceId: session.id,
 					sessionId: session.id,
 					checkpointId,
 					mode,
@@ -258,7 +267,8 @@ export class RewindHandler {
 			// Always proceed with conversation rewind
 			const conversationResult = await this.executeConversationRewind(checkpointId, rewindPoint);
 
-			await daemonHub.emit('rewind.completed', {
+			await internalEventBus.publish('rewind.completed', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				checkpointId,
 				mode,
@@ -282,7 +292,8 @@ export class RewindHandler {
 			logger.error('Rewind execution failed:', error);
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-			await daemonHub.emit('rewind.failed', {
+			await internalEventBus.publish('rewind.failed', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				checkpointId,
 				mode,

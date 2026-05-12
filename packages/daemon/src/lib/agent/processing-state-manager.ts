@@ -9,6 +9,7 @@
  */
 
 import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { DaemonHub } from '../daemon-hub';
 import type { SDKAssistantMessage, SDKMessage } from '@neokai/shared/sdk';
 import { isToolUseBlock } from '@neokai/shared/sdk/type-guards';
@@ -28,6 +29,7 @@ export class ProcessingStateManager {
 	constructor(
 		private sessionId: string,
 		private daemonHub: DaemonHub,
+		private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		private db: Database
 	) {
 		this.logger = new Logger(`ProcessingStateManager ${sessionId}`);

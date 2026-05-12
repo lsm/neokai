@@ -12,6 +12,7 @@
 import type { Provider, Session, WorktreeMetadata, MessageHub } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { Database } from '../../storage/database';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { DaemonHub } from '../daemon-hub';
 import type { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
@@ -72,11 +73,12 @@ export class SessionLifecycle {
 		private db: Database,
 		private worktreeManager: WorktreeManager,
 		private sessionCache: SessionCache,
-		private daemonHub: DaemonHub,
 		private messageHub: MessageHub,
 		private config: SessionLifecycleConfig,
 		private toolsConfigManager: ToolsConfigManager,
-		private createAgentSession: AgentSessionFactory
+		private createAgentSession: AgentSessionFactory,
+		private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
+		private daemonHub: DaemonHub
 	) {
 		this.logger = new Logger('SessionLifecycle');
 	}
@@ -270,8 +272,11 @@ export class SessionLifecycle {
 		const agentSession = this.createAgentSession(session);
 		this.sessionCache.set(sessionId, agentSession);
 
-		// Emit event via DaemonHub (StateManager will handle publishing to MessageHub)
-		await this.daemonHub.emit('session.created', { sessionId, session });
+		// Emit event via DaemonHub (bridge in app.ts forwards to InternalEventBus)
+		await this.daemonHub.emit('session.created', {
+			sessionId,
+			session,
+		});
 
 		return sessionId;
 	}
@@ -536,7 +541,7 @@ export class SessionLifecycle {
 			agentSession.updateMetadata(updates);
 		}
 
-		// FIX: Emit event via DaemonHub - include data for decoupled state management
+		// FIX: Emit event via InternalEventBus - include data for decoupled state management
 		await this.daemonHub.emit('session.updated', {
 			sessionId,
 			source: 'update',
@@ -770,7 +775,9 @@ export class SessionLifecycle {
 					{ sessionId, reason: 'deleted' },
 					{ channel: 'global' }
 				);
-				await this.daemonHub.emit('session.deleted', { sessionId });
+				await this.daemonHub.emit('session.deleted', {
+					sessionId,
+				});
 				completedPhases.push('broadcast');
 			} catch (error) {
 				this.logger.error(`[SessionLifecycle] deleteResources: Failed to broadcast:`, error);

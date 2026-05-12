@@ -12,6 +12,7 @@ import {
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
@@ -25,6 +26,11 @@ describe('SDKMessageHandler', () => {
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
 	let mockDaemonHub: DaemonHub;
+	const mockInternalEventBus = {
+		publish: emitSpy,
+		publishAsync: emitSpy,
+		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+	} as unknown as InternalEventBus<any>;
 	let mockStateManager: ProcessingStateManager;
 	let mockContextTracker: ContextTracker;
 	let mockMessageQueue: MessageQueue;
@@ -154,6 +160,7 @@ describe('SDKMessageHandler', () => {
 			db: mockDb,
 			messageHub: mockMessageHub,
 			daemonHub: mockDaemonHub,
+			internalEventBus: mockInternalEventBus,
 			stateManager: mockStateManager,
 			contextTracker: mockContextTracker,
 			messageQueue: mockMessageQueue,

@@ -64,23 +64,12 @@ export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceManager: SpaceManager,
-	spaceRuntimeService: SpaceRuntimeService | undefined,
-	internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+	spaceRuntimeService: SpaceRuntimeService | undefined
 ): void {
 	const publishSpaceUpdated = (payload: DaemonInternalEventMap['space.updated']): void => {
-		if (internalEventBus) {
-			internalEventBus.publishAsync('space.updated', payload);
-			return;
-		}
-
-		void daemonHub
-			.emit('space.updated', {
-				sessionId: payload.sessionId,
-				spaceId: payload.spaceId,
-				space: payload.space,
-			})
-			.catch(() => {});
+		internalEventBus.publishAsync('space.updated', payload);
 	};
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
@@ -128,7 +117,10 @@ export function setupSessionHandlers(
 		// Broadcast to daemonHub so other subscribers (StateManager, etc.) can react.
 		// Kept for non-critical side effects; critical attachment above is synchronous.
 		if (session) {
-			daemonHub.emit('session.created', { sessionId, session }).catch(() => {});
+			void daemonHub.emit('session.created', {
+				sessionId,
+				session,
+			});
 		}
 
 		return { sessionId, session };
@@ -488,8 +480,8 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch((error) => {
-			log.warn(`Failed to emit agent.interruptRequest for session ${targetSessionId}:`, error);
+		void daemonHub.emit('agent.interruptRequest', {
+			sessionId: targetSessionId,
 		});
 
 		return { accepted: true };
@@ -882,8 +874,9 @@ export function setupSessionHandlers(
 		// This allows the client to get immediate feedback on success/failure
 		const result = await agentSession.resetQuery({ restartQuery, hardReset: true });
 
-		// Also emit event for StateManager to update clients
-		await daemonHub.emit('agent.reset', {
+		// Telemetry event — no subscriber yet; kept for forward-compat
+		await internalEventBus.publish('agent.reset', {
+			namespaceId: targetSessionId,
 			sessionId: targetSessionId,
 			success: result.success,
 			error: result.error,
@@ -911,12 +904,17 @@ export function setupSessionHandlers(
 			await agentSession.restart();
 
 			// Emit event so StateManager and UI can react to the restart
-			await daemonHub.emit('agent.restart', { sessionId: targetSessionId, success: true });
+			await internalEventBus.publish('agent.restart', {
+				namespaceId: targetSessionId,
+				sessionId: targetSessionId,
+				success: true,
+			});
 
 			return { success: true };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			await daemonHub.emit('agent.restart', {
+			await internalEventBus.publish('agent.restart', {
+				namespaceId: targetSessionId,
 				sessionId: targetSessionId,
 				success: false,
 				error: errorMessage,
