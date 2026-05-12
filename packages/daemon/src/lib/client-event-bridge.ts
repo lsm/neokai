@@ -116,15 +116,35 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
 		clientEvent: 'space.workflowRun.updated',
 		channel: () => Channels.global(),
 	},
-	// Gate data and artifact cache updates → global
+	// Gate data and misc client-visible space events → global
 	{
 		event: 'space.gateData.updated',
 		clientEvent: 'space.gateData.updated',
 		channel: () => Channels.global(),
 	},
 	{
+		event: 'space.githubEvent.routed',
+		clientEvent: 'space.githubEvent.routed',
+		channel: () => Channels.global(),
+	},
+	{
 		event: 'space.artifactCache.updated',
 		clientEvent: 'space.artifactCache.updated',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.pendingMessage.queued',
+		clientEvent: 'space.pendingMessage.queued',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.pendingMessage.delivered',
+		clientEvent: 'space.pendingMessage.delivered',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.workflowRun.cyclesReset',
+		clientEvent: 'space.workflowRun.cyclesReset',
 		channel: () => Channels.global(),
 	},
 	// Space agent events → space-scoped

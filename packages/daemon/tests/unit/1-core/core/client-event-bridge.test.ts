@@ -88,6 +88,11 @@ describe('ClientEventBridge', () => {
 			expect(eventHandlers.has('space.workflowRun.created')).toBe(true);
 			expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
 			expect(eventHandlers.has('space.gateData.updated')).toBe(true);
+			expect(eventHandlers.has('space.githubEvent.routed')).toBe(true);
+			expect(eventHandlers.has('space.artifactCache.updated')).toBe(true);
+			expect(eventHandlers.has('space.pendingMessage.queued')).toBe(true);
+			expect(eventHandlers.has('space.pendingMessage.delivered')).toBe(true);
+			expect(eventHandlers.has('space.workflowRun.cyclesReset')).toBe(true);
 			expect(eventHandlers.has('spaceAgent.created')).toBe(true);
 			expect(eventHandlers.has('spaceAgent.updated')).toBe(true);
 			expect(eventHandlers.has('spaceAgent.deleted')).toBe(true);
@@ -138,9 +143,9 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.start();
 
-			// 17 space + 3 session + 2 conn/auth + 1 config + 2 error = 25 unique events
+			// 21 space + 3 session + 2 conn/auth + 1 config + 2 error = 29 unique events
 			// (context.updated has 2 handlers but is 1 unique event key)
-			expect(eventHandlers.size).toBe(25);
+			expect(eventHandlers.size).toBe(29);
 		});
 	});
 
@@ -151,8 +156,8 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.stop();
 
-			// 26 internalEventBus.subscribe calls total (context.updated has 2 handlers)
-			expect(unsubscribers.length).toBe(26);
+			// 30 internalEventBus.subscribe calls total (context.updated has 2 handlers)
+			expect(unsubscribers.length).toBe(30);
 		});
 	});
 
@@ -289,6 +294,75 @@ describe('ClientEventBridge', () => {
 				data: { votes: 3 },
 			};
 			eventHandlers.get('space.gateData.updated')![0](data);
+
+			expect(published[0].channel).toEqual({ kind: 'global' });
+		});
+
+		it('forwards space.githubEvent.routed to global channel', () => {
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
+
+			const data = {
+				sessionId: 'global',
+				spaceId: 's-1',
+				taskId: 'task-1',
+				eventId: 'gh-1',
+			};
+			eventHandlers.get('space.githubEvent.routed')![0](data);
+
+			expect(published[0].channel).toEqual({ kind: 'global' });
+		});
+
+		it('forwards space.artifactCache.updated to global channel', () => {
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
+
+			const data = {
+				sessionId: 'global',
+				spaceId: 's-1',
+				taskId: 'task-1',
+			};
+			eventHandlers.get('space.artifactCache.updated')![0](data);
+
+			expect(published[0].channel).toEqual({ kind: 'global' });
+		});
+
+		it('forwards pending-message lifecycle events to global channel', () => {
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
+
+			eventHandlers.get('space.pendingMessage.queued')![0]({
+				sessionId: 'global',
+				spaceId: 's-1',
+				workflowRunId: 'run-1',
+				taskId: 'task-1',
+				messageId: 'msg-1',
+			});
+			eventHandlers.get('space.pendingMessage.delivered')![0]({
+				sessionId: 'global',
+				spaceId: 's-1',
+				workflowRunId: 'run-1',
+				taskId: 'task-1',
+				messageId: 'msg-1',
+			});
+
+			expect(published[0].method).toBe('space.pendingMessage.queued');
+			expect(published[0].channel).toEqual({ kind: 'global' });
+			expect(published[1].method).toBe('space.pendingMessage.delivered');
+			expect(published[1].channel).toEqual({ kind: 'global' });
+		});
+
+		it('forwards space.workflowRun.cyclesReset to global channel', () => {
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
+
+			const data = {
+				sessionId: 'global',
+				spaceId: 's-1',
+				workflowRunId: 'run-1',
+				channelId: 'ch-1',
+			};
+			eventHandlers.get('space.workflowRun.cyclesReset')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
