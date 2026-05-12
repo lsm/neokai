@@ -335,9 +335,8 @@ describe('Shared merge template canonical content', () => {
 	test('template contains the squash-merge command and conflict guard', () => {
 		// Specific command shapes: protects against well-intentioned edits
 		// that swap `--squash` for `--merge` or drop the conflict guard.
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain(
-			'gh pr merge {{pr_url}} --squash --delete-branch'
-		);
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('gh pr merge {{pr_url}} --squash');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('--delete-branch');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('merge conflict');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT force');
 	});

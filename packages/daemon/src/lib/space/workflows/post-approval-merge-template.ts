@@ -61,7 +61,7 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'   coder follow-up for those thread URLs and wait for them to be resolved.',
 	'   Auto-merging or auto-resolving review conversations is NOT allowed.',
 	'3. Merge:',
-	'     gh pr merge {{pr_url}} --squash --delete-branch',
+	'     gh pr merge {{pr_url}} --squash',
 	'   On a merge conflict, do NOT force — exit, call request_human_input with',
 	'   a clear summary of the conflict, and let the human resolve.',
 	'4. Sync your worktree with main/dev:',
