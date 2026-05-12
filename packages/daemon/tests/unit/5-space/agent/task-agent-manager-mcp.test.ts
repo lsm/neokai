@@ -303,7 +303,7 @@ function buildManager(opts: {
 		taskRepo,
 		workflowRunRepo,
 		gateDataRepo,
-		daemonHub: daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+		daemonHub: daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',

@@ -95,36 +95,6 @@ export class StateProjectionService {
 	}
 
 	/**
-	 * Compatibility constructor for legacy `StateManager(..., internalEventBus, db, internalEventBus, clientEvents?)`
-	 * callers. The `internalEventBus` argument is ignored (no longer needed); all other
-	 * arguments are forwarded to the primary constructor.
-	 *
-	 * TODO(M8): Remove once all call sites have migrated to the new constructor.
-	 */
-	static createLegacy(
-		messageHub: MessageHub,
-		sessionManager: SessionManager,
-		authManager: AuthManager,
-		settingsManager: SettingsManager,
-		config: Config,
-		_legacyEventHub: unknown,
-		db?: Database,
-		internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
-		clientEvents?: IClientEventGateway
-	): StateProjectionService {
-		return new StateProjectionService(
-			messageHub,
-			sessionManager,
-			authManager,
-			settingsManager,
-			config,
-			db,
-			internalEventBus,
-			clientEvents
-		);
-	}
-
-	/**
 	 * Expose the client event gateway so ClientEventBridge can share it.
 	 *
 	 * This is a temporary seam while forwarding migrates out of
@@ -627,7 +597,7 @@ export class StateProjectionService {
 						sessionInfo: cachedSession,
 						agentState: cachedProcessingState,
 						commandsData: { availableCommands: this.commandsCache.get(sessionId) || [] },
-						error: null,
+						error: this.errorCache.get(sessionId) ?? null,
 						timestamp: Date.now(),
 						version,
 					};

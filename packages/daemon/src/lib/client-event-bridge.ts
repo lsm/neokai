@@ -116,10 +116,15 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
 		clientEvent: 'space.workflowRun.updated',
 		channel: () => Channels.global(),
 	},
-	// Gate data updates → global
+	// Gate data and artifact cache updates → global
 	{
 		event: 'space.gateData.updated',
 		clientEvent: 'space.gateData.updated',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.artifactCache.updated',
+		clientEvent: 'space.artifactCache.updated',
 		channel: () => Channels.global(),
 	},
 	// Space agent events → space-scoped

@@ -13,7 +13,7 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { setModelsCache } from '../../../../src/lib/model-service.js';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';

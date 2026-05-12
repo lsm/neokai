@@ -6,7 +6,11 @@ import type { Session } from '@neokai/shared';
 import { mock } from 'bun:test';
 import { Database } from '../../src/storage/database';
 import { createReactiveDatabase } from '../../src/storage/reactive-database';
-import { createDaemonHub, type DaemonHub } from '../../src/lib/daemon-hub';
+import {
+	createDaemonInternalEventBus,
+	type DaemonInternalEventMap,
+	type InternalEventBus,
+} from '../../src/lib/internal-event-bus';
 
 /**
  * Create an in-memory test database
@@ -29,12 +33,12 @@ export function createMockDb(): Database {
 }
 
 /**
- * Create and initialize a test DaemonHub
+ * Create a test InternalEventBus.
  */
-export async function createTestDaemonHub(name: string): Promise<DaemonHub> {
-	const daemonHub = createDaemonHub(name);
-	await daemonHub.initialize();
-	return daemonHub;
+export async function createTestInternalEventBus(
+	_name?: string
+): Promise<InternalEventBus<DaemonInternalEventMap>> {
+	return createDaemonInternalEventBus();
 }
 
 /**

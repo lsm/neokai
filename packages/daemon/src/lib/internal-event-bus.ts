@@ -2,8 +2,7 @@
  * InternalEventBus — Semantic daemon messaging primitive (v1)
  *
  * First-class facade for typed internal events with explicit await-vs-fire-and-forget
- * semantics.  New daemon/domain code publishes and subscribes through this facade
- * instead of importing DaemonHub directly.
+ * semantics. Daemon/domain code publishes and subscribes through this facade.
  *
  * Semantics
  * ---------
@@ -323,9 +322,8 @@ export function createInternalEventBus<
 }
 
 // ---------------------------------------------------------------------------
-// Event contracts — canonical payloads for events migrated to InternalEventBus.
-// Expand this map as new events are migrated off DaemonHub; keep each domain's
-// events in a separate interface and intersect them here.
+// Event contracts — canonical payloads for InternalEventBus events.
+// Keep each domain's events in a separate interface and intersect them here.
 //
 // Naming convention: dot-separated, lower camelCase per segment, fact/state-
 // change wording. See docs/plans/internal-event-command-query-architecture.md.
@@ -360,7 +358,7 @@ export interface ExternalEventEvents {
 }
 
 /**
- * Session domain events — migrated from DaemonHub to InternalEventBus in M5.
+ * Session domain events.
  * These events drive StateProjectionService cache updates.
  */
 export interface SessionEvents {
@@ -378,7 +376,7 @@ export interface SessionEvents {
 }
 
 /**
- * API connection events — migrated from DaemonHub to InternalEventBus in M5.
+ * API connection events.
  */
 export interface ApiConnectionEvents {
 	'api.connection': { sessionId: string } & import('@neokai/shared').ApiConnectionState;
@@ -601,10 +599,10 @@ export interface SpaceEvents {
  * Each domain should own its slice; this type is the intersection of all
  * domain event maps so the bus can be typed with the full surface.
  *
- * NOTE: This map intentionally starts small. New events are added here as
- * publishers/subscribers migrate off DaemonHub. Events that have not yet been
- * migrated continue to flow through DaemonHub (`createDaemonHub`) and the
- * compatibility `DaemonEventMap`.
+ * This map is the canonical event surface for daemon application/domain code.
+ * The permissive payload entry keeps the remaining long-tail event names routable
+ * through InternalEventBus while narrower domain slices document payloads for
+ * active subscribers.
  */
 type InternalEventBusPayload = { sessionId?: string; namespaceId?: string } & Record<
 	string,
@@ -711,11 +709,11 @@ interface ClientForwardingEvents {
 }
 
 /**
- * Transitional full-surface event map for daemon application code.
+ * Full-surface event map for daemon application code.
  *
- * M8 removes DaemonHub from application dependencies. The permissive index
- * signature keeps long-tail legacy event names routable through InternalEventBus
- * while narrower domain slices document typed payloads for active subscribers.
+ * The permissive index signature keeps long-tail event names routable through
+ * InternalEventBus while narrower domain slices document typed payloads for active
+ * subscribers.
  */
 export type DaemonInternalEventMap = Record<string, InternalEventBusPayload> &
 	AgentControlEvents &

@@ -374,7 +374,7 @@ function makeCtx(): TestCtx {
 			mockSpaceRuntimeService as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 		taskRepo,
 		workflowRunRepo,
-		daemonHub: daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+		daemonHub: daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
@@ -508,7 +508,7 @@ describe('Task Agent Session Lifecycle', () => {
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
 				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -581,7 +581,7 @@ describe('Task Agent Session Lifecycle', () => {
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
 				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -656,7 +656,7 @@ describe('Task Agent Session Lifecycle', () => {
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
 				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -751,7 +751,7 @@ describe('Task Agent Session Lifecycle', () => {
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
 				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -818,7 +818,7 @@ describe('Task Agent Session Lifecycle', () => {
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
 				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -885,7 +885,7 @@ describe('Task Agent Session Lifecycle', () => {
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
 				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+					ctx.daemonHub as unknown as import('../../../../tests/helpers/daemon-hub.ts').DaemonHub,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',

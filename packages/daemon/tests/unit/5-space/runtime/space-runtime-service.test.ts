@@ -24,7 +24,7 @@ import type { SpaceTaskRepository } from '../../../../src/storage/repositories/s
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub.ts';
 import type { McpServerConfig, Session, Space } from '@neokai/shared';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';

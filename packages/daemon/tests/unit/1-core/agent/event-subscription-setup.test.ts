@@ -9,7 +9,7 @@ import {
 	EventSubscriptionSetup,
 	type EventSubscriptionSetupContext,
 } from '../../../../src/lib/agent/event-subscription-setup';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Session } from '@neokai/shared';
 import type { ModelSwitchHandler } from '../../../../src/lib/agent/model-switch-handler';

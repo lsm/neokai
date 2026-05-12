@@ -9,7 +9,7 @@ import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:te
 import { SessionManager, CleanupState } from '../../../../src/lib/session/session-manager';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';

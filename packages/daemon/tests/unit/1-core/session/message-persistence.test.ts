@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@neokai/shared';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
 	MAX_IMAGE_BASE64_SIZE,

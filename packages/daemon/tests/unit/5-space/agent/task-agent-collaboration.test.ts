@@ -29,7 +29,7 @@ import {
 	type TaskAgentToolsConfig,
 } from '../../../../src/lib/space/tools/task-agent-tools.ts';
 import type { Space, SpaceWorkflow, SpaceTask } from '@neokai/shared';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
