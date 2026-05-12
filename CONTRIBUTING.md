@@ -145,9 +145,8 @@ bun run build
 ### Running Locally
 
 ```bash
-# Start the development server
-cd packages/cli
-bun run dev
+# Start the development server from the CLI package
+(cd packages/cli && bun run dev)
 
 # From the repository root, run quality checks
 bun run check
@@ -156,8 +155,7 @@ bun run check
 ./scripts/test-daemon.sh
 
 # Or run targeted daemon tests package-locally
-cd packages/daemon
-bun test ./tests/unit/some-test.test.ts
+(cd packages/daemon && bun test ./tests/unit/some-test.test.ts)
 ```
 
 ### Environment Variables
