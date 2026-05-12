@@ -142,59 +142,6 @@ describe('Space GitHub integration', () => {
 		}
 	});
 
-	test('verifies signatures, allowlist and dedupes deliveries', async () => {
-		const db = setupDb();
-		seedTask(db);
-		const service = new SpaceGitHubService(db);
-		service.repo.upsertWatchedRepo({
-			spaceId: 'space-1',
-			owner: 'acme',
-			repo: 'widgets',
-			webhookSecret: 'secret',
-		});
-		const payload = payloadFor('issue_comment');
-		const raw = JSON.stringify(payload);
-		const ok = await service.handleWebhook(
-			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
-		);
-		expect(ok.status).toBe(200);
-		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
-		const duplicate = await service.handleWebhook(
-			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
-		);
-		expect(duplicate.status).toBe(200);
-		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
-		const bad = await service.handleWebhook(
-			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'wrong'))
-		);
-		expect(bad.status).toBe(401);
-		const missing = await service.handleWebhook(
-			new Request('http://localhost/webhook/github/space', {
-				method: 'POST',
-				headers: { 'X-GitHub-Event': 'issue_comment', 'X-GitHub-Delivery': 'd' },
-				body: raw,
-			})
-		);
-		expect(missing.status).toBe(401);
-		const unknownRepo = await service.handleWebhook(
-			webhookRequest(
-				{
-					...(payload as object),
-					repository: { ...baseRepo, name: 'other', full_name: 'acme/other' },
-				},
-				'issue_comment',
-				await createSignature(
-					JSON.stringify({
-						...(payload as object),
-						repository: { ...baseRepo, name: 'other', full_name: 'acme/other' },
-					}),
-					'secret'
-				)
-			)
-		);
-		expect(unknownRepo.status).toBe(404);
-	});
-
 	test('resolves by task text, artifacts, gate data, ambiguous and unknown', async () => {
 		let db = setupDb();
 		seedTask(db);

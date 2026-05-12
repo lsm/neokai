@@ -1,0 +1,214 @@
+import { Database as BunDatabase } from 'bun:sqlite';
+import { describe, expect, test } from 'bun:test';
+import { createTables, runMigrations } from '../../../../src/storage/schema';
+import {
+	ExternalEventService,
+	ExternalEventStore,
+	type ExternalEvent,
+} from '../../../../src/lib/external-events';
+import {
+	GitHubEventExtension,
+	StaticExternalEventExtensionConfigStore,
+	mapEventType,
+	normalizeGitHubWebhook,
+	toExternalEvent,
+} from '../../../../src/lib/external-events/github';
+import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
+
+async function createSignature(payload: string, secret: string): Promise<string> {
+	const encoder = new TextEncoder();
+	const cryptoKey = await crypto.subtle.importKey(
+		'raw',
+		encoder.encode(secret),
+		{ name: 'HMAC', hash: 'SHA-256' },
+		false,
+		['sign']
+	);
+	const buffer = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(payload));
+	return `sha256=${Array.from(new Uint8Array(buffer))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('')}`;
+}
+
+function setupDb(): BunDatabase {
+	const db = new BunDatabase(':memory:');
+	db.exec('PRAGMA foreign_keys = ON');
+	createTables(db);
+	runMigrations(db, () => {});
+	return db;
+}
+
+const baseRepo = {
+	id: 1,
+	name: 'widgets',
+	full_name: 'Acme/Widgets',
+	owner: { login: 'Acme' },
+};
+
+function payloadFor(event: string): unknown {
+	if (event === 'issue_comment') {
+		return {
+			action: 'created',
+			repository: baseRepo,
+			sender: { login: 'bot', type: 'Bot' },
+			issue: { number: 7, title: 'PR', pull_request: { url: 'api' } },
+			comment: {
+				id: 101,
+				body: 'looks good',
+				html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-101',
+				user: { login: 'bot', type: 'Bot' },
+				created_at: '2026-01-01T00:00:00Z',
+			},
+		};
+	}
+	return {
+		action: 'synchronize',
+		repository: baseRepo,
+		sender: { login: 'dev', type: 'User' },
+		pull_request: {
+			id: 77,
+			number: 7,
+			body: 'pr body',
+			html_url: 'https://github.com/acme/widgets/pull/7',
+			user: { login: 'dev', type: 'User' },
+			updated_at: '2026-01-01T00:00:00Z',
+		},
+	};
+}
+
+function webhookRequest(payload: unknown, event: string, signature: string): Request {
+	return new Request('http://localhost/webhook/github/space', {
+		method: 'POST',
+		headers: {
+			'X-Hub-Signature-256': signature,
+			'X-GitHub-Event': event,
+			'X-GitHub-Delivery': 'delivery-1',
+		},
+		body: JSON.stringify(payload),
+	});
+}
+
+describe('GitHubEventExtension', () => {
+	test('normalizes webhooks and constructs canonical topics', () => {
+		const normalized = normalizeGitHubWebhook(
+			'issue_comment',
+			'delivery-1',
+			payloadFor('issue_comment')
+		)!;
+		expect(normalized.repoOwner).toBe('Acme');
+		expect(normalized.repoName).toBe('widgets');
+		expect(mapEventType(normalized.eventType, normalized.action)).toBe(
+			'pull_request.comment_created'
+		);
+
+		const event = toExternalEvent('space-1', normalized);
+		expect(event.topic).toBe('github/acme/widgets/pull_request.comment_created');
+		expect(event.source).toBe('github');
+		expect(event.payload.prNumber).toBe(7);
+		expect(event.payload.repoOwner).toBe('acme');
+		expect(event.dedupeKey).toBe('acme/widgets:issue_comment:101:created');
+	});
+
+	test('webhook verifies signatures, checks enablement, and publishes ExternalEventService event', async () => {
+		const db = setupDb();
+		db.prepare(
+			`INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+		).run();
+		const bus = createDaemonInternalEventBus();
+		const service = new ExternalEventService(new ExternalEventStore(db), bus);
+		const received: ExternalEvent[] = [];
+		bus.subscribe(
+			'externalEvent.published',
+			(payload) => {
+				received.push({
+					id: payload.eventId,
+					spaceId: payload.spaceId,
+					topic: payload.topic,
+					occurredAt: payload.occurredAt,
+					ingestedAt: payload.ingestedAt,
+					source: payload.source,
+					summary: payload.summary,
+					externalUrl: payload.externalUrl,
+					payload: payload.payload,
+					dedupeKey: payload.dedupeKey,
+				});
+			},
+			{ subscriberName: 'github-event-extension-test' }
+		);
+		const extension = new GitHubEventExtension(db);
+		const context = {
+			publisher: service,
+			config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			webhookSecret: 'secret',
+		});
+
+		const payload = payloadFor('issue_comment');
+		const raw = JSON.stringify(payload);
+		const ok = await extension.routes[0].handle(
+			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+		);
+		expect(ok.status).toBe(200);
+		expect(received).toHaveLength(1);
+		expect(received[0].topic).toBe('github/acme/widgets/pull_request.comment_created');
+		expect(db.prepare('SELECT COUNT(*) AS c FROM space_external_events').get()).toEqual({ c: 1 });
+
+		const duplicate = await extension.routes[0].handle(
+			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+		);
+		expect(duplicate.status).toBe(200);
+		expect(db.prepare('SELECT COUNT(*) AS c FROM space_external_events').get()).toEqual({ c: 1 });
+
+		const bad = await extension.routes[0].handle(
+			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'wrong'))
+		);
+		expect(bad.status).toBe(401);
+
+		await extension.stop();
+	});
+
+	test('does not publish when a matched space is disabled', async () => {
+		const db = setupDb();
+		const published: ExternalEvent[] = [];
+		const extension = new GitHubEventExtension(db);
+		const context = {
+			publisher: { publish: async (event: ExternalEvent) => published.push(event) },
+			config: {
+				async getGlobalConfig(source: string) {
+					return { source, globallyEnabled: true, capabilities: { webhooks: true, polling: true } };
+				},
+				async getSpaceConfig(spaceId: string, source: string) {
+					return { spaceId, source, enabled: false, settings: {} };
+				},
+				async listEnabledSpaces() {
+					return [];
+				},
+			},
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			webhookSecret: 'secret',
+		});
+
+		const payload = payloadFor('issue_comment');
+		const raw = JSON.stringify(payload);
+		const response = await extension.routes[0].handle(
+			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ spaces: 0 });
+		expect(published).toHaveLength(0);
+		await extension.stop();
+	});
+});
