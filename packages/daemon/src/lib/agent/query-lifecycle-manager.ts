@@ -334,7 +334,10 @@ export class QueryLifecycleManager {
 			// The interrupt during stop() may produce transient errors that should
 			// not persist into the new query's lifecycle.
 			messageHandler.resetCircuitBreaker();
-			await internalEventBus.publish('session.errorClear', { sessionId: session.id });
+			await internalEventBus.publish('session.errorClear', {
+				namespaceId: 'global',
+				sessionId: session.id,
+			});
 
 			// stop() now awaits processExitedPromise, so the old SDK subprocess is
 			// guaranteed to have exited before we proceed. No arbitrary delay needed.
@@ -434,7 +437,10 @@ export class QueryLifecycleManager {
 			messageQueue.clear();
 			this.ctx.pendingRestartReason = null;
 			messageHandler.resetCircuitBreaker();
-			await internalEventBus.publish('session.errorClear', { sessionId: session.id });
+			await internalEventBus.publish('session.errorClear', {
+				namespaceId: 'global',
+				sessionId: session.id,
+			});
 
 			// Stop the query with shorter timeout and catch errors
 			await this.stop({
@@ -635,7 +641,7 @@ export class QueryLifecycleManager {
 			throw error;
 		}
 
-		internalEventBus.publishAsync('message.sent', { sessionId: session.id });
+		internalEventBus.publishAsync('message.sent', { namespaceId: 'global', sessionId: session.id });
 	}
 
 	private async handleQueuedMessageFailure(
@@ -711,6 +717,7 @@ export class QueryLifecycleManager {
 		db.updateMessageStatus([enqueuedMessage.dbId], 'failed');
 		try {
 			await internalEventBus.publish('messages.statusChanged', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				messageIds: [enqueuedMessage.dbId],
 				status: 'failed',

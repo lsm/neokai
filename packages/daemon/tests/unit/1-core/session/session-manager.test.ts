@@ -394,6 +394,7 @@ describe('SessionManager', () => {
 			expect(mockInternalEventBus.publish).toHaveBeenCalledWith(
 				'session.updated',
 				expect.objectContaining({
+					namespaceId: 'test-id',
 					sessionId: 'test-id',
 				})
 			);
@@ -658,9 +659,11 @@ describe('SessionManager', () => {
 			expect(mockDb.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
 			expect(cleanupSpy).toHaveBeenCalled();
 			expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.errorClear', {
+				namespaceId: 'test-id',
 				sessionId: 'test-id',
 			});
 			expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.reset', {
+				namespaceId: 'test-id',
 				sessionId: 'test-id',
 				session: expect.objectContaining({ id: 'test-id' }),
 				restartQuery: false,
@@ -733,6 +736,7 @@ describe('SessionManager', () => {
 				expect(result).toEqual({ success: true });
 				expect(freshSession).not.toBe(oldSession);
 				expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.reset', {
+					namespaceId: 'test-id',
 					sessionId: 'test-id',
 					session: expect.objectContaining({ id: 'test-id' }),
 					restartQuery: true,

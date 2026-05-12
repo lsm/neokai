@@ -249,6 +249,7 @@ export class ModelSwitchHandler {
 
 				// Emit session.updated event - include data for decoupled state management
 				await internalEventBus.publish('session.updated', {
+					namespaceId: session.id,
 					sessionId: session.id,
 					source: 'model-switch',
 					session: { config: session.config },
@@ -288,6 +289,7 @@ export class ModelSwitchHandler {
 				// This prevents stale model display during the restart window before
 				// the restarted query emits a fresh system:init with the new model
 				await internalEventBus.publish('session.updated', {
+					namespaceId: session.id,
 					sessionId: session.id,
 					source: 'model-switch',
 					session: { config: session.config },

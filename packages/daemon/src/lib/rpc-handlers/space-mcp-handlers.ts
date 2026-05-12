@@ -45,7 +45,10 @@ function emitChanged(
 	daemonHub: DaemonHub,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): void {
-	internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
+	internalEventBus.publishAsync('mcp.registry.changed', {
+		namespaceId: 'global',
+		sessionId: 'global',
+	});
 }
 
 async function assertSpaceExists(spaceManager: SpaceManager, spaceId: string): Promise<void> {

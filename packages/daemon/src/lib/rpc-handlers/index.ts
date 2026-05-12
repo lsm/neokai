@@ -476,8 +476,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.daemonHub,
 		deps.internalEventBus,
 		deps.spaceManager,
-		spaceRuntimeService,
-		deps.internalEventBus
+		spaceRuntimeService
 	);
 
 	// Space task handlers — registered after spaceRuntimeService so the resume

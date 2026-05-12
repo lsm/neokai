@@ -95,6 +95,7 @@ export class SDKRuntimeConfig {
 
 			// Emit event for UI update
 			await internalEventBus.publish('session.updated', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				source: 'thinking-tokens',
 				session: { config: session.config },
@@ -135,6 +136,7 @@ export class SDKRuntimeConfig {
 
 			// Emit event for UI update
 			await internalEventBus.publish('session.updated', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				source: 'permission-mode',
 				session: { config: session.config },
@@ -192,6 +194,7 @@ export class SDKRuntimeConfig {
 
 			// 3. Emit event for StateManager
 			await internalEventBus.publish('session.updated', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				source: 'config',
 				session: { config: session.config },
@@ -222,6 +225,7 @@ export class SDKRuntimeConfig {
 			if (!contextInfo) return;
 			contextTracker.updateWithDetailedBreakdown(contextInfo);
 			await internalEventBus.publish('context.updated', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				contextInfo,
 			});

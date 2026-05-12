@@ -33,7 +33,7 @@ function emitChanged(
 	daemonHub: DaemonHub,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): void {
-	internalEventBus.publishAsync('skills.changed', { sessionId: 'global' });
+	internalEventBus.publishAsync('skills.changed', { namespaceId: 'global', sessionId: 'global' });
 }
 
 // ---------------------------------------------------------------------------

@@ -67,21 +67,9 @@ export function setupSessionHandlers(
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceManager: SpaceManager,
 	spaceRuntimeService: SpaceRuntimeService | undefined,
-	internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
 	const publishSpaceUpdated = (payload: DaemonInternalEventMap['space.updated']): void => {
-		if (internalEventBus) {
-			internalEventBus.publishAsync('space.updated', payload);
-			return;
-		}
-
-		void daemonHub
-			.emit('space.updated', {
-				sessionId: payload.sessionId,
-				spaceId: payload.spaceId,
-				space: payload.space,
-			})
-			.catch(() => {});
+		internalEventBus.publishAsync('space.updated', payload);
 	};
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
@@ -129,7 +117,11 @@ export function setupSessionHandlers(
 		// Broadcast to daemonHub so other subscribers (StateManager, etc.) can react.
 		// Kept for non-critical side effects; critical attachment above is synchronous.
 		if (session) {
-			internalEventBus.publishAsync('session.created', { sessionId, session });
+			internalEventBus.publishAsync('session.created', {
+				namespaceId: sessionId,
+				sessionId,
+				session,
+			});
 		}
 
 		return { sessionId, session };
@@ -489,7 +481,10 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		internalEventBus.publishAsync('agent.interruptRequest', { sessionId: targetSessionId });
+		internalEventBus.publishAsync('agent.interruptRequest', {
+			namespaceId: 'global',
+			sessionId: targetSessionId,
+		});
 
 		return { accepted: true };
 	});
@@ -883,6 +878,7 @@ export function setupSessionHandlers(
 
 		// Also emit event for StateManager to update clients
 		await internalEventBus.publish('agent.reset', {
+			namespaceId: targetSessionId,
 			sessionId: targetSessionId,
 			success: result.success,
 			error: result.error,
@@ -911,6 +907,7 @@ export function setupSessionHandlers(
 
 			// Emit event so StateManager and UI can react to the restart
 			await internalEventBus.publish('agent.restart', {
+				namespaceId: targetSessionId,
 				sessionId: targetSessionId,
 				success: true,
 			});
@@ -919,6 +916,7 @@ export function setupSessionHandlers(
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 			await internalEventBus.publish('agent.restart', {
+				namespaceId: targetSessionId,
 				sessionId: targetSessionId,
 				success: false,
 				error: errorMessage,

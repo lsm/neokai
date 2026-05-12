@@ -56,6 +56,7 @@ export class SessionConfigHandler {
 		db.updateSession(session.id, { config: session.config });
 
 		await internalEventBus.publish('session.updated', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			source: 'config-update',
 			session: { config: session.config },
@@ -93,6 +94,7 @@ export class SessionConfigHandler {
 		db.updateSession(session.id, { config: session.config });
 
 		await internalEventBus.publish('session.updated', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			source: 'config-update',
 			session: { config: session.config },

@@ -69,7 +69,10 @@ function emitChanged(
 	daemonHub: DaemonHub,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): void {
-	internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
+	internalEventBus.publishAsync('mcp.registry.changed', {
+		namespaceId: 'global',
+		sessionId: 'global',
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +228,10 @@ export function setupAppMcpHandlers(
 
 		const override = db.mcpEnablement.setOverride(scopeType, scopeId, serverId, enabled);
 
-		internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
+		internalEventBus.publishAsync('mcp.registry.changed', {
+			namespaceId: 'global',
+			sessionId: 'global',
+		});
 
 		return { override } satisfies McpEnablementSetOverrideResponse;
 	});
@@ -239,7 +245,10 @@ export function setupAppMcpHandlers(
 
 		const deleted = db.mcpEnablement.clearOverride(scopeType, scopeId, serverId);
 		if (deleted) {
-			internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
+			internalEventBus.publishAsync('mcp.registry.changed', {
+				namespaceId: 'global',
+				sessionId: 'global',
+			});
 		}
 		return { deleted } satisfies McpEnablementClearOverrideResponse;
 	});
@@ -252,7 +261,10 @@ export function setupAppMcpHandlers(
 
 		const deleted = db.mcpEnablement.clearScope(scopeType, scopeId);
 		if (deleted > 0) {
-			internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
+			internalEventBus.publishAsync('mcp.registry.changed', {
+				namespaceId: 'global',
+				sessionId: 'global',
+			});
 		}
 		return { deleted } satisfies McpEnablementClearScopeResponse;
 	});

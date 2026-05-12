@@ -271,7 +271,11 @@ export class SessionLifecycle {
 		this.sessionCache.set(sessionId, agentSession);
 
 		// Emit event via InternalEventBus (StateProjectionService handles state updates)
-		await this.internalEventBus.publish('session.created', { sessionId, session });
+		await this.internalEventBus.publish('session.created', {
+			namespaceId: sessionId,
+			sessionId,
+			session,
+		});
 
 		return sessionId;
 	}
@@ -413,6 +417,7 @@ export class SessionLifecycle {
 
 		// Emit event for state synchronization
 		await this.internalEventBus.publish('session.updated', {
+			namespaceId: sessionId,
 			sessionId,
 			session: updatedSession,
 		});
@@ -517,6 +522,7 @@ export class SessionLifecycle {
 
 		// Emit event for state synchronization
 		await this.internalEventBus.publish('session.updated', {
+			namespaceId: sessionId,
 			sessionId,
 			session: updatedSession,
 		});
@@ -538,6 +544,7 @@ export class SessionLifecycle {
 
 		// FIX: Emit event via InternalEventBus - include data for decoupled state management
 		await this.internalEventBus.publish('session.updated', {
+			namespaceId: sessionId,
 			sessionId,
 			source: 'update',
 			session: updates,
@@ -770,7 +777,10 @@ export class SessionLifecycle {
 					{ sessionId, reason: 'deleted' },
 					{ channel: 'global' }
 				);
-				await this.internalEventBus.publish('session.deleted', { sessionId });
+				await this.internalEventBus.publish('session.deleted', {
+					namespaceId: sessionId,
+					sessionId,
+				});
 				completedPhases.push('broadcast');
 			} catch (error) {
 				this.logger.error(`[SessionLifecycle] deleteResources: Failed to broadcast:`, error);
@@ -921,6 +931,7 @@ export class SessionLifecycle {
 
 			// Broadcast updates - include session data for decoupled state management
 			await this.internalEventBus.publish('session.updated', {
+				namespaceId: sessionId,
 				sessionId,
 				source: 'title-generated',
 				session: updatedSession,
@@ -947,6 +958,7 @@ export class SessionLifecycle {
 
 			// Include session data for decoupled state management
 			await this.internalEventBus.publish('session.updated', {
+				namespaceId: sessionId,
 				sessionId,
 				source: 'title-generated',
 				session: fallbackSession,

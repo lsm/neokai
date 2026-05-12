@@ -112,6 +112,7 @@ describe('MessagePersistence', () => {
 		expect(messageHubEventSpy).not.toHaveBeenCalled();
 		expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-1', 'hello idle');
 		expect(daemonHubEmitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+			namespaceId: 'test-session-id',
 			sessionId: 'test-session-id',
 			messageIds: ['db-msg-1'],
 			status: 'enqueued',

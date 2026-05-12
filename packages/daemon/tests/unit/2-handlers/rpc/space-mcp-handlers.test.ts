@@ -250,7 +250,10 @@ describe('space-mcp-handlers', () => {
 				serverId: srv.id,
 				enabled: false,
 			});
-			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' }); (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
+			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', {
+				namespaceId: 'global',
+				sessionId: 'global',
+			}); (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
 		});
 
 		test('flip — second call replaces the prior override', async () => {
@@ -349,7 +352,10 @@ describe('space-mcp-handlers', () => {
 
 			expect(result.ok).toBe(true);
 			expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toBeNull();
-			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' }); (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
+			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', {
+				namespaceId: 'global',
+				sessionId: 'global',
+			}); (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
 		});
 
 		test('idempotent — no override row still returns ok:true and no emit', async () => {
@@ -418,7 +424,10 @@ describe('space-mcp-handlers', () => {
 			expect(result.imported).toBe(1);
 			expect(result.removed).toBe(0);
 			expect(appMcpRepo.getByName('foo')?.source).toBe('imported');
-			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' }); (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
+			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', {
+				namespaceId: 'global',
+				sessionId: 'global',
+			}); (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
 		});
 
 		test('scans every space when no workspacePath narrow is given', async () => {

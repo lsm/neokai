@@ -623,6 +623,7 @@ describe('QueryLifecycleManager', () => {
 			await manager.reset();
 
 			expect(internalPublishSpy).toHaveBeenCalledWith('session.errorClear', {
+				namespaceId: 'global',
 				sessionId: 'test-session',
 			});
 		});
@@ -886,6 +887,7 @@ describe('QueryLifecycleManager', () => {
 			await manager.startQueryAndEnqueue('msg-123', 'Hello');
 
 			expect(internalPublishAsyncSpy).toHaveBeenCalledWith('message.sent', {
+				namespaceId: 'global',
 				sessionId: 'test-session',
 			});
 		});
@@ -1027,11 +1029,15 @@ describe('QueryLifecycleManager', () => {
 
 			expect(resetSpy).toHaveBeenCalledTimes(1);
 			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-123'], 'failed');
-			expect(internalPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
-				sessionId: 'test-session',
-				messageIds: ['db-msg-123'],
-				status: 'failed',
-			});
+			expect(internalPublishSpy).toHaveBeenCalledWith(
+				'messages.statusChanged',
+				expect.objectContaining({
+					namespaceId: 'test-session',
+					sessionId: 'test-session',
+					messageIds: ['db-msg-123'],
+					status: 'failed',
+				})
+			);
 			expect(setIdleSpy).toHaveBeenCalled();
 		});
 	});

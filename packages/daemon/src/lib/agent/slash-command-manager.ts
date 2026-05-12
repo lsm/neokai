@@ -99,6 +99,7 @@ export class SlashCommandManager {
 		db.updateSession(session.id, { availableCommands: this.slashCommands });
 
 		await internalEventBus.publish('commands.updated', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			commands: this.slashCommands,
 		});
@@ -139,6 +140,7 @@ export class SlashCommandManager {
 
 			// Emit event
 			await internalEventBus.publish('commands.updated', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				commands: this.slashCommands,
 			});

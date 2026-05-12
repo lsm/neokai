@@ -170,6 +170,7 @@ export class AskUserQuestionHandler {
 					`AskUserQuestion ${options.toolUseID}: consuming queued answer (behavior=${queued.behavior})`
 				);
 				await internalEventBus.publish('question.injected_as_tool_result', {
+					namespaceId: session.id,
 					sessionId: session.id,
 					toolUseId: options.toolUseID,
 					mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
@@ -202,6 +203,7 @@ export class AskUserQuestionHandler {
 
 			// Emit event for logging/debugging
 			await internalEventBus.publish('question.asked', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				pendingQuestion,
 			});
@@ -395,6 +397,7 @@ export class AskUserQuestionHandler {
 		await stateManager.setIdle();
 
 		await internalEventBus.publish('question.orphaned', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			toolUseId: pendingQuestion.toolUseId,
 			reason: telemetryReason,
@@ -474,6 +477,7 @@ export class AskUserQuestionHandler {
 		const mode: 'submitted' | 'cancelled' = result.behavior === 'allow' ? 'submitted' : 'cancelled';
 
 		await internalEventBus.publish('question.injected_as_tool_result', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			toolUseId,
 			mode,

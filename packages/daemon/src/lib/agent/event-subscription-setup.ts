@@ -84,6 +84,7 @@ export class EventSubscriptionSetup {
 
 				// Emit result via InternalEventBus
 				await internalEventBus.publish('model.switched', {
+					namespaceId: sid,
 					sessionId: sid,
 					success: result.success,
 					model: result.model,
@@ -99,7 +100,10 @@ export class EventSubscriptionSetup {
 			'agent.interruptRequest',
 			async ({ sessionId: sid }) => {
 				await interruptHandler.handleInterrupt();
-				await internalEventBus.publish('agent.interrupted', { sessionId: sid });
+				await internalEventBus.publish('agent.interrupted', {
+					namespaceId: 'global',
+					sessionId: sid,
+				});
 			},
 			{ sessionId }
 		);
@@ -115,6 +119,7 @@ export class EventSubscriptionSetup {
 				});
 
 				await internalEventBus.publish('agent.reset', {
+					namespaceId: sid,
 					sessionId: sid,
 					success: result.success,
 					error: result.error,
@@ -136,7 +141,10 @@ export class EventSubscriptionSetup {
 					data.messageContent as string | MessageContent[]
 				);
 			},
-			{ subscriberName: `EventSubscriptionSetup.messagePersisted.${sessionId}`, sessionId }
+			{
+				subscriberName: `EventSubscriptionSetup.messagePersisted.${sessionId}`,
+				namespaceId: sessionId,
+			}
 		);
 		this.unsubscribers.push(unsubMessagePersisted);
 
@@ -146,7 +154,7 @@ export class EventSubscriptionSetup {
 			async () => {
 				await queryModeHandler.handleQueryTrigger();
 			},
-			{ subscriberName: `EventSubscriptionSetup.queryTrigger.${sessionId}`, sessionId }
+			{ subscriberName: `EventSubscriptionSetup.queryTrigger.${sessionId}`, namespaceId: sessionId }
 		);
 		this.unsubscribers.push(unsubQueryTrigger);
 

@@ -230,7 +230,10 @@ export class SessionManager {
 		session: Session;
 		restartQuery: boolean;
 	}): Promise<void> {
-		await this.internalEventBus!.publish('session.reset', event);
+		await this.internalEventBus!.publish('session.reset', {
+			...event,
+			namespaceId: event.sessionId,
+		});
 		for (const subscriber of this.sessionResetSubscribers) {
 			await subscriber(event);
 		}
@@ -251,7 +254,10 @@ export class SessionManager {
 				persistedSession
 			);
 
-			await this.internalEventBus!.publish('session.errorClear', { sessionId });
+			await this.internalEventBus!.publish('session.errorClear', {
+				namespaceId: sessionId,
+				sessionId,
+			});
 
 			const freshSession = this.createAgentSessionFromSession(sessionForFreshInstance, {
 				autoReplayPendingMessages: false,

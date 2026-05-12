@@ -155,6 +155,7 @@ export class SDKMessageHandler {
 			messageQueue.clear();
 			this.resetCircuitBreaker();
 			await internalEventBus.publish('session.errorClear', {
+				namespaceId: session.id,
 				sessionId: session.id,
 			});
 
@@ -283,6 +284,7 @@ export class SDKMessageHandler {
 		});
 
 		await internalEventBus.publish('messages.statusChanged', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			messageIds: [persistedMessage.dbId],
 			status: 'consumed',
@@ -302,6 +304,7 @@ export class SDKMessageHandler {
 		// Emit on DaemonHub for server-side listeners (e.g. group message mirroring)
 		// so pre-persisted user messages appear in the group timeline.
 		await internalEventBus.publish('sdk.message', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			message: sdkReplayMessage,
 		});
@@ -329,6 +332,7 @@ export class SDKMessageHandler {
 			// The original timestamp (when user consumed it) is a better approximation
 			// than turn-end time.
 			await internalEventBus.publish('messages.statusChanged', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				messageIds: [enqueuedUser.dbId],
 				status: 'consumed',
@@ -373,6 +377,7 @@ export class SDKMessageHandler {
 				db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
 			});
 			internalEventBus.publishAsync('messages.statusChanged', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				messageIds: [deferredMessage.dbId],
 				status: 'consumed',
@@ -390,6 +395,7 @@ export class SDKMessageHandler {
 				{ channel: `session:${session.id}` }
 			);
 			internalEventBus.publishAsync('sdk.message', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
 				message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
@@ -405,6 +411,7 @@ export class SDKMessageHandler {
 
 		// Emit status change event (for queue overlay polling)
 		internalEventBus.publishAsync('messages.statusChanged', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			messageIds: [enqueuedMessage.dbId],
 			status: 'consumed',
@@ -429,6 +436,7 @@ export class SDKMessageHandler {
 		// Emit on InternalEventBus for server-side listeners (e.g. group message mirroring)
 		// so injected user messages (like leader envelope) appear in the group timeline.
 		internalEventBus.publishAsync('sdk.message', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
 			message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
@@ -533,6 +541,7 @@ export class SDKMessageHandler {
 
 		// Emit on DaemonHub for server-side listeners (e.g. conversation session mirroring)
 		await this.ctx.internalEventBus.publish('sdk.message', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			message,
 		});
@@ -606,6 +615,7 @@ export class SDKMessageHandler {
 			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
 			await internalEventBus.publish('session.updated', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				source: 'sdk-session',
 				session: { sdkSessionId: message.session_id, sdkOriginPath },
@@ -682,6 +692,7 @@ export class SDKMessageHandler {
 		// Emit session.updated event so StateManager broadcasts the change
 		// Include data for decoupled state management
 		await internalEventBus.publish('session.updated', {
+			namespaceId: session.id,
 			sessionId: session.id,
 			source: 'metadata',
 			session: {
@@ -712,6 +723,7 @@ export class SDKMessageHandler {
 		// Clear any session errors since we successfully completed a turn
 		// This resolves persistent error banners that weren't being cleared
 		await internalEventBus.publish('session.errorClear', {
+			namespaceId: session.id,
 			sessionId: session.id,
 		});
 
@@ -722,7 +734,10 @@ export class SDKMessageHandler {
 		// Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
 		if (session.config.queryMode !== 'manual') {
 			try {
-				await internalEventBus.publish('query.trigger', { sessionId: session.id });
+				await internalEventBus.publish('query.trigger', {
+					namespaceId: 'global',
+					sessionId: session.id,
+				});
 			} catch (error) {
 				this.logger.warn('Failed to dispatch deferred messages on turn end:', error);
 			}
@@ -753,6 +768,7 @@ export class SDKMessageHandler {
 			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
 			await internalEventBus.publish('session.updated', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				source: 'metadata',
 				session: { metadata: session.metadata },
@@ -839,6 +855,7 @@ export class SDKMessageHandler {
 				if (!contextInfo) return;
 				contextTracker.updateWithDetailedBreakdown(contextInfo);
 				await internalEventBus.publish('context.updated', {
+					namespaceId: session.id,
 					sessionId: session.id,
 					contextInfo,
 				});

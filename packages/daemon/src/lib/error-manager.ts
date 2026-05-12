@@ -441,6 +441,7 @@ export class ErrorManager {
 			// API connection is a global event (not session-specific)
 			if (this.internalEventBus) {
 				this.internalEventBus.publishAsync('api.connection', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					status: newStatus,
 					errorCount: this.apiConnectionErrors,
@@ -473,6 +474,7 @@ export class ErrorManager {
 			// API connection is a global event (not session-specific)
 			if (this.internalEventBus) {
 				this.internalEventBus.publishAsync('api.connection', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					status: 'connected',
 					errorCount: 0,
@@ -515,6 +517,7 @@ export class ErrorManager {
 		// Emit via InternalEventBus for StateManager to fold into state.session
 		if (this.internalEventBus) {
 			this.internalEventBus.publishAsync('session.error', {
+				namespaceId: sessionId,
 				sessionId,
 				error: error.userMessage,
 				details: error,

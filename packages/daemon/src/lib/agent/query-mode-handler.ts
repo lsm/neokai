@@ -65,6 +65,7 @@ export class QueryModeHandler {
 
 			// Emit status change event
 			await internalEventBus.publish('messages.statusChanged', {
+				namespaceId: session.id,
 				sessionId: session.id,
 				messageIds: dbIds,
 				status: 'enqueued',
