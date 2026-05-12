@@ -2,6 +2,30 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.23.0] - 2026-05-12
+
+A release completing the InternalEventBus migration, adding space chat subagents, settings URL routing, and fixing task dependency enforcement and mobile Safari composer. 17 commits since v0.22.0.
+
+### Added
+
+- **Space chat subagents**: Enable read-only SDK subagents for Space Agent investigation while keeping file editing tools denied
+- **Settings URL routing**: Settings tab selection preserved in URL for direct links and browser history
+- **Scheduled task fire events**: Tests ensure scheduled task fires publish task and schedule update events
+
+### Changed
+
+- **InternalEventBus migration complete**: All session, agent, query, config, and Space events migrated from DaemonHub; NotificationSink removed; StateManager split into StateProjectionService + InternalEventBus subscribers; ClientEventBridge owns all client delivery; namespaceId replaces sessionId
+- **Root test guard**: Block bare `bun test` from repo root to prevent unintended full-suite runs
+
+### Fixed
+
+- **Task dependencies**: Enforce dependencies on late `dependsOn` addition; auto-unblock dependents on completion; cascade events for all dependency state changes
+- **iOS Safari composer**: Keep textarea visible during keyboard resize; avoid padding churn; freeze composer growth during keyboard input; restore pre-1836 resize timing
+- **Post-approval merge**: Preserve branches after post-approval merge
+- **Task composer**: Show live context usage instead of 0% fallback
+- **Mobile**: Fix overflow in space task tabs; merge archived into Completed; handle legacy archived routes
+- **Codex**: Use Codex context windows for auto-compaction instead of fixed 1M
+
 ## [0.22.0] - 2026-05-11
 
 A release adding workflow handles, scheduled tasks, dead-loop detection, Channels/ClientEventGateway foundation, and major LiveQuery performance improvements. 24 commits since v0.21.0.
