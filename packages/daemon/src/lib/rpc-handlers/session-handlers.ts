@@ -874,7 +874,7 @@ export function setupSessionHandlers(
 		// This allows the client to get immediate feedback on success/failure
 		const result = await agentSession.resetQuery({ restartQuery, hardReset: true });
 
-		// Also emit event for StateManager to update clients
+		// Telemetry event — no subscriber yet; kept for forward-compat
 		await internalEventBus.publish('agent.reset', {
 			namespaceId: targetSessionId,
 			sessionId: targetSessionId,

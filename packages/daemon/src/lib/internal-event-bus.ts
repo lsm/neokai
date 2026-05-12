@@ -799,6 +799,8 @@ export interface AgentEvents {
 		userMessageText?: string;
 		needsWorkspaceInit?: boolean;
 		hasDraftToClear?: boolean;
+		sendStatus: 'deferred' | 'enqueued' | 'consumed';
+		deliveryMode: import('@neokai/shared').MessageDeliveryMode;
 		skipQueryStart?: boolean;
 	};
 	'session.reset': {

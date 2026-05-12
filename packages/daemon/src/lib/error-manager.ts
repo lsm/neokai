@@ -437,10 +437,10 @@ export class ErrorManager {
 		if (newStatus !== this.currentApiStatus) {
 			this.currentApiStatus = newStatus;
 
-			// Emit via InternalEventBus for internal server-side listeners (StateManager)
+			// Emit via DaemonHub for internal server-side listeners (StateManager, ClientEventBridge)
 			// API connection is a global event (not session-specific)
-			if (this.internalEventBus) {
-				this.daemonHub!.emit('api.connection', {
+			if (this.daemonHub) {
+				this.daemonHub.emit('api.connection', {
 					sessionId: 'global',
 					status: newStatus,
 					errorCount: this.apiConnectionErrors,
@@ -469,10 +469,10 @@ export class ErrorManager {
 		if (hadErrors && this.currentApiStatus !== 'connected') {
 			this.currentApiStatus = 'connected';
 
-			// Emit via InternalEventBus for internal server-side listeners (StateManager)
+			// Emit via DaemonHub for internal server-side listeners (StateManager, ClientEventBridge)
 			// API connection is a global event (not session-specific)
-			if (this.internalEventBus) {
-				this.daemonHub!.emit('api.connection', {
+			if (this.daemonHub) {
+				this.daemonHub.emit('api.connection', {
 					sessionId: 'global',
 					status: 'connected',
 					errorCount: 0,
@@ -512,9 +512,9 @@ export class ErrorManager {
 			return;
 		}
 
-		// Emit via InternalEventBus for StateManager to fold into state.session
-		if (this.internalEventBus) {
-			this.daemonHub!.emit('session.error', {
+		// Emit via DaemonHub for StateManager to fold into state.session
+		if (this.daemonHub) {
+			this.daemonHub.emit('session.error', {
 				sessionId,
 				error: error.userMessage,
 				details: error,

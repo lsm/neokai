@@ -631,6 +631,7 @@ export class QueryLifecycleManager {
 			throw error;
 		}
 
+		// Telemetry event — no subscriber yet; kept for forward-compat
 		internalEventBus.publishAsync('message.sent', { namespaceId: 'global', sessionId: session.id });
 	}
 
