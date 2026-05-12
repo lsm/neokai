@@ -106,6 +106,74 @@ describe('InputTextarea', () => {
 
 			expect(scrollIntoView).not.toHaveBeenCalled();
 		});
+
+		it('should not scroll textarea into view on initial render when keyboard is open', () => {
+			document.documentElement.classList.add('keyboard-open');
+			const scrollIntoView = vi.fn();
+			const originalScrollIntoView = HTMLTextAreaElement.prototype.scrollIntoView;
+			Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollIntoView', {
+				configurable: true,
+				writable: true,
+				value: scrollIntoView,
+			});
+
+			render(
+				<InputTextarea
+					content="one line\ntwo lines"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(scrollIntoView).not.toHaveBeenCalled();
+			Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollIntoView', {
+				configurable: true,
+				writable: true,
+				value: originalScrollIntoView,
+			});
+		});
+
+		it('should not scroll textarea into view when it shrinks while keyboard is open', () => {
+			document.documentElement.classList.add('keyboard-open');
+			let scrollHeight = 100;
+			const scrollIntoView = vi.fn();
+			const originalScrollHeight = Object.getOwnPropertyDescriptor(
+				HTMLTextAreaElement.prototype,
+				'scrollHeight'
+			);
+			Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+				configurable: true,
+				get: () => scrollHeight,
+			});
+			const { rerender } = render(
+				<InputTextarea
+					content="one line\ntwo lines"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			scrollHeight = 40;
+			const textarea = document.querySelector('textarea')!;
+			textarea.scrollIntoView = scrollIntoView;
+			rerender(
+				<InputTextarea
+					content="one line"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(scrollIntoView).not.toHaveBeenCalled();
+			if (originalScrollHeight) {
+				Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', originalScrollHeight);
+			} else {
+				delete HTMLTextAreaElement.prototype.scrollHeight;
+			}
+		});
 	});
 
 	describe('Input Handling - Bug Fix Coverage', () => {
