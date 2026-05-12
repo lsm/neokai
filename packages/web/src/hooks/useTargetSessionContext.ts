@@ -177,57 +177,68 @@ export function useTargetSessionContext({
 	const [thinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>('off');
 
 	useEffect(() => {
-		setContextInfo(null);
-		if (!targetSessionId) return;
+		if (!targetSessionId) {
+			setContextInfo(null);
+			return;
+		}
 
 		let cancelled = false;
+		let liveContextReceived = false;
+		let joined = false;
+		let unsubscribeSessionState: (() => void) | null = null;
+		let unsubscribeContextUpdated: (() => void) | null = null;
 		const channel = `session:${targetSessionId}`;
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) return;
 
-		hub.joinChannel(channel);
-
 		const applySessionState = (state: SessionState) => {
-			const lastContextInfo = state.sessionInfo?.metadata?.lastContextInfo;
-			if (lastContextInfo) {
-				setContextInfo(lastContextInfo);
-			}
+			setContextInfo(state.sessionInfo?.metadata?.lastContextInfo ?? null);
 		};
 
-		const unsubSessionState = hub.onEvent<SessionState>('state.session', (state, context) => {
-			if (cancelled) return;
-			if (context.channel !== channel) return;
-			applySessionState(state);
-		});
-
-		const unsubContextUpdated = hub.onEvent<ContextInfo>(
-			'context.updated',
-			(nextContextInfo, context) => {
-				if (cancelled) return;
-				if (context.channel !== channel) return;
-				setContextInfo(nextContextInfo);
-			}
-		);
-
-		const loadInitialContext = async () => {
+		const setupContextSubscriptions = async () => {
 			try {
+				await hub.joinChannel(channel);
+				joined = true;
+				if (cancelled) {
+					void hub.leaveChannel(channel);
+					return;
+				}
+
+				unsubscribeSessionState = hub.onEvent<SessionState>('state.session', (state, context) => {
+					if (cancelled) return;
+					if (context.channel !== channel) return;
+					applySessionState(state);
+				});
+
+				unsubscribeContextUpdated = hub.onEvent<ContextInfo>(
+					'context.updated',
+					(nextContextInfo, context) => {
+						if (cancelled) return;
+						if (context.channel !== channel) return;
+						liveContextReceived = true;
+						setContextInfo(nextContextInfo);
+					}
+				);
+
 				const state = await hub.request<SessionState>('state.session', {
 					sessionId: targetSessionId,
 				});
-				if (!cancelled) {
+				if (!cancelled && !liveContextReceived) {
 					applySessionState(state);
 				}
 			} catch {
-				// Ignore errors — context will update on the next context.updated/state.session event.
+				// Ignore errors — keep the existing snapshot until the next successful state/event update.
 			}
 		};
-		void loadInitialContext();
+		void setupContextSubscriptions();
 
 		return () => {
 			cancelled = true;
-			unsubSessionState();
-			unsubContextUpdated();
-			hub.leaveChannel(channel);
+			unsubscribeSessionState?.();
+			unsubscribeContextUpdated?.();
+			if (joined) {
+				void hub.leaveChannel(channel);
+			}
 		};
 	}, [targetSessionId, connectionState.value]);
 
