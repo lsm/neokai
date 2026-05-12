@@ -21,7 +21,7 @@
  *   - Real API: requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  *
  * Run:
- *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/startup-timeout-no-retry.test.ts
+ *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/convo/startup-timeout-no-retry.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';

@@ -13,8 +13,8 @@
  * OpenAI Responses API.
  *
  * Run with:
- *   OPENAI_API_KEY=sk-xxx bun test \
- *     packages/daemon/tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
+ *   cd packages/daemon && OPENAI_API_KEY=sk-xxx bun test \
+ *     ./tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';

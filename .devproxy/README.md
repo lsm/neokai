@@ -6,10 +6,10 @@ This directory contains mock response files for the NeoKai test suite. These fil
 
 ```bash
 # Run one online test with Dev Proxy (helper auto starts/stops proxy)
-NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts
 
 # Or run all online tests
-NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/
+cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/
 ```
 
 ### Strict Safety in Dev Proxy Mode
@@ -29,7 +29,7 @@ After a test run, either:
 
 ```bash
 # Persist logs to .devproxy/devproxy.log during helper-managed stop
-NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+(cd packages/daemon && NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts)
 tail -n 120 .devproxy/devproxy.log
 
 # Or read directly from devproxy

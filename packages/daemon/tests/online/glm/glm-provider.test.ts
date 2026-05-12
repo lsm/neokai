@@ -7,7 +7,7 @@
  * 3. ModelService — GLM model inclusion in getAvailableModels
  * 4. Actual API call to GLM
  *
- * Run with: GLM_API_KEY=xxx bun test packages/daemon/tests/online/glm/glm-provider.test.ts
+ * Run with: cd packages/daemon && GLM_API_KEY=xxx bun test ./tests/online/glm/glm-provider.test.ts
  *
  * REQUIREMENTS:
  * - GLM_API_KEY environment variable (or ZHIPU_API_KEY)

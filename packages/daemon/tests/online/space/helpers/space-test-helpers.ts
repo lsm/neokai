@@ -22,7 +22,7 @@
  *
  * ## Usage
  *
- *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/space/...
+ *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/space/...
  */
 
 import { createDaemonServer, type DaemonServerContext } from '../../../helpers/daemon-server';

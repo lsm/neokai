@@ -43,7 +43,7 @@ bun run check        # lint + typecheck + knip + check:session-guards
 bun run lint:fix     # oxlint --fix
 bun run format       # biome write
 
-# Tests — never run bare `bun test` from repo root
+# Tests — never run `bun test` from repo root
 ./scripts/test-daemon.sh                # all daemon shards in parallel
 ./scripts/test-daemon.sh 2-handlers     # one shard
 ./scripts/test-daemon.sh --rerun        # rerun previously failing files
