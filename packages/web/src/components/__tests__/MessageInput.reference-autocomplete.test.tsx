@@ -152,6 +152,8 @@ describe('MessageInput reference autocomplete', () => {
 		mockCommandHandleKeyDown.mockReturnValue(false);
 		mockCommandHandleKeyDown.mockClear();
 		capturedOnSelect = null;
+		document.documentElement.classList.remove('keyboard-open');
+		document.querySelectorAll('[data-messages-container]').forEach((node) => node.remove());
 
 		Object.defineProperty(window, 'matchMedia', {
 			writable: true,
@@ -161,6 +163,8 @@ describe('MessageInput reference autocomplete', () => {
 
 	afterEach(() => {
 		cleanup();
+		document.documentElement.classList.remove('keyboard-open');
+		document.querySelectorAll('[data-messages-container]').forEach((node) => node.remove());
 	});
 
 	function renderInput(onSend = vi.fn(async () => {})) {
@@ -318,6 +322,53 @@ describe('MessageInput reference autocomplete', () => {
 			const { getByText } = renderInput();
 
 			expect(getByText('Slash Commands')).toBeTruthy();
+		});
+	});
+
+	describe('textarea height padding sync', () => {
+		it('syncs messages bottom padding when textarea height changes normally', () => {
+			const scroller = document.createElement('div');
+			scroller.dataset.messagesContainer = '';
+			document.body.appendChild(scroller);
+
+			const footer = document.createElement('div');
+			footer.className = 'chat-footer';
+			document.body.appendChild(footer);
+			Object.defineProperty(footer, 'scrollHeight', { configurable: true, value: 120 });
+			Object.defineProperty(footer, 'getBoundingClientRect', {
+				configurable: true,
+				value: () => ({ height: 120 }),
+			});
+			const { rerender } = renderInput();
+			scroller.style.removeProperty('--messages-bottom-padding');
+
+			mockDraftContent = 'one line\ntwo lines';
+			rerender(<MessageInput sessionId="test-session" onSend={vi.fn(async () => {})} />);
+
+			expect(scroller.style.getPropertyValue('--messages-bottom-padding')).not.toBe('');
+		});
+
+		it('does not sync messages bottom padding from textarea growth while keyboard is open', () => {
+			document.documentElement.classList.add('keyboard-open');
+			const scroller = document.createElement('div');
+			scroller.dataset.messagesContainer = '';
+			document.body.appendChild(scroller);
+
+			const footer = document.createElement('div');
+			footer.className = 'chat-footer';
+			document.body.appendChild(footer);
+			Object.defineProperty(footer, 'scrollHeight', { configurable: true, value: 120 });
+			Object.defineProperty(footer, 'getBoundingClientRect', {
+				configurable: true,
+				value: () => ({ height: 120 }),
+			});
+			const { rerender } = renderInput();
+			scroller.style.removeProperty('--messages-bottom-padding');
+
+			mockDraftContent = 'one line\ntwo lines';
+			rerender(<MessageInput sessionId="test-session" onSend={vi.fn(async () => {})} />);
+
+			expect(scroller.style.getPropertyValue('--messages-bottom-padding')).toBe('');
 		});
 	});
 

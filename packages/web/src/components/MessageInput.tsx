@@ -283,6 +283,15 @@ export default function MessageInput({
 
 	const handleTextareaHeightChange = useCallback(
 		(_heightPx: number) => {
+			// iOS Safari can re-anchor the page/browser chrome when the keyboard is open,
+			// the messages scroller is pinned to bottom, and textarea growth changes the
+			// footer-driven bottom padding. Keep the scroller layout stable during that
+			// fragile focused-input state; other effects still sync padding on mount,
+			// attachment/drag changes, and after the keyboard closes.
+			if (document.documentElement.classList.contains('keyboard-open')) {
+				return;
+			}
+
 			syncMessagesContainerPadding();
 		},
 		[syncMessagesContainerPadding]
