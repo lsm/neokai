@@ -15,6 +15,8 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+export NEOKAI_ALLOW_ROOT_TEST=1
+
 SHARDS=(0-shared 1-core 2-handlers 4-space-storage 5-space-agent 5-space-runtime 5-space-workflow 5-space-other)
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
