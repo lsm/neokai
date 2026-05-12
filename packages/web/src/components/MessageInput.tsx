@@ -15,7 +15,7 @@ import type {
 	SessionType,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
 	useCommandAutocomplete,
 	useFileAttachments,
@@ -273,7 +273,7 @@ export default function MessageInput({
 		};
 	}, [content, getImagesForSend]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		syncMessagesContainerPadding();
 	}, [syncMessagesContainerPadding]);
 

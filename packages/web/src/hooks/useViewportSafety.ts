@@ -6,15 +6,17 @@
  *
  * Two concerns:
  *
- * 1. **Touch Safari native handling**: On iPhone/iPad Safari, virtual keyboard
- *    resizing and focused-input anchoring are left to Safari. Custom layout
- *    compensation can fight the browser when a focused textarea grows.
+ * 1. **iPad Safari `--safe-height`**: On iPad Safari, `window.visualViewport.height`
+ *    is the actual visible content area after all browser chrome (tab bar, address
+ *    bar) is subtracted. This hook sets `--safe-height` on `document.documentElement`
+ *    so layout components can use it instead of `100svh` which does not account for
+ *    Safari's tab bar overlay.
  *
- * 2. **Virtual keyboard detection (non-touch-Safari platforms)**: When a virtual
- *    keyboard appears (detected via `window.innerHeight - visualViewport.height > 50px`), the hook:
+ * 2. **Virtual keyboard detection (all platforms)**: When a virtual keyboard appears
+ *    (detected via `window.innerHeight - visualViewport.height > 50px`), the hook:
  *    - Adds `keyboard-open` class to `<html>` for CSS targeting
- *    - Sets `--safe-height` to `visualViewport.height` so the app container shrinks
- *      to match the visible area
+ *    - Sets `--safe-height` to `visualViewport.height` (on all platforms, not just
+ *      iPad Safari) so the app container shrinks to match the visible area
  *    - Sets `--bottom-bar-height` to `0px` to remove padding reserved for the
  *      BottomTabBar (which is `position: fixed; bottom: 0` and hidden behind the
  *      keyboard on mobile)
@@ -39,23 +41,35 @@ import { useEffect } from 'preact/hooks';
 const KEYBOARD_THRESHOLD = 50;
 
 /**
- * Detect touch Safari (iPhone/iPad Safari, including iPadOS desktop-style UA).
+ * Detect iPad Safari.
  *
- * We intentionally let touch Safari handle virtual-keyboard resizing natively.
- * Custom keyboard compensation (safe-height writes, bottom-bar padding changes,
- * keyboard-open layout class) can fight Safari's focused-input anchoring when a
- * textarea grows while the keyboard and bottom address bar are visible.
+ * Strategy:
+ * - `navigator.maxTouchPoints > 1` distinguishes iPadOS from macOS on
+ *   non-touch Macs (iPadOS always reports ≥ 5 touch points; desktop Macs
+ *   report 0). The deprecated `navigator.platform` API is intentionally avoided.
+ * - User agent contains "Safari" but NOT "Chrome", "CriOS" (Chrome on iOS),
+ *   or "FxiOS" (Firefox on iOS) because iPadOS masquerades as macOS Safari.
  */
-function isTouchSafari(): boolean {
+function isIpadSafari(): boolean {
 	if (typeof navigator === 'undefined' || typeof window === 'undefined') {
 		return false;
 	}
 	const ua = navigator.userAgent;
-	const hasTouch = navigator.maxTouchPoints > 0;
+	const hasTouch = navigator.maxTouchPoints > 1;
 	const isSafariUA =
 		ua.includes('Safari') &&
-		!/(Chrome|Chromium|CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|DuckDuckGo|YaBrowser)/.test(ua);
+		!ua.includes('Chrome') &&
+		!ua.includes('CriOS') &&
+		!ua.includes('FxiOS');
 	return hasTouch && isSafariUA;
+}
+
+/**
+ * Update the `--safe-height` CSS custom property on `document.documentElement`
+ * using the current `visualViewport.height`.
+ */
+function updateSafeHeight(vv: VisualViewport): void {
+	document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 }
 
 /**
@@ -89,10 +103,10 @@ function isKeyboardVisible(vv: VisualViewport): boolean {
 /**
  * Hook that manages viewport-related CSS custom properties:
  *
- * - On **touch Safari**: leaves virtual-keyboard layout to Safari's native
- *   focused-input handling.
+ * - On **iPad Safari**: always sets `--safe-height` from `visualViewport.height`
+ *   to handle Safari's tab bar overlay.
  *
- * - On **other platforms with visualViewport**: detects virtual keyboard open/close
+ * - On **all platforms with visualViewport**: detects virtual keyboard open/close
  *   and adjusts `--safe-height` and `--bottom-bar-height` to prevent the
  *   black gap between the keyboard and app bottom.
  *
@@ -106,7 +120,7 @@ export function useViewportSafety(): void {
 			return;
 		}
 
-		const touchSafari = isTouchSafari();
+		const ipadSafari = isIpadSafari();
 		let keyboardOpen = false;
 		let savedBottomBarHeight: string | null = null;
 
@@ -115,13 +129,12 @@ export function useViewportSafety(): void {
 		 * `window.resize` event to keep layout in sync.
 		 */
 		const handleResize = () => {
-			// Let touch Safari handle virtual-keyboard geometry natively. Its focused-input
-			// anchoring is more reliable than our layout compensation when the composer grows.
-			if (touchSafari) {
-				return;
+			// Part 1: iPad Safari — always keep --safe-height in sync
+			if (ipadSafari) {
+				updateSafeHeight(vv);
 			}
 
-			// Keyboard detection (non-touch-Safari platforms)
+			// Part 2: Keyboard detection (all platforms)
 			const kbVisible = isKeyboardVisible(vv);
 
 			if (kbVisible && !keyboardOpen) {
@@ -151,8 +164,12 @@ export function useViewportSafety(): void {
 				keyboardOpen = false;
 				document.documentElement.classList.remove('keyboard-open');
 
-				// Remove the --safe-height override so the CSS fallback (100svh) takes effect again
-				document.documentElement.style.removeProperty('--safe-height');
+				// On non-iPad browsers, remove the --safe-height override so the
+				// CSS fallback (100svh) takes effect again
+				if (!ipadSafari) {
+					document.documentElement.style.removeProperty('--safe-height');
+				}
+				// On iPad, --safe-height is already updated above via updateSafeHeight()
 
 				// Remove keyboard height override
 				document.documentElement.style.removeProperty('--keyboard-height');
@@ -172,15 +189,20 @@ export function useViewportSafety(): void {
 				// This is safe: keyboardOpen is already false and the keyboard
 				// is not visible, so neither branch of the keyboard detection
 				// logic executes. The only redundant work is an extra
-				// safe-height write on touch Safari because that path returns early.
+				// updateSafeHeight() call on iPad Safari (a harmless DOM write).
 				// BottomTabBar's listener uses requestAnimationFrame so it
 				// won't interfere with this handler's execution.
 				window.dispatchEvent(new Event('resize'));
 			}
 		};
 
+		// Set initial --safe-height for iPad Safari
+		if (ipadSafari) {
+			updateSafeHeight(vv);
+		}
+
 		// Check initial keyboard state (e.g. if keyboard was already open)
-		if (!touchSafari && isKeyboardVisible(vv)) {
+		if (isKeyboardVisible(vv)) {
 			keyboardOpen = true;
 			document.documentElement.classList.add('keyboard-open');
 			document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);

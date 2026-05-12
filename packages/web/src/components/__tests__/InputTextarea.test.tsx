@@ -22,13 +22,6 @@ import { InputTextarea } from '../InputTextarea';
 describe('InputTextarea', () => {
 	beforeEach(() => {
 		cleanup();
-		document.documentElement.classList.remove('keyboard-open');
-		Object.defineProperty(navigator, 'userAgent', {
-			configurable: true,
-			value:
-				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36',
-		});
-		Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 });
 	});
 
 	describe('Basic Rendering', () => {
@@ -922,47 +915,68 @@ describe('InputTextarea', () => {
 		});
 	});
 
-	describe('Auto-resize timing', () => {
-		it('defers onHeightChange until the next animation frame when content changes', () => {
+	describe('Auto-resize timing (autoscroll race regression)', () => {
+		/**
+		 * Regression test for: messages appearing behind the chat composer
+		 * when sending multiline messages with autoscroll enabled.
+		 *
+		 * Root cause: the textarea height was previously updated inside a
+		 * requestAnimationFrame callback (one frame later). When a new message
+		 * caused the parent to recompute scroll/footer padding, the footer height
+		 * still reflected the OLD textarea size, so the scroller stopped short
+		 * and the new message was hidden behind the composer.
+		 *
+		 * Fix: switched to useLayoutEffect with a synchronous height update so
+		 * onHeightChange fires before the browser paints — the parent's
+		 * syncMessagesContainerPadding always sees the up-to-date footer height.
+		 *
+		 * What this test guarantees:
+		 * - onHeightChange is invoked synchronously during render commit
+		 *   (no rAF, no setTimeout). If anyone reverts to a deferred resize,
+		 *   this test fails.
+		 */
+		it('invokes onHeightChange synchronously when content changes', () => {
 			const onHeightChange = vi.fn();
-			const callbacks: FrameRequestCallback[] = [];
-			const originalRequestAnimationFrame = window.requestAnimationFrame;
-			const originalCancelAnimationFrame = window.cancelAnimationFrame;
-			window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-				callbacks.push(callback);
-				return callbacks.length;
-			});
-			window.cancelAnimationFrame = vi.fn();
+			const { rerender } = render(
+				<InputTextarea
+					content="line one"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onHeightChange={onHeightChange}
+				/>
+			);
 
-			try {
-				const { rerender } = render(
-					<InputTextarea
-						content="line one"
-						onContentChange={() => {}}
-						onKeyDown={() => {}}
-						onSubmit={() => {}}
-						onHeightChange={onHeightChange}
-					/>
-				);
-				onHeightChange.mockClear();
+			// Cleared after initial mount so we can observe the next pass cleanly
+			onHeightChange.mockClear();
 
-				rerender(
-					<InputTextarea
-						content={'line one\nline two\nline three'}
-						onContentChange={() => {}}
-						onKeyDown={() => {}}
-						onSubmit={() => {}}
-						onHeightChange={onHeightChange}
-					/>
-				);
+			rerender(
+				<InputTextarea
+					content={'line one\nline two\nline three'}
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onHeightChange={onHeightChange}
+				/>
+			);
 
-				expect(onHeightChange).not.toHaveBeenCalled();
-				callbacks.at(-1)?.(performance.now());
-				expect(onHeightChange).toHaveBeenCalled();
-			} finally {
-				window.requestAnimationFrame = originalRequestAnimationFrame;
-				window.cancelAnimationFrame = originalCancelAnimationFrame;
-			}
+			// Must be called synchronously — no awaiting frames or timers.
+			expect(onHeightChange).toHaveBeenCalled();
+		});
+
+		it('invokes onHeightChange on initial mount (sync, before paint)', () => {
+			const onHeightChange = vi.fn();
+			render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onHeightChange={onHeightChange}
+				/>
+			);
+
+			expect(onHeightChange).toHaveBeenCalled();
 		});
 	});
 });
