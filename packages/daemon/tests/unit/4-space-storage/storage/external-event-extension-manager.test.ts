@@ -73,6 +73,39 @@ describe('ExternalEventExtensionManager', () => {
 		expect(extension.stops).toBe(1);
 	});
 
+	test('serializes concurrent starts for the same extension', async () => {
+		let releaseStart: (() => void) | undefined;
+		const extension: TestExtension = {
+			sourceId: 'github',
+			starts: 0,
+			stops: 0,
+			async start() {
+				this.starts += 1;
+				await new Promise<void>((resolve) => {
+					releaseStart = resolve;
+				});
+			},
+			async stop() {
+				this.stops += 1;
+			},
+		};
+		manager.register(extension);
+		await config.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+		});
+
+		const firstStart = manager.startExtension('github', context);
+		const secondStart = manager.startExtension('github', context);
+		await waitFor(() => releaseStart !== undefined);
+
+		releaseStart!();
+		await Promise.all([firstStart, secondStart]);
+
+		expect(extension.starts).toBe(1);
+	});
+
 	test('allows restart after stop when still globally enabled', async () => {
 		const extension = createExtension('github');
 		manager.register(extension);
@@ -380,4 +413,12 @@ function createExtension(sourceId: string): TestExtension {
 			this.stops += 1;
 		},
 	};
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+	for (let attempts = 0; attempts < 10; attempts += 1) {
+		if (predicate()) return;
+		await Promise.resolve();
+	}
+	throw new Error('Timed out waiting for condition');
 }

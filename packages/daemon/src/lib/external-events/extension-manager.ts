@@ -10,6 +10,7 @@ import type {
 export class ExternalEventExtensionManager {
 	private extensions = new Map<string, ExternalEventExtension>();
 	private started = new Map<string, ExternalEventExtensionContext>();
+	private starting = new Map<string, Promise<void>>();
 	private routeHandlers: RegisteredRoute[] = [];
 	private rpcUnsubscribers = new Map<string, (() => void)[]>();
 
@@ -40,11 +41,19 @@ export class ExternalEventExtensionManager {
 
 	async startExtension(sourceId: string, context: ExternalEventExtensionContext): Promise<void> {
 		if (this.started.has(sourceId)) return;
-		const extension = this.getRequiredExtension(sourceId);
-		const globalConfig = await context.config.getGlobalConfig(sourceId);
-		if (!globalConfig.globallyEnabled) return;
-		await extension.start(context);
-		this.started.set(sourceId, context);
+		const existingStart = this.starting.get(sourceId);
+		if (existingStart) {
+			await existingStart;
+			return;
+		}
+
+		const startPromise = this.runStartExtension(sourceId, context);
+		this.starting.set(sourceId, startPromise);
+		try {
+			await startPromise;
+		} finally {
+			this.starting.delete(sourceId);
+		}
 	}
 
 	async stopExtension(sourceId: string): Promise<void> {
@@ -118,6 +127,18 @@ export class ExternalEventExtensionManager {
 
 	getRegisteredRoutes(): readonly RegisteredRoute[] {
 		return this.routeHandlers;
+	}
+
+	private async runStartExtension(
+		sourceId: string,
+		context: ExternalEventExtensionContext
+	): Promise<void> {
+		if (this.started.has(sourceId)) return;
+		const extension = this.getRequiredExtension(sourceId);
+		const globalConfig = await context.config.getGlobalConfig(sourceId);
+		if (!globalConfig.globallyEnabled) return;
+		await extension.start(context);
+		this.started.set(sourceId, context);
 	}
 
 	private getRequiredExtension(sourceId: string): ExternalEventExtension {
