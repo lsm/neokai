@@ -42,6 +42,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 	readonly repo: GitHubEventExtensionRepository;
 	private context?: ExternalEventExtensionContext;
 	private pollTimer?: ReturnType<typeof setTimeout>;
+	private activePollCycle?: Promise<void>;
 	private stopped = true;
 
 	constructor(
@@ -65,6 +66,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		this.stopped = true;
 		if (this.pollTimer) clearTimeout(this.pollTimer);
 		this.pollTimer = undefined;
+		await this.activePollCycle;
 	}
 
 	registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void {
@@ -150,7 +152,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		if (!this.context)
 			return Response.json({ error: 'GitHub extension not started' }, { status: 503 });
 		const global = await this.context.config.getGlobalConfig(this.sourceId);
-		if (!global.globallyEnabled || !global.capabilities.webhooks) {
+		if (!global.globallyEnabled || global.capabilities.webhooks === false) {
 			return Response.json(
 				{ message: 'Event ignored', reason: 'github_extension_disabled' },
 				{ status: 202 }
@@ -241,7 +243,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		if (this.stopped) return;
 		if (this.pollTimer) clearTimeout(this.pollTimer);
 		this.pollTimer = setTimeout(() => {
-			void this.runPollCycle();
+			this.activePollCycle = this.runPollCycle().finally(() => {
+				this.activePollCycle = undefined;
+			});
 		}, this.options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
 		this.pollTimer.unref?.();
 	}
@@ -254,7 +258,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 				error: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
-			this.scheduleNextPoll();
+			if (!this.stopped) this.scheduleNextPoll();
 		}
 	}
 

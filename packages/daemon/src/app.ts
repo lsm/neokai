@@ -410,7 +410,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		},
 	};
 	githubEventExtension.registerRpcHandlers(messageHub, externalEventExtensionContext);
-	await githubEventExtension.start(externalEventExtensionContext);
 
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const {
@@ -440,6 +439,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		mcpImportService,
 	});
 	taskAgentManagerForGithub = taskAgentManager;
+	await githubEventExtension.start(externalEventExtensionContext);
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
 	// bind the WebSocket/HTTP server. `start()` inside `setupRPCHandlers` kicks

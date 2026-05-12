@@ -195,6 +195,44 @@ describe('GitHubEventExtension', () => {
 		await extension.stop();
 	});
 
+	test('treats omitted webhook capability as enabled', async () => {
+		const db = setupDb();
+		const published: ExternalEvent[] = [];
+		const extension = new GitHubEventExtension(db);
+		const context = {
+			publisher: { publish: async (event: ExternalEvent) => published.push(event) },
+			config: {
+				async getGlobalConfig(source: string) {
+					return { source, globallyEnabled: true, capabilities: {} };
+				},
+				async getSpaceConfig(spaceId: string, source: string) {
+					return { spaceId, source, enabled: true, settings: {} };
+				},
+				async listEnabledSpaces() {
+					return [];
+				},
+			},
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			webhookSecret: 'secret',
+		});
+
+		const payload = payloadFor('issue_comment');
+		const raw = JSON.stringify(payload);
+		const response = await extension.routes[0].handle(
+			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+		);
+
+		expect(response.status).toBe(200);
+		expect(published).toHaveLength(1);
+		await extension.stop();
+	});
+
 	test('does not publish when a matched space is disabled', async () => {
 		const db = setupDb();
 		const published: ExternalEvent[] = [];
@@ -301,5 +339,57 @@ describe('GitHubEventExtension', () => {
 		expect(result.count).toBe(0);
 		expect(publishCount).toBe(0);
 		await extension.stop();
+	});
+
+	test('stop waits for an active polling cycle before returning', async () => {
+		const db = setupDb();
+		const extension = new GitHubEventExtension(db, { pollIntervalMs: 1 });
+		let releaseFetch!: () => void;
+		let fetchStarted!: Promise<void>;
+		let resolveFetchStarted!: () => void;
+		fetchStarted = new Promise((resolve) => {
+			resolveFetchStarted = resolve;
+		});
+		await extension.start({
+			publisher: { publish: async () => {} },
+			config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+			onSourceConfigChanged() {},
+		});
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+
+		let blocked = false;
+		const pollPromise = extension.pollWatchedRepo(
+			extension.repo.listPollingRepos()[0],
+			(async () => {
+				if (!blocked) {
+					blocked = true;
+					resolveFetchStarted();
+					await new Promise<void>((resolve) => {
+						releaseFetch = resolve;
+					});
+				}
+				return new Response(JSON.stringify([]), { status: 200 });
+			}) as typeof fetch
+		);
+		(extension as unknown as { activePollCycle: Promise<void> }).activePollCycle = pollPromise.then(
+			() => {}
+		);
+		await fetchStarted;
+
+		let stopped = false;
+		const stopPromise = extension.stop().then(() => {
+			stopped = true;
+		});
+		await Promise.resolve();
+		expect(stopped).toBe(false);
+
+		releaseFetch();
+		await stopPromise;
+		expect(stopped).toBe(true);
 	});
 });
