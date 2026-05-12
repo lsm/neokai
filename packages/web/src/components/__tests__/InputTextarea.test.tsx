@@ -60,7 +60,7 @@ describe('InputTextarea', () => {
 	});
 
 	describe('Auto-resize viewport safety', () => {
-		it('freezes textarea height while keyboard is open on touch Safari', () => {
+		it('defers textarea resize while keyboard is open on touch Safari', () => {
 			Object.defineProperty(navigator, 'userAgent', {
 				configurable: true,
 				value:
@@ -68,6 +68,15 @@ describe('InputTextarea', () => {
 			});
 			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
 			document.documentElement.classList.add('keyboard-open');
+
+			const originalRequestAnimationFrame = window.requestAnimationFrame;
+			const originalCancelAnimationFrame = window.cancelAnimationFrame;
+			const callbacks: FrameRequestCallback[] = [];
+			window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+				callbacks.push(callback);
+				return callbacks.length;
+			});
+			window.cancelAnimationFrame = vi.fn();
 
 			const { container, rerender } = render(
 				<InputTextarea
@@ -78,11 +87,8 @@ describe('InputTextarea', () => {
 				/>
 			);
 			const textarea = container.querySelector('textarea')!;
-			Object.defineProperty(textarea, 'getBoundingClientRect', {
-				configurable: true,
-				value: () => ({ height: 40 }),
-			});
 			Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 120 });
+			textarea.style.height = '40px';
 
 			rerender(
 				<InputTextarea
@@ -94,6 +100,13 @@ describe('InputTextarea', () => {
 			);
 
 			expect(textarea.style.height).toBe('40px');
+			expect(window.requestAnimationFrame).toHaveBeenCalled();
+
+			callbacks.at(-1)?.(performance.now());
+			expect(textarea.style.height).toBe('120px');
+
+			window.requestAnimationFrame = originalRequestAnimationFrame;
+			window.cancelAnimationFrame = originalCancelAnimationFrame;
 		});
 
 		it('continues growing textarea while keyboard is open on non-Safari browsers', () => {
