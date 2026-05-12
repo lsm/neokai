@@ -68,7 +68,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { createTaskAgentToolHandlers } from '../../../../src/lib/space/tools/task-agent-tools.ts';
-import type { Space } from '@neokai/shared';
+import type { Space, SpaceTask } from '@neokai/shared';
 
 function makeDb(): BunDatabase {
 	const db = new BunDatabase(':memory:');
@@ -201,6 +201,62 @@ describe('task-agent mark_complete', () => {
 		expect(final?.postApprovalSessionId).toBeNull();
 		expect(final?.postApprovalStartedAt).toBeNull();
 		expect(final?.postApprovalBlockedReason).toBeNull();
+	});
+
+	test('emits space.task.updated events for cascaded dependency updates', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'T',
+			description: '',
+			status: 'approved',
+		});
+		const cascadedTask: SpaceTask = {
+			...task,
+			id: 'dependent-task',
+			status: 'open',
+			dependsOn: [task.id],
+		};
+		const updatedTask: SpaceTask = { ...task, status: 'done' };
+		const emittedEvents: Array<{ name: string; payload: Record<string, unknown> }> = [];
+		const internalEventBus = {
+			publish: mock(async (name: string, payload: Record<string, unknown>) => {
+				emittedEvents.push({ name, payload });
+			}),
+		};
+		const setTaskStatus = mock(async (_taskId, _status, options) => {
+			await options?.onCascadedTasks?.([cascadedTask]);
+			return updatedTask;
+		});
+
+		const handlers = createTaskAgentToolHandlers({
+			taskId: task.id,
+			space: ctx.space,
+			workflowRunId: 'no-run',
+			taskRepo: ctx.taskRepo,
+			artifactRepo: ctx.artifactRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			taskManager: {
+				setTaskStatus,
+			} as unknown as SpaceTaskManager,
+			messageInjector: async () => {},
+			internalEventBus:
+				internalEventBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+					import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+				>,
+		});
+
+		await handlers.mark_complete({});
+
+		const taskUpdatedEvents = emittedEvents.filter((e) => e.name === 'space.task.updated');
+		expect(taskUpdatedEvents.map((e) => (e.payload as { taskId: string }).taskId)).toEqual([
+			cascadedTask.id,
+			task.id,
+		]);
+		expect(setTaskStatus).toHaveBeenCalledWith(
+			task.id,
+			'done',
+			expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+		);
 	});
 
 	test('rejects when task is not approved — suggests approve_task', async () => {

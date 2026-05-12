@@ -9,7 +9,7 @@
  * - list_tasks: filter by status, workflowRunId
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -2045,6 +2045,58 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.task.status).toBe('done');
 	});
+
+	test('publishes space.task.updated for cascaded dependent tasks', async () => {
+		await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+		const task = await ctx.taskManager.createTask({
+			title: 'plain review task',
+			description: 'no pending action',
+		});
+		ctx.taskRepo.updateTask(task.id, { status: 'review' });
+		const cascadedTask: SpaceTask = {
+			...task,
+			id: 'dependent-task',
+			status: 'open',
+			dependsOn: [task.id],
+		};
+		const updatedTask: SpaceTask = { ...task, status: 'done' };
+		const emitted: Array<Record<string, unknown>> = [];
+		const mockBus = {
+			publish: mock(async (event: string, payload: Record<string, unknown>) => {
+				if (event === 'space.task.updated') emitted.push(payload);
+			}),
+		};
+		const setTaskStatus = mock(async (_taskId, _status, options) => {
+			await options?.onCascadedTasks?.([cascadedTask]);
+			return updatedTask;
+		});
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: {
+				setTaskStatus,
+			} as unknown as SpaceTaskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			spaceManager: ctx.spaceManager,
+			internalEventBus:
+				mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+					import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+				>,
+		});
+
+		await handlers.approve_task({ task_id: task.id, reason: 'looks good' });
+
+		expect(emitted.map((payload) => payload.taskId)).toEqual([cascadedTask.id, task.id]);
+		expect(setTaskStatus).toHaveBeenCalledWith(
+			task.id,
+			'done',
+			expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+		);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -2948,6 +3000,59 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
 		expect(emitted[0].spaceId).toBe(ctx.spaceId);
 		expect(emitted[0].taskId).toBe(created.id);
 		expect((emitted[0].task as { title: string }).title).toBe('Updated title');
+	});
+
+	test('publishes space.task.updated for cascaded dependency updates', async () => {
+		const emitted: Array<Record<string, unknown>> = [];
+		const mockBus = {
+			publish: mock(async (event: string, payload: Record<string, unknown>) => {
+				if (event === 'space.task.updated') emitted.push(payload);
+			}),
+		};
+
+		const created = await ctx.taskManager.createTask({
+			title: 'Task',
+			description: 'Desc',
+		});
+		const cascadedTask: SpaceTask = {
+			...created,
+			id: 'dependent-task',
+			status: 'blocked',
+			dependsOn: [created.id],
+		};
+		const updatedTask: SpaceTask = { ...created, title: 'Updated title' };
+		const updateTask = mock(async (_taskId, _params, options) => {
+			await options?.onCascadedTasks?.([cascadedTask]);
+			return updatedTask;
+		});
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: {
+				updateTask,
+			} as unknown as SpaceTaskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			internalEventBus:
+				mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+					import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+				>,
+		});
+
+		await handlers.update_task({
+			task_id: created.id,
+			title: 'Updated title',
+		});
+
+		expect(emitted.map((payload) => payload.taskId)).toEqual([cascadedTask.id, created.id]);
+		expect(updateTask).toHaveBeenCalledWith(
+			created.id,
+			expect.objectContaining({ title: 'Updated title' }),
+			expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+		);
 	});
 
 	test('registers update_task in createSpaceAgentMcpServer', () => {

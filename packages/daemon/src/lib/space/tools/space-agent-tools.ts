@@ -46,8 +46,11 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
+import { Logger } from '../../logger';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { canTransition } from '../runtime/workflow-run-status-machine';
+const log = new Logger('space-agent-tools');
+
 function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
 }
@@ -220,6 +223,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 	const outboundSenderLevel = outboundSenderName === 'task-agent' ? 'task-agent' : 'space-agent';
 	const outboundSenderDisplayName =
 		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
+
+	function emitTaskUpdated(task: SpaceTask): void {
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('space.task.updated', {
+				sessionId: 'global',
+				spaceId,
+				taskId: task.id,
+				task,
+			})
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			});
+	}
 
 	/** Helper to log MCP write operations to the audit log. */
 	function logAudit(
@@ -655,12 +674,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 
 			try {
-				const updated = await taskManager.updateTask(args.task_id, {
-					title: args.title,
-					description: args.description,
-					priority: args.priority,
-					dependsOn: args.depends_on,
-				});
+				const updated = await taskManager.updateTask(
+					args.task_id,
+					{
+						title: args.title,
+						description: args.description,
+						priority: args.priority,
+						dependsOn: args.depends_on,
+					},
+					{
+						onCascadedTasks: async (cascadedTasks) => {
+							for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+						},
+					}
+				);
 
 				logAudit(
 					'update_task',
@@ -673,16 +700,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					args.task_id
 				);
 
-				if (internalEventBus) {
-					void internalEventBus
-						.publish('space.task.updated', {
-							sessionId: 'global',
-							spaceId,
-							taskId: args.task_id,
-							task: updated,
-						})
-						.catch(() => {});
-				}
+				emitTaskUpdated(updated);
 
 				return jsonResult({ success: true, task: updated });
 			} catch (err) {
@@ -1273,6 +1291,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					result: task.result ?? undefined,
 					approvalSource: 'agent',
 					approvalReason: args.reason,
+					onCascadedTasks: async (cascadedTasks) => {
+						for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+					},
 				});
 
 				logAudit(
@@ -1284,16 +1305,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					args.task_id
 				);
 
-				if (internalEventBus) {
-					void internalEventBus
-						.publish('space.task.updated', {
-							sessionId: 'global',
-							spaceId,
-							taskId: args.task_id,
-							task: updated,
-						})
-						.catch(() => {});
-				}
+				emitTaskUpdated(updated);
 
 				return jsonResult({ success: true, task: updated });
 			} catch (err) {

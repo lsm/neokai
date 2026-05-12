@@ -472,6 +472,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				// `postApprovalBlockedReason` in the same UPDATE.
 				const updated = await taskManager.setTaskStatus(taskId, 'done', {
 					approvalSource: task.approvalSource ?? 'agent',
+					onCascadedTasks: async (cascadedTasks) => {
+						for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+					},
 				});
 				emitTaskUpdated(updated);
 				log.info(

@@ -15,9 +15,12 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { createEndNodeHandlers } from '../../../../src/lib/space/tools/end-node-handlers.ts';
+import {
+	createEndNodeHandlers,
+	createMarkCompleteHandler,
+} from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { EndNodeHandlerDeps } from '../../../../src/lib/space/tools/end-node-handlers.ts';
-import type { Space, SpaceWorkflow } from '@neokai/shared';
+import type { Space, SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type {
 	DaemonInternalEventMap,
 	InternalEventBus,
@@ -135,6 +138,58 @@ function makeDeps(
 		...overrides,
 	};
 }
+
+// ===========================================================================
+// mark_complete — post-approval completion
+// ===========================================================================
+
+describe('createMarkCompleteHandler', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('emits space.task.updated for cascaded dependent tasks', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'T',
+			description: '',
+			status: 'approved',
+		});
+		const cascadedTask: SpaceTask = {
+			...task,
+			id: 'dependent-task',
+			status: 'open',
+			dependsOn: [task.id],
+		};
+		const updatedTask: SpaceTask = { ...task, status: 'done' };
+		const { bus, emitted } = makeMockBus();
+		const setTaskStatus = mock(async (_taskId, _status, options) => {
+			await options?.onCascadedTasks?.([cascadedTask]);
+			return updatedTask;
+		});
+		const handler = createMarkCompleteHandler({
+			taskId: task.id,
+			spaceId: ctx.spaceId,
+			taskRepo: ctx.taskRepo,
+			taskManager: { setTaskStatus, updateTask: ctx.taskManager.updateTask.bind(ctx.taskManager) },
+			internalEventBus: bus,
+		});
+
+		await handler({});
+
+		const updateEvents = emitted.filter((e) => e.name === 'space.task.updated');
+		expect(updateEvents.map((e) => e.payload.taskId)).toEqual([cascadedTask.id, task.id]);
+		expect(setTaskStatus).toHaveBeenCalledWith(
+			task.id,
+			'done',
+			expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+		);
+	});
+});
 
 // ===========================================================================
 // approve_task — autonomy-gated self-close

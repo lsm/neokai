@@ -107,10 +107,10 @@ export function createMarkCompleteHandler(
 	const emitTaskUpdated = (task: SpaceTask): void => {
 		if (!internalEventBus) return;
 		void internalEventBus
-			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId, task })
+			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
 			.catch((err: unknown) => {
 				log.warn(
-					`Failed to emit space.task.updated for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
 				);
 			});
 	};
@@ -135,6 +135,9 @@ export function createMarkCompleteHandler(
 			// `postApprovalBlockedReason` in the same UPDATE.
 			const updated = await taskManager.setTaskStatus(taskId, 'done', {
 				approvalSource: task.approvalSource ?? 'agent',
+				onCascadedTasks: async (cascadedTasks) => {
+					for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+				},
 			});
 			emitTaskUpdated(updated);
 			log.info(
@@ -174,10 +177,10 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
 	const emitTaskUpdated = (task: SpaceTask): void => {
 		if (!internalEventBus) return;
 		void internalEventBus
-			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId, task })
+			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
 			.catch((err: unknown) => {
 				log.warn(
-					`Failed to emit space.task.updated for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
 				);
 			});
 	};
