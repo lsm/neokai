@@ -95,7 +95,10 @@ describe('SpaceRuntime external event subscriptions', () => {
 	let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
 	let tam: MockTaskAgentManager;
 
-	function createWorkflow(topic = 'github/*/*/pull_request.review_*'): SpaceWorkflow {
+	function createWorkflow(
+		topic = 'github/*/*/pull_request.review_*',
+		extraTopics: string[] = []
+	): SpaceWorkflow {
 		return workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Workflow ${Math.random()}`,
@@ -108,7 +111,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 						{
 							agentId: AGENT_ID,
 							name: 'coder',
-							eventInterests: [{ topic }],
+							eventInterests: [topic, ...extraTopics].map((interestTopic) => ({
+								topic: interestTopic,
+							})),
 						},
 					],
 				},
@@ -228,6 +233,174 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
 		expect(delivery.state).toBe('failed');
 		expect(delivery.failureReason).toBe('node_execution_cancelled');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('skips invalid event interest topics during registration', async () => {
+		const workflow = createWorkflow('github/lsm/neokai/pull_request');
+		await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(0);
+		expect(eventStore.getById(event.id)?.state).toBe('ignored');
+		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+	});
+
+	test('drops stale queued deliveries when run interests are rebuilt', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		runtime.registerRunInterests(run.id, tasks[0]!.id, []);
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-stale',
+		});
+
+		expect(injected).toHaveLength(0);
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('run_interests_rebuilt');
+	});
+
+	test('does not ignore unmatched events before runtime rehydrate completes', async () => {
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(eventStore.getById(event.id)?.state).toBe('published');
+		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+	});
+
+	test('re-subscribes external event listener after runtime restart', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-restart',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-restart');
+
+		await runtime.stop();
+		runtime.start();
+		await runtime.executeTick();
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-restart');
+	});
+
+	test('deduplicates pending queue entries for overlapping interests', async () => {
+		const workflow = createWorkflow('github/*/*/pull_request.*', [
+			'github/*/*/pull_request.review_*',
+		]);
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-dedupe',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-dedupe');
+	});
+
+	test('fails queued deliveries during terminal run cleanup', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+		await runtime.executeTick();
+
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('run_terminal_cleanup');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('delivers matching events to idle sessions using defer mode', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-idle',
+			startedAt: Date.now(),
+		});
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-idle');
+		expect(injected[0]!.deliveryMode).toBe('defer');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
+	test('enforces pending queue overflow cap and fails oldest delivery', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const events = Array.from({ length: 51 }, (_, index) =>
+			makeEvent({
+				id: `evt-overflow-${index}`,
+				dedupeKey: `dedupe-overflow-${index}`,
+			})
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+
+		const oldestDelivery = eventStore.listDeliveries(events[0]!.id)[0]!;
+		expect(oldestDelivery.state).toBe('failed');
+		expect(oldestDelivery.failureReason).toBe('pending_node_queue_overflow');
+
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-overflow',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(50);
+		expect(injected.some((item) => JSON.parse(item.message).eventId === events[0]!.id)).toBe(false);
+	});
+
+	test('marks delivery failed when target execution is not active', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'cancelled',
+			completedAt: Date.now(),
+		});
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('node_execution_not_active');
 		expect(eventStore.getById(event.id)?.state).toBe('failed');
 	});
 });

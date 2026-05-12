@@ -11,6 +11,8 @@ class TrieNode<T> {
 	values: T[] | undefined;
 }
 
+const segmentPatternCache = new Map<string, RegExp>();
+
 export class TopicTrie<T> {
 	private root = new TrieNode<T>();
 
@@ -85,6 +87,11 @@ function normalizeTopic(topic: string): string[] {
 
 function segmentMatches(pattern: string, segment: string): boolean {
 	if (pattern === '*') return true;
-	const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-	return new RegExp(`^${escaped}$`).test(segment);
+	let regex = segmentPatternCache.get(pattern);
+	if (!regex) {
+		const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+		regex = new RegExp(`^${escaped}$`);
+		segmentPatternCache.set(pattern, regex);
+	}
+	return regex.test(segment);
 }
