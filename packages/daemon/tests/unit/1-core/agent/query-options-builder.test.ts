@@ -12,7 +12,6 @@ import type { Provider } from '@neokai/shared/provider';
 import { homedir } from 'os';
 import {
 	buildProviderSettings,
-	CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
 	ensureAgentTools,
 	QueryOptionsBuilder,
 	type QueryOptionsBuilderContext,
@@ -169,15 +168,30 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('provider settings', () => {
-		it('should keep SDK auto-compaction disabled after validating Codex model metadata', () => {
+		it('should use the actual context window for full-size Codex models', () => {
 			expect(buildProviderSettings('anthropic-codex', 'gpt-5.5')).toEqual({
-				autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
+				autoCompactWindow: 272_000,
+			});
+			expect(buildProviderSettings('anthropic-codex', 'gpt-5.4')).toEqual({
+				autoCompactWindow: 272_000,
+			});
+		});
+
+		it('should use the actual context window for mini Codex models', () => {
+			expect(buildProviderSettings('anthropic-codex', 'gpt-5.4-mini')).toEqual({
+				autoCompactWindow: 128_000,
+			});
+			expect(buildProviderSettings('anthropic-codex', 'gpt-5.1-codex-mini')).toEqual({
+				autoCompactWindow: 128_000,
 			});
 		});
 
 		it('should resolve Codex aliases before applying SDK auto-compaction settings', () => {
 			expect(buildProviderSettings('anthropic-codex', 'codex-latest')).toEqual({
-				autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
+				autoCompactWindow: 272_000,
+			});
+			expect(buildProviderSettings('anthropic-codex', 'codex-mini')).toEqual({
+				autoCompactWindow: 128_000,
 			});
 		});
 
