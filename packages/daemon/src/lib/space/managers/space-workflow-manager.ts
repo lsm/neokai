@@ -24,10 +24,12 @@ import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { Logger } from '../../logger';
 import { validatePostApproval } from '../workflows/post-approval-validator';
+import { validateGlobPattern } from '../../external-events/topic-validator';
 import { slugify, validateSlug } from '../slug';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
+const MAX_EVENT_INTERESTS_PER_AGENT = 10;
 
 function normalizeWorkflowAgentName(name: string): string {
 	return name.trim().toLowerCase();
@@ -480,27 +482,25 @@ export class SpaceWorkflowManager {
 		const seenNames = new Set<string>();
 		for (let j = 0; j < node.agents.length; j++) {
 			const entry = node.agents[j];
+			const loc = `node[${index}].agents[${j}]`;
 			if (!entry.agentId || !entry.agentId.trim()) {
-				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
-				);
+				throw new WorkflowValidationError(`${loc}: agentId must be a non-empty SpaceAgent UUID`);
 			}
 			if (!entry.name || !entry.name.trim()) {
-				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: name must be a non-empty string`
-				);
+				throw new WorkflowValidationError(`${loc}: name must be a non-empty string`);
 			}
 			if (isReservedWorkflowAgentName(entry.name)) {
 				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: name "${entry.name}" is reserved for a built-in agent`
+					`${loc}: name "${entry.name}" is reserved for a built-in agent`
 				);
 			}
 			if (seenNames.has(entry.name)) {
 				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: duplicate name "${entry.name}" — each agent slot must have a unique name within the node`
+					`${loc}: duplicate name "${entry.name}" — each agent slot must have a unique name within the node`
 				);
 			}
 			seenNames.add(entry.name);
+			this.validateEventInterests(entry, loc);
 		}
 
 		// Existence validation: only when agentLookup is available.
@@ -513,6 +513,39 @@ export class SpaceWorkflowManager {
 						`node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
 					);
 				}
+			}
+		}
+	}
+
+	private validateEventInterests(
+		entry: NonNullable<WorkflowNodeInput['agents']>[number],
+		loc: string
+	): void {
+		if (entry.eventInterests === undefined) return;
+		if (!Array.isArray(entry.eventInterests)) {
+			throw new WorkflowValidationError(`${loc}.eventInterests must be an array`);
+		}
+		if (entry.eventInterests.length > MAX_EVENT_INTERESTS_PER_AGENT) {
+			throw new WorkflowValidationError(
+				`${loc}.eventInterests must contain at most ${MAX_EVENT_INTERESTS_PER_AGENT} entries`
+			);
+		}
+
+		for (let k = 0; k < entry.eventInterests.length; k++) {
+			const interest = entry.eventInterests[k];
+			const interestLoc = `${loc}.eventInterests[${k}]`;
+			if (!interest || typeof interest !== 'object' || Array.isArray(interest)) {
+				throw new WorkflowValidationError(`${interestLoc} must be an object`);
+			}
+			if (typeof interest.topic !== 'string') {
+				throw new WorkflowValidationError(`${interestLoc}.topic must be a non-empty string`);
+			}
+			const result = validateGlobPattern(interest.topic);
+			if (!result.valid) {
+				throw new WorkflowValidationError(`${interestLoc}.topic is invalid: ${result.reason}`);
+			}
+			if (interest.label !== undefined && typeof interest.label !== 'string') {
+				throw new WorkflowValidationError(`${interestLoc}.label must be a string`);
 			}
 		}
 	}

@@ -1197,6 +1197,23 @@ export interface DeclarativeToolGuard {
 	reason: string;
 }
 
+export interface EventInterest {
+	/**
+	 * Glob pattern matching event topics.
+	 * Examples: 'github/owner/repo/pull_request.*', 'github/owner/repo/pull_request.review_*'
+	 *
+	 * The topic pattern IS the filter — the 4-segment format encodes source
+	 * identity and scope (e.g. owner/repo for GitHub).
+	 */
+	topic: string;
+
+	/**
+	 * Optional label for diagnostics. Not used in matching logic.
+	 * Example: 'PR review comments', 'CI failures'
+	 */
+	label?: string;
+}
+
 /**
  * A single agent entry within a multi-agent workflow node.
  * References a SpaceAgent by ID with an optional per-slot configuration override.
@@ -1257,6 +1274,12 @@ export interface WorkflowNodeAgent {
 	 * whatever rules the workflow provides.
 	 */
 	toolGuards?: DeclarativeToolGuard[];
+	/**
+	 * Events this node is interested in receiving. When matched, the event is
+	 * injected into the agent's session as a structured message.
+	 * Omit or empty array = no event subscriptions (default).
+	 */
+	eventInterests?: EventInterest[];
 }
 
 /**
