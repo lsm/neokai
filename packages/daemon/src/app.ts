@@ -398,6 +398,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const githubEventExtension = new GitHubEventExtension(spaceGitHubService.eventExtensionRepo, {
 		githubToken: process.env.GITHUB_TOKEN,
 		onWatchedReposChanged: () => reactiveDb.notifyChange('space_github_watched_repos'),
+		legacyIngest: async (spaceId, event) => {
+			await spaceGitHubService.ingest(spaceId, event);
+		},
 	});
 	const externalEventExtensionContext = {
 		publisher: externalEventService,

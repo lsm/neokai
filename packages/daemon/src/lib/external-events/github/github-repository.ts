@@ -25,7 +25,16 @@ export interface GitHubWatchedRepo {
 }
 
 export class GitHubEventExtensionRepository {
-	constructor(private readonly db: BunDatabase) {}
+	constructor(private readonly db: BunDatabase) {
+		this.db.exec(`
+			CREATE TABLE IF NOT EXISTS space_github_source_settings (
+				space_id TEXT PRIMARY KEY,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+	}
 
 	upsertWatchedRepo(params: {
 		spaceId: string;
@@ -68,6 +77,7 @@ export class GitHubEventExtensionRepository {
 			return this.getWatchedRepoById(existing.id)!;
 		}
 		const id = generateUUID();
+		const spaceEnabled = params.enabled ?? this.isSpaceEnabled(params.spaceId);
 		this.db
 			.prepare(
 				`INSERT INTO space_github_watched_repos
@@ -79,7 +89,7 @@ export class GitHubEventExtensionRepository {
 				params.spaceId,
 				params.owner,
 				params.repo,
-				params.enabled === false ? 0 : 1,
+				spaceEnabled ? 1 : 0,
 				params.webhookEnabled === false ? 0 : 1,
 				params.pollingEnabled ? 1 : 0,
 				params.webhookSecret ?? null,
@@ -90,11 +100,26 @@ export class GitHubEventExtensionRepository {
 	}
 
 	setRepoEnabled(spaceId: string, enabled: boolean): number {
+		const now = Date.now();
+		this.db
+			.prepare(
+				`INSERT INTO space_github_source_settings (space_id, enabled, created_at, updated_at)
+				 VALUES (?, ?, ?, ?)
+				 ON CONFLICT(space_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`
+			)
+			.run(spaceId, enabled ? 1 : 0, now, now);
 		return this.db
 			.prepare(
 				`UPDATE space_github_watched_repos SET enabled = ?, updated_at = ? WHERE space_id = ?`
 			)
-			.run(enabled ? 1 : 0, Date.now(), spaceId).changes;
+			.run(enabled ? 1 : 0, now, spaceId).changes;
+	}
+
+	isSpaceEnabled(spaceId: string): boolean {
+		const row = this.db
+			.prepare(`SELECT enabled FROM space_github_source_settings WHERE space_id = ?`)
+			.get(spaceId) as { enabled: number } | undefined;
+		return row ? row.enabled === 1 : true;
 	}
 
 	listWatchedRepos(spaceId?: string): GitHubWatchedRepo[] {

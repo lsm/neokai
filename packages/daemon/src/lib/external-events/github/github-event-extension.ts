@@ -27,6 +27,10 @@ interface GitHubEventExtensionOptions {
 	githubToken?: string;
 	pollIntervalMs?: number;
 	onWatchedReposChanged?: () => void;
+	legacyIngest?: (
+		spaceId: string,
+		event: import('./github-normalizer').NormalizedGitHubEvent
+	) => Promise<void>;
 }
 
 export class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEventExtension {
@@ -53,8 +57,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 	async start(context: ExternalEventExtensionContext): Promise<void> {
 		this.context = context;
 		this.stopped = false;
-		const global = await context.config.getGlobalConfig(this.sourceId);
-		if (!global.globallyEnabled || !global.capabilities.polling) return;
+		if (!(await this.isPollingGloballyEnabled())) return;
 		this.scheduleNextPoll();
 	}
 
@@ -195,7 +198,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		for (const repo of validForRepo) {
 			const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
 			if (spaceConfig && !spaceConfig.enabled) continue;
-			await this.context.publisher.publish(toExternalEvent(repo.spaceId, normalized));
+			await this.publishAndLegacyIngest(repo.spaceId, normalized);
 			this.repo.markWebhookReceived(repo.id);
 			published++;
 		}
@@ -205,8 +208,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
 	private async pollEnabledSpaces(): Promise<number> {
 		if (!this.context) return 0;
-		const global = await this.context.config.getGlobalConfig(this.sourceId);
-		if (!global.globallyEnabled || !global.capabilities.polling) return 0;
+		if (!(await this.isPollingGloballyEnabled())) return 0;
 		const enabledSpaces = await this.context.config.listEnabledSpaces(this.sourceId);
 		if (enabledSpaces.length > 0) {
 			let count = 0;
@@ -220,12 +222,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
 	private async pollSpace(spaceId: string): Promise<number> {
 		if (!this.context) return 0;
+		if (!(await this.isPollingGloballyEnabled())) return 0;
 		const spaceConfig = await this.context.config.getSpaceConfig(spaceId, this.sourceId);
 		if (spaceConfig && !spaceConfig.enabled) return 0;
 		let count = 0;
 		for (const repo of this.repo.listPollingRepos(spaceId))
 			count += await this.pollWatchedRepo(repo);
 		return count;
+	}
+
+	private async isPollingGloballyEnabled(): Promise<boolean> {
+		if (!this.context) return false;
+		const global = await this.context.config.getGlobalConfig(this.sourceId);
+		return global.globallyEnabled && global.capabilities.polling !== false;
 	}
 
 	private scheduleNextPoll(): void {
@@ -249,7 +258,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		}
 	}
 
-	private async pollWatchedRepo(
+	private async publishAndLegacyIngest(
+		spaceId: string,
+		event: import('./github-normalizer').NormalizedGitHubEvent
+	): Promise<void> {
+		if (!this.context) return;
+		await this.context.publisher.publish(toExternalEvent(spaceId, event));
+		await this.options.legacyIngest?.(spaceId, event);
+	}
+
+	async pollWatchedRepo(
 		watched: GitHubWatchedRepo,
 		fetchImpl: typeof fetch = fetch
 	): Promise<number> {
@@ -299,7 +317,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			for (const row of rows) {
 				const event = normalizeGitHubPollingRow(watched, row, endpoint.key);
 				if (event) {
-					await this.context.publisher.publish(toExternalEvent(watched.spaceId, event));
+					await this.publishAndLegacyIngest(watched.spaceId, event);
 					watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
 					count++;
 				}
@@ -344,6 +362,9 @@ export class StaticExternalEventExtensionConfigStore implements ExternalEventExt
 	}
 
 	async listEnabledSpaces(_source: string): Promise<SpaceExternalEventSourceConfig[]> {
+		// The static store has no DB-backed per-space source table yet. Returning an
+		// empty list intentionally lets GitHubEventExtension fall back to watched-repo
+		// rows as the source of enabled spaces for the migration period.
 		return [];
 	}
 }

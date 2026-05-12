@@ -1,4 +1,5 @@
 import { Database as BunDatabase } from 'bun:sqlite';
+import { InProcessTransport, MessageHub } from '@neokai/shared';
 import { describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import {
@@ -76,14 +77,15 @@ function payloadFor(event: string): unknown {
 	};
 }
 
-function webhookRequest(payload: unknown, event: string, signature: string): Request {
+function webhookRequest(payload: unknown, event: string, signature?: string): Request {
+	const headers: Record<string, string> = {
+		'X-GitHub-Event': event,
+		'X-GitHub-Delivery': 'delivery-1',
+	};
+	if (signature) headers['X-Hub-Signature-256'] = signature;
 	return new Request('http://localhost/webhook/github/space', {
 		method: 'POST',
-		headers: {
-			'X-Hub-Signature-256': signature,
-			'X-GitHub-Event': event,
-			'X-GitHub-Delivery': 'delivery-1',
-		},
+		headers,
 		body: JSON.stringify(payload),
 	});
 }
@@ -170,6 +172,26 @@ describe('GitHubEventExtension', () => {
 		);
 		expect(bad.status).toBe(401);
 
+		const missingSignature = await extension.routes[0].handle(
+			webhookRequest(payload, 'issue_comment')
+		);
+		expect(missingSignature.status).toBe(401);
+
+		const otherRepoPayload = {
+			...(payload as Record<string, unknown>),
+			repository: {
+				id: 2,
+				name: 'other',
+				full_name: 'acme/other',
+				owner: { login: 'acme' },
+			},
+		};
+		const otherRaw = JSON.stringify(otherRepoPayload);
+		const repoNotWatched = await extension.routes[0].handle(
+			webhookRequest(otherRepoPayload, 'issue_comment', await createSignature(otherRaw, 'secret'))
+		);
+		expect(repoNotWatched.status).toBe(404);
+
 		await extension.stop();
 	});
 
@@ -209,6 +231,75 @@ describe('GitHubEventExtension', () => {
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({ spaces: 0 });
 		expect(published).toHaveLength(0);
+		await extension.stop();
+	});
+
+	test('RPC disable persists for newly watched repositories', async () => {
+		const db = setupDb();
+		const extension = new GitHubEventExtension(db);
+		const clientHub = new MessageHub();
+		const hub = new MessageHub();
+		const [clientTransport, serverTransport] = InProcessTransport.createPair();
+		clientHub.registerTransport(clientTransport);
+		hub.registerTransport(serverTransport);
+		await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+		const context = {
+			publisher: { publish: async () => {} },
+			config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.registerRpcHandlers(hub, context);
+
+		await clientHub.request('space.github.disable', { spaceId: 'space-1' });
+		await clientHub.request('space.github.watchRepo', {
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+
+		expect(extension.repo.listWatchedRepos('space-1')[0].enabled).toBe(false);
+		await extension.stop();
+	});
+
+	test('space-scoped pollOnce respects global polling disable', async () => {
+		const db = setupDb();
+		const extension = new GitHubEventExtension(db);
+		const clientHub = new MessageHub();
+		const hub = new MessageHub();
+		const [clientTransport, serverTransport] = InProcessTransport.createPair();
+		clientHub.registerTransport(clientTransport);
+		hub.registerTransport(serverTransport);
+		await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+		let publishCount = 0;
+		const context = {
+			publisher: {
+				publish: async () => {
+					publishCount++;
+				},
+			},
+			config: new StaticExternalEventExtensionConfigStore({
+				globallyEnabled: true,
+				polling: false,
+			}),
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.registerRpcHandlers(hub, context);
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+
+		const result = (await clientHub.request('space.github.pollOnce', { spaceId: 'space-1' })) as {
+			count: number;
+		};
+
+		expect(result.count).toBe(0);
+		expect(publishCount).toBe(0);
 		await extension.stop();
 	});
 });
