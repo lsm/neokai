@@ -4,6 +4,9 @@ import type { SpaceTaskActivityMember, ModelInfo } from '@neokai/shared';
 
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
+const mockOnEvent = vi.fn();
+const mockJoinChannel = vi.fn();
+const mockLeaveChannel = vi.fn();
 
 vi.mock('../../lib/connection-manager', () => ({
 	connectionManager: {
@@ -206,8 +209,23 @@ describe('useTargetSessionContext', () => {
 		vi.resetAllMocks();
 		mockGetHubIfConnected.mockReturnValue({
 			request: mockRequest,
+			onEvent: mockOnEvent,
+			joinChannel: mockJoinChannel,
+			leaveChannel: mockLeaveChannel,
 		});
+		mockOnEvent.mockReturnValue(vi.fn());
+		mockJoinChannel.mockResolvedValue(undefined);
+		mockLeaveChannel.mockResolvedValue(undefined);
 		mockRequest.mockImplementation((method: string) => {
+			if (method === 'state.session') {
+				return Promise.resolve({
+					sessionInfo: null,
+					agentState: { isProcessing: false },
+					commandsData: { availableCommands: [] },
+					error: null,
+					timestamp: Date.now(),
+				});
+			}
 			if (method === 'models.list') {
 				return Promise.resolve({
 					models: [
@@ -369,6 +387,148 @@ describe('useTargetSessionContext', () => {
 
 		await waitFor(() => {
 			expect(result.current.isProcessing).toBe(true);
+		});
+	});
+
+	it('loads contextInfo from initial session metadata', async () => {
+		const initialContextInfo = {
+			model: 'claude-sonnet-4-6',
+			totalUsed: 12_000,
+			totalCapacity: 200_000,
+			percentUsed: 6,
+			breakdown: {},
+			lastUpdated: 123,
+			source: 'sdk-get-context-usage' as const,
+		};
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'state.session') {
+				return Promise.resolve({
+					sessionInfo: {
+						id: 'coder-session',
+						metadata: { lastContextInfo: initialContextInfo },
+					},
+					agentState: { isProcessing: false },
+					commandsData: { availableCommands: [] },
+					error: null,
+					timestamp: Date.now(),
+				});
+			}
+			if (method === 'models.list') {
+				return Promise.resolve({ models: [] });
+			}
+			if (method === 'session.thinking.get') {
+				return Promise.resolve({ thinkingLevel: 'off' });
+			}
+			return Promise.resolve({});
+		});
+
+		const { result } = renderHook(() =>
+			useTargetSessionContext({
+				taskId: 'task-1',
+				targets: [coderTarget],
+				selectedTarget: coderTarget,
+				activityMembers: members,
+				taskAgentSessionId: 'task-sess-123',
+			})
+		);
+
+		await waitFor(() => {
+			expect(result.current.contextInfo).toEqual(initialContextInfo);
+		});
+		expect(mockJoinChannel).toHaveBeenCalledWith('session:coder-session');
+		expect(mockRequest).toHaveBeenCalledWith('state.session', { sessionId: 'coder-session' });
+	});
+
+	it('updates contextInfo from context.updated events for the target session', async () => {
+		const handlers = new Map<string, Function>();
+		mockOnEvent.mockImplementation((method: string, handler: Function) => {
+			handlers.set(method, handler);
+			return vi.fn();
+		});
+		const updatedContextInfo = {
+			model: 'claude-sonnet-4-6',
+			totalUsed: 50_000,
+			totalCapacity: 200_000,
+			percentUsed: 25,
+			breakdown: {},
+			lastUpdated: 456,
+			source: 'stream' as const,
+		};
+
+		const { result } = renderHook(() =>
+			useTargetSessionContext({
+				taskId: 'task-1',
+				targets: [coderTarget],
+				selectedTarget: coderTarget,
+				activityMembers: members,
+				taskAgentSessionId: 'task-sess-123',
+			})
+		);
+
+		await waitFor(() => {
+			expect(handlers.has('context.updated')).toBe(true);
+		});
+
+		act(() => {
+			handlers.get('context.updated')?.(updatedContextInfo, { channel: 'session:other-session' });
+		});
+		expect(result.current.contextInfo).toBeNull();
+
+		act(() => {
+			handlers.get('context.updated')?.(updatedContextInfo, { channel: 'session:coder-session' });
+		});
+
+		expect(result.current.contextInfo).toEqual(updatedContextInfo);
+	});
+
+	it('cleans up context subscriptions when the target session changes', async () => {
+		const unsubscribeState = vi.fn();
+		const unsubscribeContext = vi.fn();
+		mockOnEvent.mockImplementation((method: string) => {
+			if (method === 'state.session') return unsubscribeState;
+			if (method === 'context.updated') return unsubscribeContext;
+			return vi.fn();
+		});
+		const reviewerTarget = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+		const reviewerMember: SpaceTaskActivityMember = {
+			id: 'm2',
+			sessionId: 'reviewer-session',
+			kind: 'node_agent',
+			label: 'Reviewer',
+			role: 'reviewer',
+			state: 'active',
+			processingStatus: 'idle',
+			messageCount: 0,
+		};
+
+		const { rerender } = renderHook(
+			(props: { selectedTarget: typeof coderTarget | typeof reviewerTarget }) =>
+				useTargetSessionContext({
+					taskId: 'task-1',
+					targets: [coderTarget, reviewerTarget],
+					selectedTarget: props.selectedTarget,
+					activityMembers: [...members, reviewerMember],
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { selectedTarget: coderTarget } }
+		);
+
+		await waitFor(() => {
+			expect(mockJoinChannel).toHaveBeenCalledWith('session:coder-session');
+		});
+
+		rerender({ selectedTarget: reviewerTarget });
+
+		await waitFor(() => {
+			expect(unsubscribeState).toHaveBeenCalled();
+			expect(unsubscribeContext).toHaveBeenCalled();
+			expect(mockLeaveChannel).toHaveBeenCalledWith('session:coder-session');
+			expect(mockJoinChannel).toHaveBeenCalledWith('session:reviewer-session');
 		});
 	});
 
@@ -918,7 +1078,12 @@ describe('useTargetSessionContext', () => {
 		expect(mockRequest).not.toHaveBeenCalledWith('session.thinking.set', expect.anything());
 
 		// Phase 4: reconnect the hub and re-render
-		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockGetHubIfConnected.mockReturnValue({
+			request: mockRequest,
+			onEvent: mockOnEvent,
+			joinChannel: mockJoinChannel,
+			leaveChannel: mockLeaveChannel,
+		});
 		rerender({ members: [...spawnedMembers] });
 
 		// The effect should retry now that the hub is available

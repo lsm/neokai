@@ -1,4 +1,10 @@
-import type { ModelInfo, SpaceTaskActivityMember, ThinkingLevel } from '@neokai/shared';
+import type {
+	ContextInfo,
+	ModelInfo,
+	SessionState,
+	SpaceTaskActivityMember,
+	ThinkingLevel,
+} from '@neokai/shared';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
@@ -30,6 +36,8 @@ export interface UseTargetSessionContextResult {
 	modelLoading: boolean;
 	/** Current thinking level (live or pre-configured) */
 	thinkingLevel: ThinkingLevel;
+	/** Current context usage for the targeted session */
+	contextInfo: ContextInfo | null;
 	/** Whether the targeted agent is actively processing */
 	isProcessing: boolean;
 	/** Whether the targeted agent has a live session */
@@ -114,6 +122,7 @@ export function useTargetSessionContext({
 	const [preConfiguredThinking, setPreConfiguredThinking] = useState<
 		Map<string, { level: ThinkingLevel; taskId: string }>
 	>(new Map());
+	const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
 
 	// Track which targets have had each specific config type successfully
 	// auto-applied, so we don't loop and so a missing model lookup doesn't
@@ -166,6 +175,61 @@ export function useTargetSessionContext({
 
 	// Thinking level — default to off.
 	const [thinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>('off');
+
+	useEffect(() => {
+		setContextInfo(null);
+		if (!targetSessionId) return;
+
+		let cancelled = false;
+		const channel = `session:${targetSessionId}`;
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		hub.joinChannel(channel);
+
+		const applySessionState = (state: SessionState) => {
+			const lastContextInfo = state.sessionInfo?.metadata?.lastContextInfo;
+			if (lastContextInfo) {
+				setContextInfo(lastContextInfo);
+			}
+		};
+
+		const unsubSessionState = hub.onEvent<SessionState>('state.session', (state, context) => {
+			if (cancelled) return;
+			if (context.channel !== channel) return;
+			applySessionState(state);
+		});
+
+		const unsubContextUpdated = hub.onEvent<ContextInfo>(
+			'context.updated',
+			(nextContextInfo, context) => {
+				if (cancelled) return;
+				if (context.channel !== channel) return;
+				setContextInfo(nextContextInfo);
+			}
+		);
+
+		const loadInitialContext = async () => {
+			try {
+				const state = await hub.request<SessionState>('state.session', {
+					sessionId: targetSessionId,
+				});
+				if (!cancelled) {
+					applySessionState(state);
+				}
+			} catch {
+				// Ignore errors — context will update on the next context.updated/state.session event.
+			}
+		};
+		void loadInitialContext();
+
+		return () => {
+			cancelled = true;
+			unsubSessionState();
+			unsubContextUpdated();
+			hub.leaveChannel(channel);
+		};
+	}, [targetSessionId, connectionState.value]);
 
 	// Load the live thinking level from the session whenever the target
 	// session changes (e.g. switching to a different started agent).
@@ -373,6 +437,7 @@ export function useTargetSessionContext({
 		modelSwitching: modelSwitcher.switching,
 		modelLoading: modelSwitcher.loading,
 		thinkingLevel,
+		contextInfo,
 		isProcessing,
 		isStarted,
 		switchModel,
