@@ -66,6 +66,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		description: '',
 		backgroundContext: '',
 		autonomyLevel: 1,
+		maxConcurrentTasks: 1,
 		sessionIds: [],
 		status: 'active',
 		paused: false,
@@ -520,6 +521,35 @@ describe('SpaceOverview', () => {
 			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
 			fireEvent.click(getByTestId('awaiting-approval-summary'));
 			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
+		});
+	});
+
+	describe('Concurrency Bar', () => {
+		it('renders concurrency slider with current value', () => {
+			mockSpace.value = makeSpace({ maxConcurrentTasks: 3 });
+			const { getByTestId, getByText } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByTestId('concurrency-slider')).toBeTruthy();
+			expect(getByText('3 tasks')).toBeTruthy();
+		});
+
+		it('uses singular "task" when limit is 1', () => {
+			mockSpace.value = makeSpace({ maxConcurrentTasks: 1 });
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByText('1 task')).toBeTruthy();
+		});
+
+		it('calls updateSpace when slider value changes', async () => {
+			mockSpace.value = makeSpace({ maxConcurrentTasks: 1 });
+			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
+			await fireEvent.input(getByTestId('concurrency-slider'), { target: { value: '5' } });
+			expect(mockUpdateSpace).toHaveBeenCalledWith({ maxConcurrentTasks: 5 });
+		});
+
+		it('does not call updateSpace when value is unchanged', async () => {
+			mockSpace.value = makeSpace({ maxConcurrentTasks: 3 });
+			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
+			await fireEvent.input(getByTestId('concurrency-slider'), { target: { value: '3' } });
+			expect(mockUpdateSpace).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -94,6 +94,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		instructions: 'Use TypeScript strict mode',
 		backgroundContext: '',
 		autonomyLevel: 1,
+		maxConcurrentTasks: 1,
 		sessionIds: [],
 		status: 'active',
 		createdAt: Date.now(),
@@ -167,6 +168,7 @@ describe('SpaceSettings', () => {
 				instructions: 'Use TypeScript strict mode',
 				backgroundContext: undefined,
 				autonomyLevel: 1,
+				maxConcurrentTasks: 1,
 				defaultModel: null,
 			});
 		});
@@ -383,6 +385,7 @@ describe('SpaceSettings', () => {
 				instructions: 'Use strict mode',
 				backgroundContext: 'Bun + Hono',
 				autonomyLevel: 1,
+				maxConcurrentTasks: 1,
 				defaultModel: null,
 			});
 		});
@@ -428,6 +431,50 @@ describe('SpaceSettings', () => {
 
 		await waitFor(() => {
 			expect(mockRequest).toHaveBeenCalledWith('spaceExport.bundle', { spaceId: 'space-1' });
+		});
+	});
+
+	describe('Concurrent Tasks', () => {
+		it('renders concurrency slider with current value', () => {
+			const space = makeSpace({ maxConcurrentTasks: 3 });
+			const { container, getByTestId } = render(<SpaceSettings space={space} />);
+			expect(getByTestId('concurrent-tasks-value').textContent).toBe('3');
+			expect(container.querySelector('[data-testid="concurrent-tasks-slider"]')).toBeTruthy();
+		});
+
+		it('shows Save Changes when concurrency is changed', () => {
+			const space = makeSpace({ maxConcurrentTasks: 1 });
+			const { getByTestId, getByText } = render(<SpaceSettings space={space} />);
+			fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '5' } });
+			expect(getByText('Save Changes')).toBeTruthy();
+		});
+
+		it('includes maxConcurrentTasks in save payload', async () => {
+			mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+			mockRequest.mockResolvedValue({});
+
+			const space = makeSpace({ maxConcurrentTasks: 1 });
+			const { getByTestId, getByText } = render(<SpaceSettings space={space} />);
+			fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '4' } });
+			fireEvent.click(getByText('Save Changes'));
+
+			await waitFor(() => {
+				expect(mockRequest).toHaveBeenCalledWith(
+					'space.update',
+					expect.objectContaining({ maxConcurrentTasks: 4 })
+				);
+			});
+		});
+
+		it('Discard resets concurrency to original value', () => {
+			const space = makeSpace({ maxConcurrentTasks: 2 });
+			const { getByTestId, getByText, queryByText } = render(<SpaceSettings space={space} />);
+			fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '8' } });
+			expect(getByText('Save Changes')).toBeTruthy();
+
+			fireEvent.click(getByText('Discard'));
+			expect(queryByText('Save Changes')).toBeNull();
+			expect(getByTestId('concurrent-tasks-value').textContent).toBe('2');
 		});
 	});
 });
