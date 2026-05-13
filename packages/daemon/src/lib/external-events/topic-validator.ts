@@ -108,6 +108,56 @@ export function validateLiteralTopic(topic: string): ValidationResult {
 			reason: `Published event topic must be a literal (no wildcards); got "${topic}"`,
 		};
 	}
+
+	// Source-specific validation for registered sources
+	const source = topic.split('/')[0];
+	if (source === 'github') {
+		return validateGitHubLiteralTopic(topic);
+	}
+
+	return { valid: true };
+}
+
+/**
+ * Validate GitHub literal topic structure.
+ * GitHub topics must be 5 segments: {source}/{owner}/{repo}/{resource}/{entityId.action}
+ */
+function validateGitHubLiteralTopic(topic: string): ValidationResult {
+	const segments = topic.split('/');
+
+	if (segments.length !== 5) {
+		return {
+			valid: false,
+			reason:
+				`GitHub topic must have exactly 5 segments ` +
+				`(source/owner/repo/resource/entityId.action); got ${segments.length}. ` +
+				`Example: 'github/lsm/neokai/pull_request/5.review_submitted'`,
+		};
+	}
+
+	const entityIdAction = segments[4];
+	const dotIndex = entityIdAction.indexOf('.');
+	if (dotIndex <= 0 || dotIndex === entityIdAction.length - 1) {
+		return {
+			valid: false,
+			reason:
+				`GitHub topic fifth segment must be entityId.action; got "${entityIdAction}". ` +
+				`Example: '5.review_submitted'`,
+		};
+	}
+
+	// Enforce exactly one dot in the 5th segment (entityId.action pair).
+	const dotCount = (entityIdAction.match(/\./g) || []).length;
+	if (dotCount !== 1) {
+		return {
+			valid: false,
+			reason:
+				`GitHub topic fifth segment must contain exactly one dot ` +
+				`(entityId.action), got ${dotCount} dots in "${entityIdAction}". ` +
+				`Example: '5.review_submitted'`,
+		};
+	}
+
 	return { valid: true };
 }
 

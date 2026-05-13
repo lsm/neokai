@@ -1072,7 +1072,7 @@ function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): Externa
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts` (topic pattern + label only, no scope).
 2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
 3. Add validation in the workflow create/update path:
-   - `topic` must pass `validateGlobPattern()` (non-empty, exactly 4 segments, valid characters).
+   - `topic` must pass `validateGlobPattern()` (non-empty, at least 2 segments, valid characters).
    - Max 10 interests per agent slot.
 
 ### New files

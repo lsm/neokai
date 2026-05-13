@@ -79,14 +79,44 @@ describe('validateGlobPattern', () => {
 });
 
 describe('validateLiteralTopic', () => {
-	test('accepts literal 5-segment topic', () => {
+	test('accepts literal 5-segment GitHub topic', () => {
 		const r = validateLiteralTopic('github/lsm/neokai/pull_request/5.review_submitted');
 		expect(r.valid).toBe(true);
 	});
 
-	test('accepts literal 3-segment topic', () => {
+	test('accepts literal 3-segment non-GitHub topic', () => {
 		const r = validateLiteralTopic('slack/workspace/channel/message_created');
 		expect(r.valid).toBe(true);
+	});
+
+	test('rejects GitHub topic with wrong segment count', () => {
+		const r = validateLiteralTopic('github/owner/repo');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/exactly 5 segments/);
+	});
+
+	test('rejects GitHub topic without entityId.action delimiter', () => {
+		const r = validateLiteralTopic('github/lsm/neokai/pull_request/review_submitted');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/entityId\.action/);
+	});
+
+	test('rejects GitHub topic with empty entityId', () => {
+		const r = validateLiteralTopic('github/lsm/neokai/pull_request/.review_submitted');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/entityId\.action/);
+	});
+
+	test('rejects GitHub topic with empty action', () => {
+		const r = validateLiteralTopic('github/lsm/neokai/pull_request/5.');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/entityId\.action/);
+	});
+
+	test('rejects GitHub topic with multiple dots in final segment', () => {
+		const r = validateLiteralTopic('github/lsm/neokai/pull_request/5.review.submitted');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/exactly one dot/);
 	});
 
 	test('rejects segment wildcard', () => {
