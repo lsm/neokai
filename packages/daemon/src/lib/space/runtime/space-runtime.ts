@@ -708,36 +708,42 @@ export class SpaceRuntime {
 	registerRunInterests(
 		workflowRunId: string,
 		taskId: string,
-		nodes: WorkflowNode[],
+		_nodes: WorkflowNode[],
 		options: { clearQueuedDeliveries?: boolean } = {}
 	): void {
 		this.topicTrie.remove((target) => target.workflowRunId === workflowRunId);
 		if (options.clearQueuedDeliveries) {
 			this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
 		}
-		for (const node of nodes) {
-			for (const agent of resolveNodeAgents(node)) {
-				const interests = agent.eventInterests ?? [];
-				for (const interest of interests) {
-					const topic = interest.topic?.trim();
-					if (!topic) continue;
-					const validation = validateGlobPattern(topic);
-					if (!validation.valid) {
-						log.warn(
-							`SpaceRuntime: skipping invalid eventInterest topic "${topic}" for ` +
-								`${workflowRunId}/${node.id}/${agent.name}: ${validation.reason ?? 'invalid pattern'}`
-						);
-						continue;
-					}
-					this.topicTrie.insert(topic, {
-						workflowRunId,
-						taskId,
-						nodeId: node.id,
-						agentName: agent.name,
-					});
-				}
-			}
+		// Subscription insertion is now driven by runtime callers
+		// (MCP tool, gate/artifact scripts) via registerSubscription().
+	}
+
+	/**
+	 * Register a single external event subscription for a specific workflow
+	 * run target. This is the primary entry point for runtime-driven
+	 * subscription registration (MCP tool, gate/artifact scripts).
+	 *
+	 * For test use and future runtime callers.
+	 */
+	registerSubscription(
+		workflowRunId: string,
+		taskId: string,
+		nodeId: string,
+		agentName: string,
+		topic: string
+	): void {
+		const trimmed = topic?.trim();
+		if (!trimmed) return;
+		const validation = validateGlobPattern(trimmed);
+		if (!validation.valid) {
+			log.warn(
+				`SpaceRuntime: skipping invalid subscription topic "${trimmed}" for ` +
+					`${workflowRunId}/${nodeId}/${agentName}: ${validation.reason ?? 'invalid pattern'}`
+			);
+			return;
 		}
+		this.topicTrie.insert(trimmed, { workflowRunId, taskId, nodeId, agentName });
 	}
 
 	unregisterExecution(
@@ -774,17 +780,6 @@ export class SpaceRuntime {
 			this.clearExternalEventRetry(item.deliveryKey);
 			void this.deliverToSession(target, item.event, item.deliveryKey, item.deliveryMode);
 		}
-	}
-
-	private registerInterestsForRun(
-		run: SpaceWorkflowRun,
-		options: { clearQueuedDeliveries?: boolean } = {}
-	): void {
-		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-		if (!workflow) return;
-		const task = this.pickCanonicalTaskForRun(run, this.config.taskRepo.listByWorkflowRun(run.id));
-		if (!task) return;
-		this.registerRunInterests(run.id, task.id, workflow.nodes, options);
 	}
 
 	private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
@@ -1234,14 +1229,6 @@ export class SpaceRuntime {
 	 * so mid-run workflow config changes are picked up without requiring a task restart.
 	 */
 	onWorkflowDefChanged(workflowId: string): void {
-		for (const run of this.config.workflowRunRepo.listByWorkflow(workflowId)) {
-			if (
-				run.status === 'in_progress' ||
-				(run.status === 'blocked' && this.hasActiveExecutionForRun(run.id))
-			) {
-				this.registerInterestsForRun(run, { clearQueuedDeliveries: true });
-			}
-		}
 		this.pollManager?.refreshPollsForWorkflow(workflowId);
 	}
 
@@ -2061,10 +2048,6 @@ export class SpaceRuntime {
 			throw err;
 		}
 
-		this.registerRunInterests(run.id, canonicalTask.id, workflow.nodes, {
-			clearQueuedDeliveries: true,
-		});
-
 		// Resolve channel topology for the start node and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
@@ -2273,9 +2256,6 @@ export class SpaceRuntime {
 
 		const recovered = recoverTx();
 		await this.ensureExecutorRegistered(recovered.run);
-		this.registerInterestsForRun(
-			this.config.workflowRunRepo.getRun(recovered.run.id) ?? recovered.run
-		);
 		await this.ensurePollsForRun(
 			this.config.workflowRunRepo.getRun(recovered.run.id) ?? recovered.run
 		);
@@ -2541,13 +2521,11 @@ export class SpaceRuntime {
 
 			for (const run of activeRuns) {
 				if (this.executors.has(run.id)) {
-					this.registerInterestsForRun(run);
 					await this.ensurePollsForRun(run, space);
 					continue;
 				}
 				const registered = await this.ensureExecutorRegistered(run, space);
 				if (registered) {
-					this.registerInterestsForRun(run);
 					await this.ensurePollsForRun(run, space);
 				}
 			}

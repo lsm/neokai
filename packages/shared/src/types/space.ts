@@ -1286,11 +1286,6 @@ export interface WorkflowNodeAgent {
 	 * whatever rules the workflow provides.
 	 */
 	toolGuards?: DeclarativeToolGuard[];
-	/**
-	 * External events this workflow agent wants delivered as structured messages.
-	 * Topic-pattern matching is performed by the workflow runtime.
-	 */
-	eventInterests?: EventInterest[];
 }
 
 /**
@@ -1811,8 +1806,6 @@ export interface ExportedWorkflowNodeAgent {
 	 * Mirrors `WorkflowNodeAgent.toolGuards`.
 	 */
 	toolGuards?: DeclarativeToolGuard[];
-	/** External event subscriptions for this agent slot. */
-	eventInterests?: EventInterest[];
 }
 
 /**
