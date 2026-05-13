@@ -96,6 +96,9 @@ export class SpaceAgentNotificationService {
 		for (const unsub of this.unsubscribers) {
 			unsub();
 		}
+		// Clear stale counters from a previous subscription so a re-init
+		// doesn't carry over partial counts from before the tear-down.
+		this.autoCompletedCounts.clear();
 		this.unsubscribers = [
 			this.internalEventBus.subscribe(
 				'space.task.blocked',
@@ -151,9 +154,14 @@ export class SpaceAgentNotificationService {
 					this.autoCompletedCounts.set(event.taskId, count);
 
 					if (count >= this.notifyThreshold) {
-						// Reset counter after notifying (prevents repeated notifications for same loop)
-						this.autoCompletedCounts.delete(event.taskId);
-						void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel, count));
+						// Only reset counter after successful delivery so transient
+						// injectMessage failures don't lose the accumulated count.
+						const message = formatAgentAutoCompleted(event, this.autonomyLevel, count);
+						void this.notify(message).then((sent) => {
+							if (sent) {
+								this.autoCompletedCounts.delete(event.taskId);
+							}
+						});
 					}
 				},
 				{
@@ -206,14 +214,20 @@ export class SpaceAgentNotificationService {
 					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.awaitingApproval`,
 				}
 			),
-			// When a task reaches a terminal state (done or cancelled), clear its
+			// When a task reaches a terminal or blocked state, clear its
 			// auto-completion counter so the next cycle starts fresh. This prevents
-			// a successfully-completed task from carrying a stale counter forward.
+			// a successfully-completed or restarted task from carrying a stale
+			// counter forward. Blocked tasks that are manually restarted represent
+			// a new attempt cycle, not a continuation of the previous retry loop.
 			this.internalEventBus.subscribe(
 				'space.task.updated',
 				(event) => {
 					if (event.spaceId !== this.spaceId) return;
-					if (event.task.status === 'done' || event.task.status === 'cancelled') {
+					if (
+						event.task.status === 'done' ||
+						event.task.status === 'cancelled' ||
+						event.task.status === 'blocked'
+					) {
 						this.autoCompletedCounts.delete(event.taskId);
 					}
 				},
@@ -232,18 +246,20 @@ export class SpaceAgentNotificationService {
 		};
 	}
 
-	private async notify(message: string): Promise<void> {
+	private async notify(message: string): Promise<boolean> {
 		try {
 			await this.sessionFactory.injectMessage(this.sessionId, message, {
 				deliveryMode: 'defer',
 				origin: 'system',
 			});
+			return true;
 		} catch (err) {
 			// Session not found or unavailable — log warning, do not propagate.
 			// The notification service must not fail the caller's event handler.
 			log.warn(
 				`[SpaceAgentNotificationService] Failed to inject notification into session ${this.sessionId}: ${err instanceof Error ? err.message : String(err)}`
 			);
+			return false;
 		}
 	}
 }
