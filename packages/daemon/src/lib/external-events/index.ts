@@ -21,7 +21,6 @@ export {
 export {
 	validateGlobPattern,
 	validateSource,
-	validateSubscriptionPattern,
 	KNOWN_SOURCES,
 	type ValidationResult,
 } from './topic-validator';
@@ -37,4 +36,3 @@ export {
 	type ExternalEventPublishedPayload,
 } from './external-event-service';
 export { TopicTrie, isReceivingStatus } from './topic-trie';
-export { normalizeGitHubLiteralTopic } from './topic-validator';
