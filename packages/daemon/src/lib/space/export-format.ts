@@ -78,6 +78,11 @@ const declarativeToolGuardSchema = z.object({
 	reason: z.string().min(1),
 });
 
+const eventInterestSchema = z.object({
+	topic: z.string().min(1),
+	label: z.string().optional(),
+});
+
 const thinkingLevelSchema = z.preprocess(
 	(val) => (val === 'auto' ? 'off' : val),
 	z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k'])
@@ -101,6 +106,8 @@ const exportedWorkflowNodeAgentSchema = z.object({
 	timeoutMs: z.number().int().positive().optional(),
 	/** Declarative tool guards (e.g. deny `gh pr merge` for coder agents). */
 	toolGuards: z.array(declarativeToolGuardSchema).optional(),
+	/** External event subscriptions for this agent slot. */
+	eventInterests: z.array(eventInterestSchema).optional(),
 });
 
 /**
@@ -282,6 +289,7 @@ export function exportWorkflow(
 			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
 			if (a.timeoutMs !== undefined) entry.timeoutMs = a.timeoutMs;
 			if (a.toolGuards !== undefined) entry.toolGuards = a.toolGuards;
+			if (a.eventInterests !== undefined) entry.eventInterests = a.eventInterests;
 			return entry;
 		});
 

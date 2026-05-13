@@ -228,6 +228,30 @@ describe('exportWorkflow', () => {
 		expect(exported.nodes[2].agents[0].agentRef).toBe('Simple Agent');
 	});
 
+	test('exports node-agent event interests', () => {
+		const workflow = makeWorkflow({
+			nodes: [
+				{
+					id: 'node-uuid-1',
+					name: 'Code step',
+					agents: [
+						{
+							agentId: 'agent-uuid-1',
+							name: 'coder',
+							eventInterests: [{ topic: 'github/*/*/pull_request.review_*', label: 'reviews' }],
+						},
+					],
+				},
+			],
+		});
+		const exported = exportWorkflow(workflow, [makeAgent()]);
+
+		expect(exported.nodes[0].agents[0].eventInterests).toEqual([
+			{ topic: 'github/*/*/pull_request.review_*', label: 'reviews' },
+		]);
+		expect(validateExportedWorkflow(exported).ok).toBe(true);
+	});
+
 	test('falls back to UUID when agent not found', () => {
 		const workflow = makeWorkflow();
 		// Pass no agents — all agentId refs should fall back to UUID

@@ -1818,6 +1818,8 @@ export interface ExportedWorkflowNodeAgent {
 	 * Mirrors `WorkflowNodeAgent.toolGuards`.
 	 */
 	toolGuards?: DeclarativeToolGuard[];
+	/** External event subscriptions for this agent slot. */
+	eventInterests?: EventInterest[];
 }
 
 /**

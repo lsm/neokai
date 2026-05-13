@@ -799,11 +799,23 @@ export class SpaceRuntime {
 			return;
 		}
 
+		const deliveries: Array<{ target: SubscriptionTarget; deliveryKey: string }> = [];
 		for (const match of matches) {
 			try {
 				const target = this.resolveSubscriptionTarget(match);
 				const deliveryKey = this.buildDeliveryKey(target, payload);
 				store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
+				deliveries.push({ target, deliveryKey });
+			} catch (err) {
+				log.warn(
+					`SpaceRuntime: failed to register external event ${payload.eventId} for ` +
+						`${match.workflowRunId}/${match.nodeId}/${match.agentName}: ${formatCommandError(err)}`
+				);
+			}
+		}
+
+		for (const { target, deliveryKey } of deliveries) {
+			try {
 				if (
 					store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
 					this.externalEventDeliveriesInFlight.has(deliveryKey)
@@ -827,7 +839,7 @@ export class SpaceRuntime {
 			} catch (err) {
 				log.warn(
 					`SpaceRuntime: failed to process external event ${payload.eventId} for ` +
-						`${match.workflowRunId}/${match.nodeId}/${match.agentName}: ${formatCommandError(err)}`
+						`${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
 				);
 			}
 		}
@@ -928,6 +940,12 @@ export class SpaceRuntime {
 				this.clearExternalEventRetry(deliveryKey);
 				return;
 			}
+			if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+				this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
+					preserveAttemptCount: true,
+				});
+				return;
+			}
 			void this.deliverToSession(target, event, deliveryKey, deliveryMode);
 		}, EXTERNAL_EVENT_RETRY_DELAY_MS);
 		this.externalEventRetryTimers.set(deliveryKey, timer);
@@ -994,6 +1012,7 @@ export class SpaceRuntime {
 				this.config.externalEventStore.markEventFailedIfAllDeliveriesTerminal(
 					dropped.event.eventId
 				);
+				this.clearExternalEventRetry(dropped.deliveryKey);
 			}
 			log.warn(
 				`SpaceRuntime: pending external event queue overflow for ${key}; dropped oldest event`

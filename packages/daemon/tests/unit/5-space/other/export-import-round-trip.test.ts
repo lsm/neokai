@@ -217,6 +217,39 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 		expect(coder!.customPrompt).toBeUndefined();
 	});
 
+	test('preserves eventInterests through export and import mapping', () => {
+		const workflow = makeWorkflowWithOverrides();
+		workflow.nodes[0]!.agents[0]!.eventInterests = [
+			{ topic: 'github/*/*/pull_request.review_*', label: 'reviews' },
+		];
+		const exported = exportWorkflow(workflow, agents);
+		expect(exported.nodes[0]!.agents[0]!.eventInterests).toEqual([
+			{ topic: 'github/*/*/pull_request.review_*', label: 'reviews' },
+		]);
+		const validation = validateExportBundle(
+			exportBundle(agents, [workflow], 'Event Interests Bundle')
+		);
+		expect(validation.ok).toBe(true);
+
+		const importedNameToId = new Map([
+			['Coder Agent', 'new-agent-1'],
+			['Reviewer Agent', 'new-agent-2'],
+		]);
+		const existingNameToId = new Map<string, string>();
+
+		const { params } = buildWorkflowCreateParams(
+			'space-import',
+			'Overrides Workflow',
+			exported,
+			importedNameToId,
+			existingNameToId
+		);
+
+		expect(params.nodes[0]!.agents![0]!.eventInterests).toEqual([
+			{ topic: 'github/*/*/pull_request.review_*', label: 'reviews' },
+		]);
+	});
+
 	test('backward compat: imports agents without model/customPrompt cleanly', () => {
 		const workflow = makeWorkflowWithoutOverrides();
 		const exported = exportWorkflow(workflow, agents);

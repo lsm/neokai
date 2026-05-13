@@ -853,6 +853,184 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected).toHaveLength(1);
 	});
 
+	test('does not fire retry timer while the same delivery is in flight', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-retry-inflight',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-retry-inflight');
+		await runtime.stop();
+		let attempts = 0;
+		let releaseDelivery!: () => void;
+		const duplicateDeliveryStarted = Promise.withResolvers<void>();
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			attempts++;
+			if (attempts === 1) return { ok: false, error: 'temporary retry timer failure' };
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			duplicateDeliveryStarted.resolve();
+			await new Promise<void>((resolve) => {
+				releaseDelivery = resolve;
+			});
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerRunInterests(run.id, taskRepo.listByWorkflowRun(run.id)[0]!.id, workflow.nodes);
+
+		const event = makeEvent({ dedupeKey: 'dedupe-retry-inflight' });
+		await eventService.publish(event);
+		const duplicatePublish = eventService.publish(
+			makeEvent({ id: 'evt-retry-inflight-duplicate', dedupeKey: event.dedupeKey })
+		);
+		await duplicateDeliveryStarted.promise;
+		await new Promise((resolve) => setTimeout(resolve, 1100));
+
+		expect(injected).toHaveLength(1);
+		expect(attempts).toBe(2);
+		releaseDelivery();
+		await duplicatePublish;
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
+	test('registers all matching deliveries before successful delivery terminalizes source event', async () => {
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: `Workflow ${Math.random()}`,
+			description: '',
+			nodes: [
+				{
+					id: 'code',
+					name: 'Code',
+					agents: [
+						{
+							agentId: AGENT_ID,
+							name: 'coder',
+							eventInterests: [{ topic: 'github/*/*/pull_request.review_*' }],
+						},
+					],
+				},
+				{
+					id: 'review',
+					name: 'Review',
+					agents: [
+						{
+							agentId: AGENT_ID,
+							name: 'reviewer',
+							eventInterests: [{ topic: 'github/*/*/pull_request.review_*' }],
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'code',
+			endNodeId: 'review',
+			rules: [],
+			tags: [],
+		});
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const task = taskRepo.listByWorkflowRun(run.id)[0]!;
+		const reviewExecution = nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'review',
+			agentName: 'reviewer',
+			agentId: AGENT_ID,
+			status: 'pending',
+		});
+		const codeExecution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(codeExecution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-multi-success',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-multi-success');
+		runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+		nodeExecutionRepo.update(reviewExecution.id, {
+			status: 'cancelled',
+			completedAt: Date.now(),
+		});
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		const deliveries = eventStore.listDeliveries(event.id);
+		expect(deliveries).toHaveLength(2);
+		expect(deliveries.some((delivery) => delivery.state === 'delivered')).toBe(true);
+		expect(deliveries.some((delivery) => delivery.state === 'failed')).toBe(true);
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('clears retry state when pending queue overflow drops a retry delivery', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-overflow-retry',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-overflow-retry');
+		await runtime.stop();
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async () => ({
+			ok: false,
+			error: 'temporary overflow retry failure',
+		}));
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerRunInterests(run.id, taskRepo.listByWorkflowRun(run.id)[0]!.id, workflow.nodes);
+
+		const events = Array.from({ length: 51 }, (_, index) =>
+			makeEvent({
+				id: `evt-overflow-retry-${index}`,
+				dedupeKey: `dedupe-overflow-retry-${index}`,
+			})
+		);
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+
+		const droppedDelivery = eventStore.listDeliveries(events[0]!.id)[0]!;
+		expect(droppedDelivery.state).toBe('failed');
+		expect(droppedDelivery.failureReason).toBe('pending_node_queue_overflow');
+		const retryState = runtime as unknown as {
+			externalEventRetryTimers: Map<string, unknown>;
+			externalEventRetryCounts: Map<string, number>;
+		};
+		expect(retryState.externalEventRetryTimers.has(droppedDelivery.deliveryKey)).toBe(false);
+		expect(retryState.externalEventRetryCounts.has(droppedDelivery.deliveryKey)).toBe(false);
+	});
+
 	test('fails delivery terminally when injection command handler is missing', async () => {
 		const workflow = createWorkflow();
 		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
