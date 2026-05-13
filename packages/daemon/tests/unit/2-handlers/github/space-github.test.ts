@@ -1,25 +1,11 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import {
 	SpaceGitHubService,
 	normalizeSpaceGitHubWebhook,
 } from '../../../../src/lib/github/space-github';
-
-async function createSignature(payload: string, secret: string): Promise<string> {
-	const encoder = new TextEncoder();
-	const cryptoKey = await crypto.subtle.importKey(
-		'raw',
-		encoder.encode(secret),
-		{ name: 'HMAC', hash: 'SHA-256' },
-		false,
-		['sign']
-	);
-	const buffer = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(payload));
-	return `sha256=${Array.from(new Uint8Array(buffer))
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('')}`;
-}
 
 function setupDb(): BunDatabase {
 	const db = new BunDatabase(':memory:');
@@ -114,18 +100,6 @@ function payloadFor(event: string): unknown {
 	};
 }
 
-function webhookRequest(payload: unknown, event: string, signature: string): Request {
-	return new Request('http://localhost/webhook/github/space', {
-		method: 'POST',
-		headers: {
-			'X-Hub-Signature-256': signature,
-			'X-GitHub-Event': event,
-			'X-GitHub-Delivery': 'delivery-1',
-		},
-		body: JSON.stringify(payload),
-	});
-}
-
 describe('Space GitHub integration', () => {
 	test('normalizes supported webhook event types', () => {
 		for (const event of [
@@ -140,59 +114,6 @@ describe('Space GitHub integration', () => {
 			expect(normalized?.prNumber).toBe(7);
 			expect(normalized?.eventType).toBe(event);
 		}
-	});
-
-	test('verifies signatures, allowlist and dedupes deliveries', async () => {
-		const db = setupDb();
-		seedTask(db);
-		const service = new SpaceGitHubService(db);
-		service.repo.upsertWatchedRepo({
-			spaceId: 'space-1',
-			owner: 'acme',
-			repo: 'widgets',
-			webhookSecret: 'secret',
-		});
-		const payload = payloadFor('issue_comment');
-		const raw = JSON.stringify(payload);
-		const ok = await service.handleWebhook(
-			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
-		);
-		expect(ok.status).toBe(200);
-		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
-		const duplicate = await service.handleWebhook(
-			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
-		);
-		expect(duplicate.status).toBe(200);
-		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
-		const bad = await service.handleWebhook(
-			webhookRequest(payload, 'issue_comment', await createSignature(raw, 'wrong'))
-		);
-		expect(bad.status).toBe(401);
-		const missing = await service.handleWebhook(
-			new Request('http://localhost/webhook/github/space', {
-				method: 'POST',
-				headers: { 'X-GitHub-Event': 'issue_comment', 'X-GitHub-Delivery': 'd' },
-				body: raw,
-			})
-		);
-		expect(missing.status).toBe(401);
-		const unknownRepo = await service.handleWebhook(
-			webhookRequest(
-				{
-					...(payload as object),
-					repository: { ...baseRepo, name: 'other', full_name: 'acme/other' },
-				},
-				'issue_comment',
-				await createSignature(
-					JSON.stringify({
-						...(payload as object),
-						repository: { ...baseRepo, name: 'other', full_name: 'acme/other' },
-					}),
-					'secret'
-				)
-			)
-		);
-		expect(unknownRepo.status).toBe(404);
 	});
 
 	test('resolves by task text, artifacts, gate data, ambiguous and unknown', async () => {
@@ -289,11 +210,30 @@ describe('Space GitHub integration', () => {
 		});
 	});
 
-	test('polling uses auth/cursors and shares dedupe with webhooks', async () => {
+	test('extension polling uses auth/cursors and preserves legacy ingestion dedupe', async () => {
 		const db = setupDb();
 		seedTask(db);
-		const service = new SpaceGitHubService(db, undefined, undefined, 'token');
-		service.repo.upsertWatchedRepo({
+		const service = new SpaceGitHubService(db);
+		const extension = new GitHubEventExtension(service.eventExtensionRepo, {
+			githubToken: 'token',
+			legacyIngest: (spaceId, event) => service.ingest(spaceId, event),
+		});
+		await extension.start({
+			publisher: { publish: async () => {} },
+			config: {
+				async getGlobalConfig(source: string) {
+					return { source, globallyEnabled: true, capabilities: { webhooks: true, polling: true } };
+				},
+				async getSpaceConfig(spaceId: string, source: string) {
+					return { spaceId, source, enabled: true, settings: {} };
+				},
+				async listEnabledSpaces() {
+					return [];
+				},
+			},
+			onSourceConfigChanged() {},
+		});
+		extension.repo.upsertWatchedRepo({
 			spaceId: 'space-1',
 			owner: 'acme',
 			repo: 'widgets',
@@ -317,12 +257,19 @@ describe('Space GitHub integration', () => {
 				: [];
 			return new Response(JSON.stringify(rows), { status: 200, headers: { ETag: 'etag-1' } });
 		};
-		await service.pollOnce(fakeFetch as typeof fetch);
+		await extension.pollWatchedRepo(
+			extension.repo.listPollingRepos()[0],
+			fakeFetch as typeof fetch
+		);
 		expect((calls[0].headers as Record<string, string>).Authorization).toBe('Bearer token');
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
-		await service.pollOnce(fakeFetch as typeof fetch);
+		await extension.pollWatchedRepo(
+			extension.repo.listPollingRepos()[0],
+			fakeFetch as typeof fetch
+		);
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
 		expect((calls[3].headers as Record<string, string>)['If-None-Match']).toBe('etag-1');
+		await extension.stop();
 	});
 
 	test('dedupe keys preserve repeated webhook actions and polling PR updates', async () => {
@@ -362,11 +309,30 @@ describe('Space GitHub integration', () => {
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 2 });
 	});
 
-	test('polling ignores issue comments and keeps watermark stable while draining pages', async () => {
+	test('extension polling ignores issue comments and keeps watermark stable while draining pages', async () => {
 		const db = setupDb();
 		seedTask(db);
-		const service = new SpaceGitHubService(db, undefined, undefined, 'token');
-		service.repo.upsertWatchedRepo({
+		const service = new SpaceGitHubService(db);
+		const extension = new GitHubEventExtension(service.eventExtensionRepo, {
+			githubToken: 'token',
+			legacyIngest: (spaceId, event) => service.ingest(spaceId, event),
+		});
+		await extension.start({
+			publisher: { publish: async () => {} },
+			config: {
+				async getGlobalConfig(source: string) {
+					return { source, globallyEnabled: true, capabilities: { webhooks: true, polling: true } };
+				},
+				async getSpaceConfig(spaceId: string, source: string) {
+					return { spaceId, source, enabled: true, settings: {} };
+				},
+				async listEnabledSpaces() {
+					return [];
+				},
+			},
+			onSourceConfigChanged() {},
+		});
+		extension.repo.upsertWatchedRepo({
 			spaceId: 'space-1',
 			owner: 'Acme',
 			repo: 'Widgets',
@@ -413,7 +379,10 @@ describe('Space GitHub integration', () => {
 			return new Response(JSON.stringify([]), { status: 200 });
 		};
 
-		await service.pollOnce(fakeFetch as typeof fetch);
+		await extension.pollWatchedRepo(
+			extension.repo.listPollingRepos()[0],
+			fakeFetch as typeof fetch
+		);
 
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 100 });
 		expect(calls.some((url) => url.includes('per_page=100'))).toBe(true);
@@ -428,7 +397,10 @@ describe('Space GitHub integration', () => {
 		expect(cursor.lastSeenAt).toBe(0);
 		expect(cursor.pendingLastSeenAt).toBeGreaterThan(0);
 
-		await service.pollOnce(fakeFetch as typeof fetch);
+		await extension.pollWatchedRepo(
+			extension.repo.listPollingRepos()[0],
+			fakeFetch as typeof fetch
+		);
 
 		expect(calls.some((url) => url.includes('page=2') && !url.includes('since='))).toBe(true);
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 101 });
@@ -449,5 +421,6 @@ describe('Space GitHub integration', () => {
 				}
 			).dedupe_key.startsWith('acme/widgets:')
 		).toBe(true);
+		await extension.stop();
 	});
 });

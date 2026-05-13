@@ -2,7 +2,8 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
-import { verifySignature } from './webhook-handler';
+import { normalizeGitHubWebhook } from '../external-events/github/github-normalizer';
+import { GitHubEventExtensionRepository } from '../external-events/github/github-repository';
 
 const log = new Logger('space-github');
 
@@ -84,144 +85,7 @@ export interface ResolveResult {
 	note?: string;
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-}
-
-function getString(value: unknown, fallback = ''): string {
-	return typeof value === 'string' ? value : fallback;
-}
-
-function getNumber(value: unknown, fallback = 0): number {
-	return typeof value === 'number' ? value : fallback;
-}
-
-function parseTs(value: unknown): number {
-	const raw = getString(value);
-	const parsed = raw ? Date.parse(raw) : Number.NaN;
-	return Number.isFinite(parsed) ? parsed : Date.now();
-}
-
-function repoFromPayload(payload: Record<string, unknown>): { owner: string; repo: string } {
-	const repository = asObject(payload.repository);
-	const owner = asObject(repository.owner);
-	const fullName = getString(repository.full_name);
-	const [fullOwner, fullRepo] = fullName.split('/');
-	return {
-		owner: getString(owner.login, fullOwner ?? ''),
-		repo: getString(repository.name, fullRepo ?? ''),
-	};
-}
-
-function userFrom(value: unknown): { login: string; type: string } {
-	const user = asObject(value);
-	return { login: getString(user.login, 'unknown'), type: getString(user.type, 'User') };
-}
-
-function truncateBody(body: string): string {
-	const singleLine = body.replace(/\s+/g, ' ').trim();
-	return singleLine.length > 240 ? `${singleLine.slice(0, 237)}...` : singleLine;
-}
-
-function prUrl(owner: string, repo: string, number: number): string {
-	return `https://github.com/${owner}/${repo}/pull/${number}`;
-}
-
-export function normalizeSpaceGitHubWebhook(
-	eventType: string,
-	deliveryId: string,
-	payload: unknown
-): NormalizedSpaceGitHubEvent | null {
-	if (
-		eventType !== 'issue_comment' &&
-		eventType !== 'pull_request_review' &&
-		eventType !== 'pull_request_review_comment' &&
-		eventType !== 'pull_request'
-	) {
-		return null;
-	}
-	const root = asObject(payload);
-	const action = getString(root.action, 'unknown');
-	const repo = repoFromPayload(root);
-	const sender = userFrom(root.sender);
-	let prNumber = 0;
-	let actor = sender;
-	let body = '';
-	let externalUrl = '';
-	let externalId = `${eventType}:${deliveryId}`;
-	let occurredAt = Date.now();
-	let title = '';
-
-	if (eventType === 'issue_comment') {
-		const issue = asObject(root.issue);
-		if (!asObject(issue.pull_request).url) return null;
-		const comment = asObject(root.comment);
-		actor = userFrom(comment.user ?? root.sender);
-		prNumber = getNumber(issue.number);
-		body = getString(comment.body);
-		externalId = `issue_comment:${getNumber(comment.id) || deliveryId}:${action}`;
-		externalUrl = getString(comment.html_url, prUrl(repo.owner, repo.repo, prNumber));
-		occurredAt = parseTs(comment.updated_at ?? comment.created_at);
-		title = `PR #${prNumber} comment`;
-	} else if (eventType === 'pull_request_review') {
-		const pr = asObject(root.pull_request);
-		const review = asObject(root.review);
-		actor = userFrom(review.user ?? root.sender);
-		prNumber = getNumber(pr.number);
-		body = getString(review.body);
-		externalId = `review:${getNumber(review.id) || deliveryId}:${action}`;
-		externalUrl = getString(
-			review.html_url,
-			getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
-		);
-		occurredAt = parseTs(review.submitted_at ?? review.updated_at);
-		title = `PR #${prNumber} review ${getString(review.state, action)}`;
-	} else if (eventType === 'pull_request_review_comment') {
-		const pr = asObject(root.pull_request);
-		const comment = asObject(root.comment);
-		actor = userFrom(comment.user ?? root.sender);
-		prNumber = getNumber(pr.number);
-		body = getString(comment.body);
-		externalId = `review_comment:${getNumber(comment.id) || deliveryId}:${action}`;
-		externalUrl = getString(
-			comment.html_url,
-			getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
-		);
-		occurredAt = parseTs(comment.updated_at ?? comment.created_at);
-		title = `PR #${prNumber} inline review comment`;
-	} else {
-		const pr = asObject(root.pull_request);
-		actor = userFrom(pr.user ?? root.sender);
-		prNumber = getNumber(pr.number);
-		body = getString(pr.body);
-		externalId = `pull_request:${getNumber(pr.id) || prNumber}:${action}:${deliveryId}`;
-		externalUrl = getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber));
-		occurredAt = parseTs(pr.updated_at ?? pr.created_at);
-		title = `PR #${prNumber} ${action}`;
-	}
-	if (!repo.owner || !repo.repo || !prNumber) return null;
-	const canonicalOwner = repo.owner.toLowerCase();
-	const canonicalRepo = repo.repo.toLowerCase();
-	return {
-		deliveryId,
-		dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
-		source: 'webhook',
-		eventType,
-		action,
-		repoOwner: repo.owner,
-		repoName: repo.repo,
-		prNumber,
-		prUrl: prUrl(repo.owner, repo.repo, prNumber),
-		actor: actor.login,
-		actorType: actor.type,
-		body,
-		summary: `${title} by ${actor.login}${body ? `: ${truncateBody(body)}` : ''}`,
-		externalUrl,
-		externalId,
-		occurredAt,
-		rawPayload: payload,
-	};
-}
+export const normalizeSpaceGitHubWebhook = normalizeGitHubWebhook;
 
 export class SpaceGitHubRepository {
 	constructor(private readonly db: BunDatabase) {}
@@ -532,6 +396,7 @@ export class SpacePrTaskResolver {
 
 export class SpaceGitHubService {
 	readonly repo: SpaceGitHubRepository;
+	readonly eventExtensionRepo: GitHubEventExtensionRepository;
 	private readonly resolver: SpacePrTaskResolver;
 	private readonly debounce = new Map<
 		string,
@@ -542,56 +407,12 @@ export class SpaceGitHubService {
 		private readonly db: BunDatabase,
 		private readonly internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
 		private readonly injectTaskAgent?: (taskId: string, message: string) => Promise<void>,
-		private readonly githubToken?: string,
+		_githubToken?: string,
 		private readonly onEventsChanged?: () => void
 	) {
 		this.repo = new SpaceGitHubRepository(db);
+		this.eventExtensionRepo = new GitHubEventExtensionRepository(db);
 		this.resolver = new SpacePrTaskResolver(db);
-	}
-
-	async handleWebhook(req: Request): Promise<Response> {
-		const signature = req.headers.get('X-Hub-Signature-256');
-		const eventType = req.headers.get('X-GitHub-Event');
-		const deliveryId = req.headers.get('X-GitHub-Delivery');
-		if (!signature) return Response.json({ error: 'Missing signature header' }, { status: 401 });
-		if (!eventType || !deliveryId)
-			return Response.json({ error: 'Missing GitHub event headers' }, { status: 400 });
-		const raw = await req.text();
-		const signatureMatchedRepos = this.repo
-			.listWatchedRepos()
-			.filter((r) => r.enabled && r.webhookEnabled && r.webhookSecret);
-		const valid = [] as WatchedRepo[];
-		for (const repo of signatureMatchedRepos) {
-			if (repo.webhookSecret && (await verifySignature(raw, signature, repo.webhookSecret))) {
-				valid.push(repo);
-			}
-		}
-		if (valid.length === 0) return Response.json({ error: 'Invalid signature' }, { status: 401 });
-		let payload: unknown;
-		try {
-			payload = JSON.parse(raw);
-		} catch {
-			return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
-		}
-		const normalized = normalizeSpaceGitHubWebhook(eventType, deliveryId, payload);
-		if (!normalized)
-			return Response.json({ message: 'Event ignored', deliveryId }, { status: 202 });
-		const validForRepo = valid.filter(
-			(r) =>
-				r.owner.toLowerCase() === normalized.repoOwner.toLowerCase() &&
-				r.repo.toLowerCase() === normalized.repoName.toLowerCase()
-		);
-		if (validForRepo.length === 0)
-			return Response.json({ error: 'Repository is not watched' }, { status: 404 });
-		for (const repo of validForRepo) {
-			await this.ingest(repo.spaceId, normalized);
-			this.db
-				.prepare(
-					`UPDATE space_github_watched_repos SET last_webhook_at = ?, updated_at = ? WHERE id = ?`
-				)
-				.run(Date.now(), Date.now(), repo.id);
-		}
-		return Response.json({ message: 'Webhook received', deliveryId, spaces: validForRepo.length });
 	}
 
 	async ingest(
@@ -618,132 +439,6 @@ export class SpaceGitHubService {
 		this.appendTaskActivity(resolved.taskId, event);
 		this.scheduleTaskNotification(resolved.taskId, stored.event.id);
 		return this.repo.getEvent(stored.event.id)!;
-	}
-
-	async pollOnce(fetchImpl: typeof fetch = fetch): Promise<number> {
-		let count = 0;
-		for (const watched of this.repo
-			.listWatchedRepos()
-			.filter((r) => r.enabled && r.pollingEnabled)) {
-			const cursor = watched.pollCursor ?? {};
-			const etags = cursor.etags ?? {};
-			const processedPages = cursor.processedPages ?? {};
-			const watermarks = {
-				committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
-				pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
-			};
-			const since = watermarks.committed ? new Date(watermarks.committed).toISOString() : undefined;
-			// Poll issue comments, review comments, and PR metadata; all feed the same ingest path.
-			const base = `https://api.github.com/repos/${watched.owner}/${watched.repo}`;
-			const endpoints = [
-				{ key: 'issue_comments', path: '/issues/comments' },
-				{ key: 'review_comments', path: '/pulls/comments' },
-				{ key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
-			];
-			for (const endpoint of endpoints) {
-				const page = processedPages[endpoint.key] ?? 1;
-				const query = new URLSearchParams();
-				if (endpoint.extra) {
-					for (const part of endpoint.extra.split('&')) {
-						const [key, value = ''] = part.split('=');
-						query.set(key, value);
-					}
-				}
-				if (since) query.set('since', since);
-				query.set('per_page', '100');
-				query.set('page', String(page));
-				const url = `${base}${endpoint.path}?${query.toString()}`;
-				const headers: Record<string, string> = {
-					Accept: 'application/vnd.github+json',
-					'User-Agent': 'NeoKai-Space-GitHub/1.0',
-					'X-GitHub-Api-Version': '2022-11-28',
-				};
-				if (this.githubToken) headers.Authorization = `Bearer ${this.githubToken}`;
-				if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
-				const response = await fetchImpl(url, { headers });
-				if (response.status === 304) continue;
-				if (!response.ok) continue;
-				const etag = response.headers.get('ETag');
-				if (etag && page === 1) etags[endpoint.key] = etag;
-				const rows = (await response.json()) as unknown[];
-				for (const row of rows) {
-					const event = this.normalizePollingRow(watched, row, endpoint.key);
-					if (event) {
-						event.source = 'polling';
-						await this.ingest(watched.spaceId, event);
-						watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
-						count++;
-					}
-				}
-				processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
-			}
-			const hasBacklog = Object.values(processedPages).some((page) => page > 1);
-			const cursorPayload: PollCursor = {
-				lastSeenAt: hasBacklog ? watermarks.committed : watermarks.pending,
-				pendingLastSeenAt: hasBacklog ? watermarks.pending : undefined,
-				etags,
-				processedPages,
-			};
-			this.db
-				.prepare(
-					`UPDATE space_github_watched_repos SET last_poll_at = ?, poll_cursor = ?, updated_at = ? WHERE id = ?`
-				)
-				.run(Date.now(), JSON.stringify(cursorPayload), Date.now(), watched.id);
-		}
-		return count;
-	}
-
-	private normalizePollingRow(
-		watched: WatchedRepo,
-		row: unknown,
-		endpointKey: string
-	): NormalizedSpaceGitHubEvent | null {
-		const obj = asObject(row);
-		const apiUrl = getString(obj.url);
-		const htmlUrl = getString(obj.html_url);
-		let prNumber = 0;
-		if (endpointKey === 'issue_comments') {
-			const issue = asObject(obj.issue);
-			const issuePullRequest = asObject(issue.pull_request);
-			const issueUrl = getString(obj.issue_url);
-			if (!issuePullRequest.url && !htmlUrl.includes('/pull/')) return null;
-			const issueMatch = issueUrl.match(/\/issues\/(\d+)/);
-			prNumber = getNumber(issue.number, issueMatch ? Number(issueMatch[1]) : 0);
-		} else {
-			const prMatch = htmlUrl.match(/\/pull\/(\d+)/) ?? apiUrl.match(/\/pulls\/(\d+)/);
-			prNumber = prMatch ? Number(prMatch[1]) : getNumber(obj.number);
-		}
-		if (!prNumber) return null;
-		const user = userFrom(obj.user);
-		let eventType: SpaceGitHubEventKind = 'pull_request';
-		if (endpointKey === 'issue_comments') eventType = 'issue_comment';
-		if (endpointKey === 'review_comments') eventType = 'pull_request_review_comment';
-		const id = getNumber(obj.id) || prNumber;
-		const updatedAt = parseTs(obj.updated_at ?? obj.created_at);
-		const dedupeVersion =
-			endpointKey === 'pulls' ? String(updatedAt) : getString(obj.updated_at ?? obj.created_at);
-		const dedupeSuffix = dedupeVersion ? `:${dedupeVersion}` : '';
-		const canonicalOwner = watched.owner.toLowerCase();
-		const canonicalRepo = watched.repo.toLowerCase();
-		return {
-			deliveryId: `poll:${eventType}:${id}${dedupeSuffix}`,
-			dedupeKey: `${canonicalOwner}/${canonicalRepo}:${eventType}:${id}${dedupeSuffix}`,
-			source: 'polling',
-			eventType,
-			action: 'polled',
-			repoOwner: watched.owner,
-			repoName: watched.repo,
-			prNumber,
-			prUrl: prUrl(watched.owner, watched.repo, prNumber),
-			actor: user.login,
-			actorType: user.type,
-			body: getString(obj.body),
-			summary: `PR #${prNumber} ${eventType} by ${user.login}: ${truncateBody(getString(obj.body, getString(obj.title)))}`,
-			externalUrl: htmlUrl || prUrl(watched.owner, watched.repo, prNumber),
-			externalId: `${eventType}:${id}${dedupeSuffix}`,
-			occurredAt: updatedAt,
-			rawPayload: row,
-		};
 	}
 
 	private appendTaskActivity(taskId: string, event: NormalizedSpaceGitHubEvent): void {
