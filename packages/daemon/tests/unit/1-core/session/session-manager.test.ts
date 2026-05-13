@@ -321,6 +321,7 @@ describe('SessionManager', () => {
 			const fakeAgentSession = {
 				getSessionData: mock(() => mockSession),
 				cleanup: mock(async () => {}),
+				getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
@@ -330,6 +331,33 @@ describe('SessionManager', () => {
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(null);
 			const result = await sessionManager.getSessionAsync('room:1:task:2:xyz');
 			expect(result).toBeNull();
+		});
+
+		it('unregisterSession preserves exited root PIDs for watchdog', () => {
+			const mockSession: Session = {
+				id: 'room:1:task:2:abc',
+				title: 'Room Session',
+				workspacePath: '/test',
+				status: 'active',
+				config: {},
+				metadata: {},
+			};
+			const fakeAgentSession = {
+				getSessionData: mock(() => mockSession),
+				cleanup: mock(async () => {}),
+				getTrackedAgentRootPidsSplit: mock(() => ({
+					live: [7000],
+					exited: [7001],
+				})),
+			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+			sessionManager.registerSession(fakeAgentSession);
+			sessionManager.unregisterSession('room:1:task:2:abc');
+
+			// PIDs should survive eviction via the SessionManager-level map
+			const split = sessionManager.getTrackedAgentRootPidsSplit();
+			expect(split.exited).toContain(7000); // was live, now preserved as exited
+			expect(split.exited).toContain(7001);
 		});
 	});
 
@@ -428,6 +456,44 @@ describe('SessionManager', () => {
 			await sessionManager.interruptInMemorySession('ephemeral-id');
 
 			expect(mockDb.deleteSession).not.toHaveBeenCalled();
+		});
+
+		it('preserves exited root PIDs after cache eviction for watchdog ownership', async () => {
+			const mockSession: Session = {
+				id: 'session-with-pids',
+				title: 'PID Session',
+				workspacePath: '/test',
+				status: 'active',
+				config: {},
+				metadata: {},
+			};
+
+			// Create a fake AgentSession with tracked exited root PIDs
+			const fakeAgentSession = {
+				getSessionData: mock(() => mockSession),
+				cleanup: mock(async () => {}),
+				getTrackedAgentRootPidsSplit: mock(() => ({
+					live: [5000],
+					exited: [5001, 5002],
+				})),
+			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+			sessionManager.registerSession(fakeAgentSession);
+
+			// Before interrupt: PIDs come from the session cache
+			const beforeInterrupt = sessionManager.getTrackedAgentRootPidsSplit();
+			expect(beforeInterrupt.live).toContain(5000);
+			expect(beforeInterrupt.exited).toContain(5001);
+
+			// Interrupt removes the session from cache
+			await sessionManager.interruptInMemorySession('session-with-pids');
+
+			// After interrupt: PIDs should still be visible via the SessionManager-level map
+			const afterInterrupt = sessionManager.getTrackedAgentRootPidsSplit();
+			expect(afterInterrupt.live).not.toContain(5000); // live becomes "exited" via preserveExitedRootPids
+			expect(afterInterrupt.exited).toContain(5000); // live PID was preserved as exited
+			expect(afterInterrupt.exited).toContain(5001);
+			expect(afterInterrupt.exited).toContain(5002);
 		});
 	});
 

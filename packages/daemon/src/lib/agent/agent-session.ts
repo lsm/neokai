@@ -98,7 +98,7 @@ import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
 
-const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
+export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
 /**
  * AgentSessionInit - Configuration for creating a new AgentSession
@@ -1243,9 +1243,15 @@ export class AgentSession
 	trackAgentProcess(proc: TrackedAgentProcess): void {
 		const pid = proc.pid;
 		if (typeof pid !== 'number' || pid <= 0) {
-			this.processExitedPromise = new Promise<void>((resolve) => {
+			// Aggregate the no-PID exit promise alongside existing tracked
+			// process exit promises instead of overwriting processExitedPromise.
+			// Overwriting would lose the aggregated state of numeric-PID
+			// processes still being tracked during restart/overlap.
+			const noPidExitPromise = new Promise<void>((resolve) => {
 				proc.once('exit', () => resolve());
 			});
+			const existingPromises = [...this.trackedAgentProcessExitPromises.values(), noPidExitPromise];
+			this.processExitedPromise = Promise.all(existingPromises).then(() => {});
 			return;
 		}
 

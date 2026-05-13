@@ -22,7 +22,11 @@ import type {
 import { generateUUID } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
-import { AgentSession, type AgentSessionRuntimeOptions } from '../agent/agent-session';
+import {
+	AgentSession,
+	type AgentSessionRuntimeOptions,
+	RECENTLY_EXITED_ROOT_PID_RETENTION_MS,
+} from '../agent/agent-session';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';
@@ -75,6 +79,17 @@ export class SessionManager {
 	// Cleanup state machine - prevents race conditions during shutdown
 	private cleanupState: CleanupState = CleanupState.IDLE;
 	private hardResetInFlight = new Map<string, Promise<{ success: boolean; error?: string }>>();
+
+	/**
+	 * Recently-exited agent root PIDs that survived session cache eviction.
+	 *
+	 * When `interruptInMemorySession()` or `unregisterSession()` removes an
+	 * AgentSession from the cache, its own `recentlyExitedAgentRootPids` are
+	 * no longer visible to `getTrackedAgentRootPidsSplit()`. We snapshot those
+	 * PIDs here so the process watchdog retains ownership attribution for the
+	 * full 15-minute retention window.
+	 */
+	private recentlyExitedAgentRootPids = new Map<number, number>();
 
 	// Extracted modules
 	private sessionCache: SessionCache;
@@ -416,12 +431,20 @@ export class SessionManager {
 	}
 
 	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
+		this.expireRecentlyExitedAgentRootPids();
 		const live: number[] = [];
 		const exited: number[] = [];
+		// Collect from sessions still in the cache.
 		for (const [, agentSession] of this.sessionCache.entries()) {
 			const split = agentSession.getTrackedAgentRootPidsSplit();
 			live.push(...split.live);
 			exited.push(...split.exited);
+		}
+		// Merge session-manager-level PIDs that survived cache eviction.
+		for (const pid of this.recentlyExitedAgentRootPids.keys()) {
+			if (!exited.includes(pid)) {
+				exited.push(pid);
+			}
 		}
 		return { live, exited };
 	}
@@ -440,6 +463,10 @@ export class SessionManager {
 	 * Space runtime callers will be added as that subsystem is wired up.
 	 */
 	unregisterSession(sessionId: string): void {
+		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+		if (agentSession) {
+			this.preserveExitedRootPids(agentSession);
+		}
 		this.sessionCache.remove(sessionId);
 	}
 
@@ -541,6 +568,9 @@ export class SessionManager {
 	async interruptInMemorySession(sessionId: string): Promise<void> {
 		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
 		if (agentSession) {
+			// Snapshot exited root PIDs before cleanup so the watchdog retains
+			// ownership attribution for the full 15-minute retention window.
+			this.preserveExitedRootPids(agentSession);
 			try {
 				await agentSession.cleanup();
 			} catch (error) {
@@ -559,6 +589,37 @@ export class SessionManager {
 
 	getTotalSessions(): number {
 		return this.db.listSessions({ includeArchived: true }).length;
+	}
+
+	/**
+	 * Snapshot exited root PIDs from an AgentSession before it is removed from
+	 * the session cache, so the process watchdog retains ownership attribution.
+	 */
+	private preserveExitedRootPids(agentSession: AgentSession): void {
+		const split = agentSession.getTrackedAgentRootPidsSplit();
+		const now = Date.now();
+		for (const pid of split.exited) {
+			if (!this.recentlyExitedAgentRootPids.has(pid)) {
+				this.recentlyExitedAgentRootPids.set(pid, now);
+			}
+		}
+		// Also preserve live PIDs — they will transition to exited when the
+		// process actually exits (the session is being interrupted/removed,
+		// so the SDK subprocess will terminate shortly). Without this, live
+		// roots would be lost entirely when the cache entry is removed.
+		for (const pid of split.live) {
+			if (!this.recentlyExitedAgentRootPids.has(pid)) {
+				this.recentlyExitedAgentRootPids.set(pid, now);
+			}
+		}
+	}
+
+	private expireRecentlyExitedAgentRootPids(now = Date.now()): void {
+		for (const [pid, exitedAt] of this.recentlyExitedAgentRootPids) {
+			if (now - exitedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
+				this.recentlyExitedAgentRootPids.delete(pid);
+			}
+		}
 	}
 
 	// ==================== Tools Configuration ====================

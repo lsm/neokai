@@ -15,6 +15,7 @@ export interface ProcessSnapshot {
 
 export type ProcessLister = () => Promise<ProcessSnapshot[]>;
 export type ProcessKiller = (pid: number, signal: NodeJS.Signals) => void;
+export type ProcessGroupKiller = (pgid: number, signal: NodeJS.Signals) => void;
 export type RootPidProvider = () => { live: Iterable<number>; exited: Iterable<number> };
 
 const SUSPICIOUS_THRESHOLDS = [
@@ -96,10 +97,22 @@ export function parsePsElapsedDuration(raw: string): number {
 export async function cleanupSuspiciousProcesses(options?: {
 	listProcesses?: ProcessLister;
 	killProcess?: ProcessKiller;
+	killProcessGroup?: ProcessGroupKiller;
 	getRootPids?: RootPidProvider;
 }): Promise<number> {
 	const lister = options?.listProcesses ?? listProcesses;
 	const killer = options?.killProcess ?? ((pid, signal) => process.kill(pid, signal));
+	const groupKiller =
+		options?.killProcessGroup ??
+		(process.platform === 'win32'
+			? () => {}
+			: (pgid, signal) => {
+					try {
+						process.kill(-pgid, signal);
+					} catch {
+						// Process group may have already exited.
+					}
+				});
 	const rootResult = options?.getRootPids
 		? options.getRootPids()
 		: { live: [] as number[], exited: [] as number[] };
@@ -120,6 +133,15 @@ export async function cleanupSuspiciousProcesses(options?: {
 		if (!threshold) continue;
 
 		try {
+			// Signal the entire process group first (reaches tool grandchildren
+			// that the parent may not have forwarded signals to).
+			if (
+				typeof snapshot.pgid === 'number' &&
+				Number.isFinite(snapshot.pgid) &&
+				snapshot.pgid > 0
+			) {
+				groupKiller(snapshot.pgid, 'SIGTERM');
+			}
 			killer(snapshot.pid, 'SIGTERM');
 			killed++;
 			logger.warn(
