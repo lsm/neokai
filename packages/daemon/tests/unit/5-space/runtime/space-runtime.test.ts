@@ -58,12 +58,25 @@ function makeDb(): BunDatabase {
 	return db;
 }
 
-function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
+function seedSpaceRow(
+	db: BunDatabase,
+	spaceId: string,
+	workspacePath = '/tmp/workspace',
+	maxConcurrentTasks = 1
+): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, slug, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
-	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, max_concurrent_tasks, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?, ?)`
+	).run(
+		spaceId,
+		workspacePath,
+		`Space ${spaceId}`,
+		spaceId,
+		maxConcurrentTasks,
+		Date.now(),
+		Date.now()
+	);
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
@@ -1138,6 +1151,118 @@ describe('SpaceRuntime', () => {
 			expect(run).not.toBeNull();
 			// Fallback: uses the only available workflow
 			expect(run!.workflowId).toBe(fallbackWorkflow.id);
+		});
+
+		test('attaches only one open standalone task by default', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Work', agentId: AGENT_CODER },
+			]);
+
+			const first = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'First task',
+				status: 'open',
+				preferredWorkflowId: workflow.id,
+			});
+			const second = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Second task',
+				status: 'open',
+				preferredWorkflowId: workflow.id,
+			});
+
+			await runtime.executeTick();
+
+			const updated = [taskRepo.getTask(first.id)!, taskRepo.getTask(second.id)!];
+			expect(updated.filter((task) => task.status === 'in_progress')).toHaveLength(1);
+			expect(updated.filter((task) => task.status === 'open')).toHaveLength(1);
+		});
+
+		test('attaches multiple open standalone tasks up to the configured limit', async () => {
+			await spaceManager.updateSpace(SPACE_ID, { maxConcurrentTasks: 2 });
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Work', agentId: AGENT_CODER },
+			]);
+
+			const tasks = [
+				taskRepo.createTask({
+					spaceId: SPACE_ID,
+					title: 'First task',
+					status: 'open',
+					preferredWorkflowId: workflow.id,
+				}),
+				taskRepo.createTask({
+					spaceId: SPACE_ID,
+					title: 'Second task',
+					status: 'open',
+					preferredWorkflowId: workflow.id,
+				}),
+				taskRepo.createTask({
+					spaceId: SPACE_ID,
+					title: 'Third task',
+					status: 'open',
+					preferredWorkflowId: workflow.id,
+				}),
+			];
+
+			await runtime.executeTick();
+
+			const updated = tasks.map((task) => taskRepo.getTask(task.id)!);
+			expect(updated.filter((task) => task.status === 'in_progress')).toHaveLength(2);
+			expect(updated.filter((task) => task.status === 'open')).toHaveLength(1);
+		});
+
+		test('prioritizes urgent standalone tasks before lower-priority queued tasks', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Work', agentId: AGENT_CODER },
+			]);
+
+			const low = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Low task',
+				status: 'open',
+				priority: 'low',
+				preferredWorkflowId: workflow.id,
+			});
+			const urgent = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Urgent task',
+				status: 'open',
+				priority: 'urgent',
+				preferredWorkflowId: workflow.id,
+			});
+
+			await runtime.executeTick();
+
+			expect(taskRepo.getTask(urgent.id)!.status).toBe('in_progress');
+			expect(taskRepo.getTask(low.id)!.status).toBe('open');
+		});
+
+		test('does not start dependent standalone tasks until dependencies are done', async () => {
+			await spaceManager.updateSpace(SPACE_ID, { maxConcurrentTasks: 2 });
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Work', agentId: AGENT_CODER },
+			]);
+
+			const prerequisite = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Prerequisite',
+				status: 'open',
+				preferredWorkflowId: workflow.id,
+			});
+			const dependent = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Dependent',
+				status: 'open',
+				priority: 'urgent',
+				dependsOn: [prerequisite.id],
+				preferredWorkflowId: workflow.id,
+			});
+
+			await runtime.executeTick();
+
+			expect(taskRepo.getTask(prerequisite.id)!.status).toBe('in_progress');
+			expect(taskRepo.getTask(dependent.id)!.status).toBe('open');
 		});
 	});
 

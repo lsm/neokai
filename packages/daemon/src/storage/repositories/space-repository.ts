@@ -27,8 +27,8 @@ export class SpaceRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, task_agent_config, setting_sources, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, max_concurrent_tasks, config, task_agent_config, setting_sources, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -44,6 +44,7 @@ export class SpaceRepository {
 			'[]',
 			'active',
 			params.autonomyLevel ?? 1,
+			params.maxConcurrentTasks ?? params.config?.maxConcurrentTasks ?? 1,
 			params.config ? JSON.stringify(params.config) : null,
 			params.taskAgentConfig ? JSON.stringify(params.taskAgentConfig) : null,
 			params.settingSources != null ? JSON.stringify(params.settingSources) : null,
@@ -160,6 +161,10 @@ export class SpaceRepository {
 		if (params.autonomyLevel !== undefined) {
 			fields.push('autonomy_level = ?');
 			values.push(params.autonomyLevel);
+		}
+		if (params.maxConcurrentTasks !== undefined) {
+			fields.push('max_concurrent_tasks = ?');
+			values.push(params.maxConcurrentTasks);
 		}
 		if (params.config !== undefined) {
 			fields.push('config = ?');
@@ -319,6 +324,8 @@ export class SpaceRepository {
 			paused: (row.paused as number) === 1,
 			stopped: (row.stopped as number) === 1,
 			autonomyLevel: ((row.autonomy_level as number) ?? 1) as SpaceAutonomyLevel,
+			maxConcurrentTasks:
+				(row.max_concurrent_tasks as number | null | undefined) ?? config?.maxConcurrentTasks ?? 1,
 			config,
 			taskAgentConfig,
 			settingSources,

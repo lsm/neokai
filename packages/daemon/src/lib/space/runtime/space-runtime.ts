@@ -26,6 +26,7 @@ import type {
 	Space,
 	SpaceApprovalSource,
 	SpaceTask,
+	SpaceTaskPriority,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	UpdateSpaceTaskParams,
@@ -80,6 +81,14 @@ import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
 const log = new Logger('space-runtime');
+const MIN_CONCURRENT_TASKS = 1;
+const MAX_CONCURRENT_TASKS = 10;
+const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
+	urgent: 0,
+	high: 1,
+	normal: 2,
+	low: 3,
+};
 
 // ---------------------------------------------------------------------------
 // Config
@@ -2657,6 +2666,11 @@ export class SpaceRuntime {
 			}
 		}
 
+		// Workflow runs created directly via RPC stay pending until a per-space slot is
+		// available. Existing in-progress canonical tasks continue even if the limit is
+		// later lowered below the current running count.
+		if (canonicalTask.status === 'open' && this.getAvailableTaskSlots(space) <= 0) return;
+
 		// ─── Task Agent integration ───────────────────────────────────────────────
 		// When a TaskAgentManager is configured, Task Agents drive the workflow.
 		// SpaceRuntime's role here is lifecycle management only: spawn for pending
@@ -4097,6 +4111,37 @@ export class SpaceRuntime {
 	 * Selection work runs in parallel across tasks so a slow LLM call on one
 	 * task does not delay the rest of the tick.
 	 */
+	private normalizeConcurrentTaskLimit(limit: number | undefined): number {
+		if (limit === undefined || !Number.isFinite(limit)) return MIN_CONCURRENT_TASKS;
+		return Math.min(MAX_CONCURRENT_TASKS, Math.max(MIN_CONCURRENT_TASKS, Math.trunc(limit)));
+	}
+
+	private getConcurrentTaskLimit(space: Space): number {
+		return this.normalizeConcurrentTaskLimit(
+			space.maxConcurrentTasks ?? space.config?.maxConcurrentTasks
+		);
+	}
+
+	private getRunningTaskCount(spaceId: string): number {
+		return this.config.taskRepo
+			.listBySpace(spaceId, false)
+			.filter((task) => task.status === 'in_progress' || task.status === 'approved').length;
+	}
+
+	private getAvailableTaskSlots(space: Space | null): number {
+		if (!space) return 0;
+		return Math.max(0, this.getConcurrentTaskLimit(space) - this.getRunningTaskCount(space.id));
+	}
+
+	private sortTasksByPriority(tasks: SpaceTask[]): SpaceTask[] {
+		return [...tasks].sort((a, b) => {
+			const priorityDelta = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
+			if (priorityDelta !== 0) return priorityDelta;
+			if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+			return a.id.localeCompare(b.id);
+		});
+	}
+
 	private async attachStandaloneTasksToWorkflows(): Promise<void> {
 		const spaces = await this.listActiveSpaces();
 
@@ -4106,9 +4151,14 @@ export class SpaceRuntime {
 				.filter((w) => !w.disabled);
 			if (workflows.length === 0) continue;
 
-			const standaloneOpenTasks = this.config.taskRepo
-				.listStandaloneBySpace(space.id, false)
-				.filter((task) => task.status === 'open');
+			let availableSlots = this.getAvailableTaskSlots(space);
+			if (availableSlots <= 0) continue;
+
+			const standaloneOpenTasks = this.sortTasksByPriority(
+				this.config.taskRepo
+					.listStandaloneBySpace(space.id, false)
+					.filter((task) => task.status === 'open')
+			).slice(0, availableSlots);
 
 			const taskManager = this.getOrCreateTaskManager(space.id);
 
@@ -4132,6 +4182,7 @@ export class SpaceRuntime {
 			// event emission stay in a predictable order per space.
 			for (const candidate of candidates) {
 				if (!candidate) continue;
+				if (availableSlots <= 0) break;
 				const { fresh, selected } = candidate;
 
 				// Re-read once more to defend against concurrent updates between
@@ -4139,6 +4190,10 @@ export class SpaceRuntime {
 				const current = this.config.taskRepo.getTask(fresh.id);
 				if (!current || current.workflowRunId) continue;
 				if (current.status !== 'open') continue;
+				if (this.getAvailableTaskSlots(space) <= 0) {
+					availableSlots = 0;
+					break;
+				}
 
 				try {
 					const { run } = await this.startWorkflowRun(
@@ -4155,6 +4210,7 @@ export class SpaceRuntime {
 						startedAt: current.startedAt ?? Date.now(),
 						completedAt: null,
 					});
+					availableSlots--;
 				} catch (err) {
 					log.warn(
 						`SpaceRuntime: failed to attach standalone task ${current.id} to workflow ${selected.id}:`,

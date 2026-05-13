@@ -614,6 +614,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 127: Add `handle` column to `space_workflows` for human-readable
 	// workflow identifiers (alternative to UUID). Unique per space.
 	runMigration127(db);
+
+	// Migration 128: Add per-space concurrent task execution limit.
+	runMigration128(db);
 }
 
 /**
@@ -8733,6 +8736,13 @@ export function runMigration126(db: BunDatabase): void {
  * repeatedly: rows with a non-null handle are untouched (the SELECT filters
  * them out), so existing handles are always preserved across restarts.
  */
+export function runMigration128(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
+
+	db.exec(`ALTER TABLE spaces ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 1`);
+}
+
 export function runMigration127(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
 

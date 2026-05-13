@@ -35,12 +35,28 @@ import { Logger } from '../logger';
 
 const log = new Logger('space-handlers');
 const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
+const MIN_CONCURRENT_TASKS = 1;
+const MAX_CONCURRENT_TASKS = 10;
 
 export interface SpaceOverviewResult {
 	space: Space;
 	tasks: SpaceTask[];
 	workflowRuns: SpaceWorkflowRun[];
 	sessions: string[];
+}
+
+function validateConcurrentLimit(limit: unknown): number {
+	if (typeof limit !== 'number' || !Number.isInteger(limit)) {
+		throw new Error(
+			`Invalid concurrent task limit: ${String(limit)}. Must be an integer between ${MIN_CONCURRENT_TASKS} and ${MAX_CONCURRENT_TASKS}`
+		);
+	}
+	if (limit < MIN_CONCURRENT_TASKS || limit > MAX_CONCURRENT_TASKS) {
+		throw new Error(
+			`Invalid concurrent task limit: ${String(limit)}. Must be an integer between ${MIN_CONCURRENT_TASKS} and ${MAX_CONCURRENT_TASKS}`
+		);
+	}
+	return limit;
 }
 
 function pickCanonicalTaskForRun(tasks: SpaceTask[], runTitle?: string): SpaceTask {
@@ -114,6 +130,12 @@ export function setupSpaceHandlers(
 			throw new Error(
 				`Invalid autonomyLevel: ${params.autonomyLevel}. Must be one of: ${VALID_AUTONOMY_LEVELS.join(', ')}`
 			);
+		}
+		if (params.maxConcurrentTasks !== undefined) {
+			params.maxConcurrentTasks = validateConcurrentLimit(params.maxConcurrentTasks);
+		}
+		if (params.config?.maxConcurrentTasks !== undefined) {
+			params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
 		}
 
 		const space = await spaceManager.createSpace(params);
@@ -268,12 +290,42 @@ export function setupSpaceHandlers(
 				`Invalid autonomyLevel: ${params.autonomyLevel}. Must be one of: ${VALID_AUTONOMY_LEVELS.join(', ')}`
 			);
 		}
+		if (params.maxConcurrentTasks !== undefined) {
+			params.maxConcurrentTasks = validateConcurrentLimit(params.maxConcurrentTasks);
+		}
+		if (params.config?.maxConcurrentTasks !== undefined) {
+			params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
+		}
 
 		const { id, ...updateParams } = params;
 		const space = await spaceManager.updateSpace(id, updateParams);
 
 		internalEventBus
 			.publish('space.updated', { sessionId: 'global', spaceId: id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
+	// ─── space.setConcurrentLimit ────────────────────────────────────────────────
+	messageHub.onRequest('space.setConcurrentLimit', async (data) => {
+		const params = data as { spaceId?: string; id?: string; limit: unknown };
+		const spaceId = params.spaceId ?? params.id;
+
+		if (!spaceId) {
+			throw new Error('spaceId is required');
+		}
+
+		const limit = validateConcurrentLimit(params.limit);
+		const space = await spaceManager.updateSpace(spaceId, { maxConcurrentTasks: limit });
+		if (!space) {
+			throw new Error(`Space not found: ${spaceId}`);
+		}
+
+		internalEventBus
+			.publish('space.updated', { sessionId: 'global', spaceId, space })
 			.catch((err) => {
 				log.warn('Failed to emit space.updated:', err);
 			});
