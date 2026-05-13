@@ -1230,13 +1230,6 @@ export interface EventInterest {
  * A single agent entry within a multi-agent workflow node.
  * References a SpaceAgent by ID with an optional per-slot configuration override.
  */
-export interface EventInterest {
-	/** Glob pattern matching external event topics. */
-	topic: string;
-	/** Optional label for diagnostics. Not used in matching logic. */
-	label?: string;
-}
-
 export interface WorkflowNodeAgent {
 	/** ID of the SpaceAgent assigned to this slot */
 	agentId: string;
