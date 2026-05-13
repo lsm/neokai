@@ -298,7 +298,7 @@ export class AgentSession
 	processExitedPromise: Promise<void> | null = null;
 	private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
 	private rootProcessPid: number | null = null;
-	private forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+	private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 	// Session state
 	private _isCleaningUp = false;
@@ -1240,6 +1240,7 @@ export class AgentSession
 	trackAgentProcess(proc: TrackedAgentProcess): void {
 		const pid = proc.pid;
 		if (typeof pid === 'number' && pid > 0) {
+			this.clearForceKillTimer(pid);
 			this.trackedAgentProcesses.set(pid, proc);
 			this.rootProcessPid = pid;
 		}
@@ -1247,6 +1248,7 @@ export class AgentSession
 		this.processExitedPromise = new Promise<void>((resolve) => {
 			proc.once('exit', () => {
 				if (typeof pid === 'number') {
+					this.clearForceKillTimer(pid);
 					this.trackedAgentProcesses.delete(pid);
 					if (this.rootProcessPid === pid) {
 						this.rootProcessPid = null;
@@ -1257,23 +1259,50 @@ export class AgentSession
 		});
 	}
 
-	terminateTrackedAgentProcesses(options?: { forceDelayMs?: number }): void {
-		const forceDelayMs = options?.forceDelayMs ?? 2000;
-		if (this.forceKillTimer) {
-			clearTimeout(this.forceKillTimer);
-			this.forceKillTimer = null;
-		}
-
-		this.signalTrackedAgentProcesses('SIGTERM');
-		this.forceKillTimer = setTimeout(() => {
-			this.forceKillTimer = null;
-			this.signalTrackedAgentProcesses('SIGKILL');
-		}, forceDelayMs);
-		this.forceKillTimer.unref?.();
+	getTrackedAgentRootPids(): Iterable<number> {
+		return this.trackedAgentProcesses.keys();
 	}
 
-	private signalTrackedAgentProcesses(signal: NodeJS.Signals): void {
-		const rootPid = this.rootProcessPid;
+	terminateTrackedAgentProcesses(options?: { forceDelayMs?: number }): void {
+		const forceDelayMs = options?.forceDelayMs ?? 2000;
+		const processSnapshot = [...this.trackedAgentProcesses];
+		const rootPidSnapshot = this.rootProcessPid;
+		if (processSnapshot.length === 0 && !rootPidSnapshot) return;
+
+		this.signalTrackedAgentProcesses(processSnapshot, rootPidSnapshot, 'SIGTERM');
+		for (const [pid] of processSnapshot) {
+			this.clearForceKillTimer(pid);
+		}
+
+		const timer = setTimeout(() => {
+			for (const [pid] of processSnapshot) {
+				this.forceKillTimers.delete(pid);
+			}
+			this.signalTrackedAgentProcesses(processSnapshot, rootPidSnapshot, 'SIGKILL');
+		}, forceDelayMs);
+		timer.unref?.();
+
+		for (const [pid] of processSnapshot) {
+			this.forceKillTimers.set(pid, timer);
+		}
+	}
+
+	private clearForceKillTimer(pid: number): void {
+		const timer = this.forceKillTimers.get(pid);
+		if (!timer) return;
+		clearTimeout(timer);
+		for (const [trackedPid, trackedTimer] of this.forceKillTimers) {
+			if (trackedTimer === timer) {
+				this.forceKillTimers.delete(trackedPid);
+			}
+		}
+	}
+
+	private signalTrackedAgentProcesses(
+		processes: Array<[number, TrackedAgentProcess]>,
+		rootPid: number | null,
+		signal: NodeJS.Signals
+	): void {
 		if (process.platform !== 'win32' && typeof rootPid === 'number' && rootPid > 0) {
 			try {
 				process.kill(-rootPid, signal);
@@ -1282,7 +1311,7 @@ export class AgentSession
 			}
 		}
 
-		for (const [pid, proc] of this.trackedAgentProcesses) {
+		for (const [pid, proc] of processes) {
 			try {
 				if (typeof proc.kill === 'function') {
 					proc.kill(signal);
@@ -1292,7 +1321,7 @@ export class AgentSession
 			} catch {
 				// Child may have already exited.
 			}
-			if (signal === 'SIGKILL') {
+			if (signal === 'SIGKILL' && this.trackedAgentProcesses.get(pid) === proc) {
 				this.trackedAgentProcesses.delete(pid);
 				if (this.rootProcessPid === pid) {
 					this.rootProcessPid = null;

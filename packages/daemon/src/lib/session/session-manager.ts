@@ -409,6 +409,12 @@ export class SessionManager {
 		this.sessionCache.set(agentSession.getSessionData().id, agentSession);
 	}
 
+	*getTrackedAgentRootPids(): Iterable<number> {
+		for (const [, agentSession] of this.sessionCache.entries()) {
+			yield* agentSession.getTrackedAgentRootPids();
+		}
+	}
+
 	/**
 	 * Remove an AgentSession from the session cache.
 	 *

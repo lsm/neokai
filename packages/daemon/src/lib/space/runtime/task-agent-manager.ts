@@ -351,6 +351,17 @@ export class TaskAgentManager {
 		this.subscribeToTaskArchiveEvents();
 	}
 
+	*getTrackedAgentRootPids(): Iterable<number> {
+		for (const [, session] of this.taskAgentSessions) {
+			yield* session.getTrackedAgentRootPids();
+		}
+		for (const [, nodeSessions] of this.subSessions) {
+			for (const [, session] of nodeSessions) {
+				yield* session.getTrackedAgentRootPids();
+			}
+		}
+	}
+
 	/**
 	 * Subscribe to `space.task.updated` and run the archive pipeline for tasks
 	 * that reach the `archived` state.

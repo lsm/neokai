@@ -48,7 +48,7 @@ import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from 
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
 import { NeoAgentManager } from './lib/neo/neo-agent-manager';
-import { ProcessWatchdog } from './lib/process-watchdog';
+import { cleanupSuspiciousProcesses, ProcessWatchdog } from './lib/process-watchdog';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -185,7 +185,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	jobProcessor.setChangeNotifier((table) => {
 		reactiveDb.notifyChange(table);
 	});
-	const processWatchdog = new ProcessWatchdog();
+	let sessionManager: SessionManager | null = null;
+	let neoAgentManager: NeoAgentManager | null = null;
+	let taskAgentManager: TaskAgentManager | null = null;
+	const processWatchdog = new ProcessWatchdog(undefined, () =>
+		cleanupSuspiciousProcesses({
+			getRootPids: function* () {
+				if (sessionManager) yield* sessionManager.getTrackedAgentRootPids();
+				if (neoAgentManager) yield* neoAgentManager.getTrackedAgentRootPids();
+				if (taskAgentManager) yield* taskAgentManager.getTrackedAgentRootPids();
+			},
+		})
+	);
 
 	// Initialize Space agent manager
 	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
@@ -296,7 +307,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Initialize session manager (with InternalEventBus<DaemonInternalEventMap>, SettingsManager, no StateManager dependency!)
 	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
 	// trigger LiveQuery invalidation immediately.
-	const sessionManager = new SessionManager(
+	sessionManager = new SessionManager(
 		reactiveDb.db,
 		messageHub,
 		authManager,
@@ -318,7 +329,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize Neo agent manager (singleton global AI assistant).
 	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
-	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
+	neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
 	// Initialize StateProjectionService (read-model caches from InternalEventBus)
 	const stateManager = new StateProjectionService(
@@ -410,12 +421,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	githubEventExtension.registerRpcHandlers(messageHub, externalEventExtensionContext);
 
 	// Setup RPC handlers (returns cleanup function + exposed services)
-	const {
-		cleanup: rpcHandlerCleanup,
-		spaceRuntimeService,
-		taskAgentManager,
-		spaceWorktreeManager,
-	} = setupRPCHandlers({
+	const rpcHandlers = setupRPCHandlers({
 		messageHub,
 		sessionManager,
 		authManager,
@@ -436,6 +442,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		neoAgentManager,
 		mcpImportService,
 	});
+	const { cleanup: rpcHandlerCleanup, spaceRuntimeService, spaceWorktreeManager } = rpcHandlers;
+	taskAgentManager = rpcHandlers.taskAgentManager;
 	await githubEventExtension.start(externalEventExtensionContext);
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
@@ -685,8 +693,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Start job queue processor last (after all handler registrations)
 	jobProcessor.start();
 	logInfo('[Daemon] Job queue processor started');
-	processWatchdog.start();
-	logInfo('[Daemon] Process watchdog started');
+	if (process.env.NODE_ENV !== 'test') {
+		processWatchdog.start();
+		logInfo('[Daemon] Process watchdog started');
+	}
 
 	// Provision the Neo agent session (skip in test mode unless explicitly enabled).
 	// Mirrors the spaces agent guard: test runs are clean by default; online/e2e
