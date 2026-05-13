@@ -98,6 +98,8 @@ import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
 
+const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
+
 /**
  * AgentSessionInit - Configuration for creating a new AgentSession
  *
@@ -223,7 +225,12 @@ import {
 	AskUserQuestionHandler,
 	type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler';
-import { QueryRunner, type QueryRunnerContext, type OriginalEnvVars } from './query-runner';
+import {
+	QueryRunner,
+	type QueryRunnerContext,
+	type OriginalEnvVars,
+	type TrackedAgentProcess,
+} from './query-runner';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
 import {
@@ -291,6 +298,10 @@ export class AgentSession
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 	originalEnvVars: OriginalEnvVars = {};
 	processExitedPromise: Promise<void> | null = null;
+	private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
+	private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
+	private recentlyExitedAgentRootPids = new Map<number, number>();
+	private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 	// Session state
 	private _isCleaningUp = false;
@@ -1227,6 +1238,144 @@ export class AgentSession
 
 	setCleaningUp(value: boolean): void {
 		this._isCleaningUp = value;
+	}
+
+	trackAgentProcess(proc: TrackedAgentProcess): void {
+		const pid = proc.pid;
+		if (typeof pid !== 'number' || pid <= 0) {
+			this.processExitedPromise = new Promise<void>((resolve) => {
+				proc.once('exit', () => resolve());
+			});
+			return;
+		}
+
+		this.clearForceKillTimer(pid);
+		this.recentlyExitedAgentRootPids.delete(pid);
+		this.trackedAgentProcesses.set(pid, proc);
+
+		const exitPromise = new Promise<void>((resolve) => {
+			proc.once('exit', () => {
+				this.clearForceKillTimer(pid);
+				if (this.trackedAgentProcesses.get(pid) === proc) {
+					this.trackedAgentProcesses.delete(pid);
+					this.trackedAgentProcessExitPromises.delete(pid);
+					this.recentlyExitedAgentRootPids.set(pid, Date.now());
+				}
+				resolve();
+			});
+		});
+		this.trackedAgentProcessExitPromises.set(pid, exitPromise);
+		this.updateProcessExitedPromise();
+	}
+
+	*getTrackedAgentRootPids(): Iterable<number> {
+		this.expireRecentlyExitedAgentRootPids();
+		yield* this.trackedAgentProcesses.keys();
+		yield* this.recentlyExitedAgentRootPids.keys();
+	}
+
+	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
+		this.expireRecentlyExitedAgentRootPids();
+		return {
+			live: [...this.trackedAgentProcesses.keys()],
+			exited: [...this.recentlyExitedAgentRootPids.keys()],
+		};
+	}
+
+	snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]> {
+		return [...this.trackedAgentProcesses];
+	}
+
+	terminateTrackedAgentProcesses(options?: {
+		forceDelayMs?: number;
+		processes?: Array<[number, TrackedAgentProcess]>;
+	}): void {
+		const forceDelayMs = options?.forceDelayMs ?? 2000;
+		const processSnapshot = options?.processes ?? [...this.trackedAgentProcesses];
+		if (processSnapshot.length === 0) return;
+
+		this.signalTrackedAgentProcesses(processSnapshot, 'SIGTERM');
+		for (const [pid, proc] of processSnapshot) {
+			if (this.trackedAgentProcesses.get(pid) !== proc) continue;
+			this.clearForceKillTimer(pid);
+			this.scheduleForceKill(pid, proc, forceDelayMs);
+		}
+	}
+
+	private scheduleForceKill(pid: number, proc: TrackedAgentProcess, forceDelayMs: number): void {
+		const timer = setTimeout(() => {
+			this.forceKillTimers.delete(pid);
+			this.signalTrackedAgentProcesses([[pid, proc]], 'SIGKILL');
+		}, forceDelayMs);
+		timer.unref?.();
+		this.forceKillTimers.set(pid, timer);
+	}
+
+	private clearForceKillTimer(pid: number): void {
+		const timer = this.forceKillTimers.get(pid);
+		if (!timer) return;
+		clearTimeout(timer);
+		this.forceKillTimers.delete(pid);
+	}
+
+	private signalTrackedAgentProcesses(
+		processes: Array<[number, TrackedAgentProcess]>,
+		signal: NodeJS.Signals
+	): void {
+		for (const [pid, proc] of processes) {
+			// Ownership guard: skip stale snapshot entries where the PID no longer
+			// maps to the same process object (e.g. child exited + PID reused).
+			if (this.trackedAgentProcesses.get(pid) !== proc) continue;
+
+			// Signal the entire process group (reaches tool grandchildren).
+			if (process.platform !== 'win32' && pid > 0) {
+				try {
+					process.kill(-pid, signal);
+				} catch {
+					// Process group may have already exited.
+				}
+			}
+
+			// Direct signal to the tracked child.
+			const signaled = this.signalTrackedAgentProcess(pid, proc, signal);
+			if (signal === 'SIGKILL' && signaled) {
+				this.trackedAgentProcesses.delete(pid);
+				this.trackedAgentProcessExitPromises.delete(pid);
+				this.recentlyExitedAgentRootPids.set(pid, Date.now());
+				this.updateProcessExitedPromise();
+			}
+		}
+	}
+
+	private signalTrackedAgentProcess(
+		pid: number,
+		proc: TrackedAgentProcess,
+		signal: NodeJS.Signals
+	): boolean {
+		try {
+			if (typeof proc.kill === 'function') {
+				return proc.kill(signal) !== false;
+			}
+			process.kill(pid, signal);
+			return true;
+		} catch {
+			// Child may have already exited.
+			return false;
+		}
+	}
+
+	private updateProcessExitedPromise(): void {
+		const exitPromises = [...this.trackedAgentProcessExitPromises.values()];
+		this.processExitedPromise =
+			exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
+	}
+
+	private expireRecentlyExitedAgentRootPids(now = Date.now()): void {
+		for (const [pid, exitedAt] of this.recentlyExitedAgentRootPids) {
+			if (now - exitedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
+				this.recentlyExitedAgentRootPids.delete(pid);
+			}
+		}
 	}
 
 	cleanupEventSubscriptions(): void {

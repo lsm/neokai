@@ -48,6 +48,11 @@ export type { OriginalEnvVars } from '../provider-service';
  * Re-verify this implementation matches the SDK's spawn behavior on SDK upgrades —
  * mismatches in stdio/env/signal can cause subtle subprocess communication failures.
  */
+export type TrackedAgentProcess = SpawnedProcess & {
+	pid?: number;
+	kill?: (signal?: NodeJS.Signals | number) => boolean;
+};
+
 function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
 	const debugSdk = opts.env?.DEBUG_CLAUDE_AGENT_SDK;
 	const stderr = debugSdk && debugSdk !== '0' && debugSdk !== 'false' ? 'pipe' : 'ignore';
@@ -57,6 +62,10 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
 		stdio: ['pipe', 'pipe', stderr],
 		signal: opts.signal,
 		windowsHide: true,
+		// Run the SDK subprocess as a process-group leader so session cleanup can
+		// terminate descendant commands spawned by tool use (bun test, make dev, etc.).
+		// On Windows this starts an independent process; group signalling is POSIX-only.
+		detached: process.platform !== 'win32',
 	});
 	return proc as unknown as SpawnedProcess;
 }
@@ -112,8 +121,10 @@ export interface QueryRunnerContext {
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	originalEnvVars: OriginalEnvVars;
-	/** Resolves when the SDK subprocess exits. Set by QueryRunner via spawnClaudeCodeProcess wrapper. */
+	/** Resolves when tracked SDK subprocesses exit. Set by QueryRunner via spawnClaudeCodeProcess wrapper. */
 	processExitedPromise: Promise<void> | null;
+	trackAgentProcess(proc: TrackedAgentProcess): void;
+	snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]>;
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
 	getQueryGeneration(): number;
@@ -450,10 +461,10 @@ export class QueryRunner {
 			// This lets stop() await the actual process exit instead of using arbitrary delays.
 			const originalSpawn = queryOptions.spawnClaudeCodeProcess;
 			queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
-				const proc = originalSpawn ? originalSpawn(opts) : defaultSpawn(opts);
-				this.ctx.processExitedPromise = new Promise<void>((resolve) => {
-					proc.once('exit', () => resolve());
-				});
+				const proc = (
+					originalSpawn ? originalSpawn(opts) : defaultSpawn(opts)
+				) as TrackedAgentProcess;
+				this.ctx.trackAgentProcess(proc);
 				return proc;
 			};
 
