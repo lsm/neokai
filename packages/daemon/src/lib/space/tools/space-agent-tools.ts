@@ -781,6 +781,72 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
+		 * Publish a draft task, transitioning it from `draft` to `open`.
+		 * Published tasks become eligible for the runtime's orchestration tick loop.
+		 * Only valid for tasks currently in `draft` status.
+		 */
+		async publish_task(args: { task_id: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			if (task.status !== 'draft') {
+				return jsonResult({
+					success: false,
+					error: `Task is in '${task.status}' status, not 'draft'. Only draft tasks can be published.`,
+				});
+			}
+			try {
+				const updated = await taskManager.publishTask(args.task_id);
+
+				logAudit('publish_task', { previousStatus: task.status }, args.task_id);
+
+				emitTaskUpdated(updated);
+
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Archive a task, transitioning it to `archived` status.
+		 * Archived tasks are excluded from most queries and cannot be reactivated.
+		 * Valid from any status that allows the `archived` transition.
+		 */
+		async archive_task(args: { task_id: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			try {
+				const updated = await taskManager.archiveTask(args.task_id);
+
+				logAudit('archive_task', { previousStatus: task.status }, args.task_id);
+
+				emitTaskUpdated(updated);
+
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
 		 * Reassign a task to a different agent.
 		 */
 		async reassign_task(args: {
@@ -1701,6 +1767,22 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('Agent type to assign (coder or general)'),
 			},
 			(args) => handlers.reassign_task(args)
+		),
+		tool(
+			'publish_task',
+			'Publish a draft task, transitioning it from draft to open status. Published tasks become eligible for orchestration by the runtime tick loop. Only valid for tasks in draft status.',
+			{
+				task_id: z.string().describe('UUID of the draft task to publish'),
+			},
+			(args) => handlers.publish_task(args)
+		),
+		tool(
+			'archive_task',
+			"Archive a task. Archived tasks are excluded from most queries and cannot be reactivated — this is the true terminal state. Valid from any status that allows the 'archived' transition (e.g. draft, done, cancelled, blocked, review, approved).",
+			{
+				task_id: z.string().describe('UUID of the task to archive'),
+			},
+			(args) => handlers.archive_task(args)
 		),
 
 		// Task agent communication tools

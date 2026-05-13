@@ -333,14 +333,16 @@ describe('SpaceTaskManager', () => {
 
 		it('throws when archiving a task in open status', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
-			await expect(manager.archiveTask(task.id)).rejects.toThrow("Cannot archive task in 'open'");
+			await expect(manager.archiveTask(task.id)).rejects.toThrow(
+				"Invalid status transition from 'open' to 'archived'"
+			);
 		});
 
 		it('throws when archiving a task in in_progress status', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
 			await expect(manager.archiveTask(task.id)).rejects.toThrow(
-				"Cannot archive task in 'in_progress'"
+				"Invalid status transition from 'in_progress' to 'archived'"
 			);
 		});
 	});

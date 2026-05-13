@@ -68,6 +68,8 @@ import {
 	ListTasksSchema,
 	GetTaskSchema,
 	ListAuditEntriesSchema,
+	PublishTaskSchema,
+	ArchiveTaskSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
@@ -83,6 +85,8 @@ import type {
 	ListTasksInput,
 	GetTaskInput,
 	ListAuditEntriesInput,
+	PublishTaskInput,
+	ArchiveTaskInput,
 } from './node-agent-tool-schemas';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -225,6 +229,17 @@ export interface NodeAgentToolsConfig {
 	 * namespace.
 	 */
 	onCreateStandaloneTask?: (args: CreateStandaloneTaskInput) => Promise<ToolResult>;
+	/**
+	 * Optional callback for \`publish_task\`. When provided, node agents can
+	 * publish draft tasks (transition draft → open) without the broader
+	 * space-agent-tools namespace.
+	 */
+	onPublishTask?: (args: PublishTaskInput) => Promise<ToolResult>;
+	/**
+	 * Optional callback for \`archive_task\`. When provided, node agents can
+	 * archive tasks without the broader space-agent-tools namespace.
+	 */
+	onArchiveTask?: (args: ArchiveTaskInput) => Promise<ToolResult>;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * When provided, agent gate writes via send_message are blocked when
@@ -1219,6 +1234,38 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			return result;
 		},
 
+		async publish_task(args: PublishTaskInput): Promise<ToolResult> {
+			if (!config.onPublishTask) {
+				return jsonResult({
+					success: false,
+					error: 'publish_task is not available in this node-agent session.',
+				});
+			}
+			const result = await config.onPublishTask(args);
+			const payload = decodeToolResultPayload(result);
+			if (payload?.success) {
+				const publishedTask = payload?.task as { id: string } | undefined;
+				logAudit('publish_task', { task_id: args.task_id }, publishedTask?.id);
+			}
+			return result;
+		},
+
+		async archive_task(args: ArchiveTaskInput): Promise<ToolResult> {
+			if (!config.onArchiveTask) {
+				return jsonResult({
+					success: false,
+					error: 'archive_task is not available in this node-agent session.',
+				});
+			}
+			const result = await config.onArchiveTask(args);
+			const payload = decodeToolResultPayload(result);
+			if (payload?.success) {
+				const archivedTask = payload?.task as { id: string } | undefined;
+				logAudit('archive_task', { task_id: args.task_id }, archivedTask?.id);
+			}
+			return result;
+		},
+
 		async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
 			if (!config.onApproveTask) {
 				return jsonResult({
@@ -1510,6 +1557,26 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 						'Create a task request in this Space. Runtime may attach and execute a workflow for this task during orchestration. Supports structured task dependencies via depends_on — the task will be blocked until every listed dependency reaches status=done, and cascade-cancelled if a dependency is cancelled.',
 						CreateStandaloneTaskSchema.shape,
 						(args) => handlers.create_standalone_task(args)
+					),
+				]
+			: []),
+		...(config.onPublishTask
+			? [
+					tool(
+						'publish_task',
+						'Publish a draft task, transitioning it from draft to open status. Published tasks become eligible for orchestration by the runtime tick loop. Only valid for tasks currently in draft status.',
+						PublishTaskSchema.shape,
+						(args) => handlers.publish_task(args)
+					),
+				]
+			: []),
+		...(config.onArchiveTask
+			? [
+					tool(
+						'archive_task',
+						"Archive a task. Archived tasks are excluded from most queries and cannot be reactivated. Valid from any status that allows the 'archived' transition (e.g. draft, done, cancelled, blocked, review, approved).",
+						ArchiveTaskSchema.shape,
+						(args) => handlers.archive_task(args)
 					),
 				]
 			: []),

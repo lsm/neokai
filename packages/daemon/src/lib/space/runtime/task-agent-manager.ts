@@ -4547,6 +4547,53 @@ export class TaskAgentManager {
 			}
 		};
 
+		const onPublishTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await boundTaskManager.publishTask(args.task_id);
+				// Emit event so subscribers (e.g. task list UI) see the status change.
+				this.config.internalEventBus
+					?.publish('space.task.updated', {
+						sessionId: 'global',
+						spaceId,
+						taskId: updated.id,
+						task: updated,
+					})
+					.catch((err: unknown) => {
+						log.warn(
+							`Failed to emit space.task.updated (publish) for task ${updated.id}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await boundTaskManager.archiveTask(args.task_id);
+				// Emit event so subscribeToTaskArchiveEvents() triggers cleanup
+				// (session teardown, SDK JSONL archival, worktree removal).
+				this.config.internalEventBus
+					?.publish('space.task.updated', {
+						sessionId: 'global',
+						spaceId,
+						taskId: updated.id,
+						task: updated,
+					})
+					.catch((err: unknown) => {
+						log.warn(
+							`Failed to emit space.task.updated (archive) for task ${updated.id}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myAgentName: agentName,
@@ -4576,6 +4623,8 @@ export class TaskAgentManager {
 			onSubmitForApproval,
 			onMarkComplete,
 			onCreateStandaloneTask,
+			onPublishTask,
+			onArchiveTask,
 			artifactRepo: this.config.artifactRepo,
 			taskRepo: this.config.taskRepo,
 			auditLogRepo: this.auditLogRepo,

@@ -402,6 +402,42 @@ export const RestoreNodeAgentSchema = z.object({
 export type RestoreNodeAgentInput = z.infer<typeof RestoreNodeAgentSchema>;
 
 // ---------------------------------------------------------------------------
+// publish_task
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `publish_task` input.
+ *
+ * Transitions a draft task to open status so the runtime's tick loop can
+ * pick it up for orchestration. Only valid when the task is in `draft` status.
+ */
+export const PublishTaskSchema = z.object({
+	/** UUID of the task to publish. */
+	task_id: z.string().describe('UUID of the draft task to publish (draft → open)'),
+});
+
+export type PublishTaskInput = z.infer<typeof PublishTaskSchema>;
+
+// ---------------------------------------------------------------------------
+// archive_task
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `archive_task` input.
+ *
+ * Transitions a task to archived status — the true terminal state.
+ * Valid from any status that allows the `archived` transition (see
+ * VALID_SPACE_TASK_TRANSITIONS). Archived tasks are excluded from most
+ * queries and cannot be reactivated.
+ */
+export const ArchiveTaskSchema = z.object({
+	/** UUID of the task to archive. */
+	task_id: z.string().describe('UUID of the task to archive'),
+});
+
+export type ArchiveTaskInput = z.infer<typeof ArchiveTaskSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -422,6 +458,8 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	list_tasks: ListTasksSchema,
 	get_task: GetTaskSchema,
 	list_audit_entries: ListAuditEntriesSchema,
+	publish_task: PublishTaskSchema,
+	archive_task: ArchiveTaskSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;
