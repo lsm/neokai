@@ -328,6 +328,10 @@ interface MockInternalEventBus {
 function makeMockInternalEventBus(): MockInternalEventBus {
 	const emittedEvents: Array<{ name: string; payload: Record<string, unknown> }> = [];
 	const bus = {
+		publish: mock(async (name: string, payload: Record<string, unknown>) => {
+			emittedEvents.push({ name, payload });
+			return { delivered: 0, failures: [] };
+		}),
 		publishAsync: mock((name: string, payload: Record<string, unknown>) => {
 			emittedEvents.push({ name, payload });
 		}),
@@ -1908,6 +1912,50 @@ describe('createTaskAgentToolHandlers — update_task', () => {
 		const event = emittedEvents.find((e) => e.name === 'space.task.updated');
 		expect(event).toBeDefined();
 		expect((event!.payload as { taskId: string }).taskId).toBe(mainTask.id);
+	});
+
+	test('emits space.task.updated events for cascaded dependency updates', async () => {
+		const { bus, emittedEvents } = makeMockInternalEventBus();
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Main',
+			status: 'open',
+		});
+		const cascadedTask = {
+			...mainTask,
+			id: 'dependent-task',
+			status: 'blocked' as const,
+			dependsOn: [mainTask.id],
+		};
+		const updatedTask = { ...mainTask, title: 'Updated' };
+		const updateTask = mock(async (_taskId, _params, options) => {
+			await options?.onCascadedTasks?.([cascadedTask]);
+			return updatedTask;
+		});
+		const handlers = createTaskAgentToolHandlers({
+			taskId: mainTask.id,
+			space: ctx.space,
+			workflowRunId: 'run-1',
+			taskRepo: ctx.taskRepo,
+			artifactRepo: ctx.artifactRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			taskManager: { updateTask } as unknown as SpaceTaskManager,
+			messageInjector: async () => {},
+			internalEventBus: bus,
+		});
+
+		await handlers.update_task({
+			task_id: mainTask.id,
+			title: 'Updated',
+		});
+
+		const taskUpdatedEvents = emittedEvents.filter((e) => e.name === 'space.task.updated');
+		expect(taskUpdatedEvents.map((e) => (e.payload as { taskId: string }).taskId)).toContain(
+			cascadedTask.id
+		);
+		expect(taskUpdatedEvents.map((e) => (e.payload as { taskId: string }).taskId)).toContain(
+			mainTask.id
+		);
 	});
 
 	test('rejects update when no fields are provided', async () => {

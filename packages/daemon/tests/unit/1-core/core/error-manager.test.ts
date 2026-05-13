@@ -8,17 +8,13 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../../src/lib/error-manager';
 import { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 
 describe('ErrorManager', () => {
 	let errorManager: ErrorManager;
 	let mockMessageHub: MessageHub;
-	let mockDaemonHub: DaemonHub;
 	let mockInternalEventBus: InternalEventBus<any>;
 	let publishSpy: ReturnType<typeof mock>;
-	let emitSpy: ReturnType<typeof mock>;
-	let publishAsyncSpy: ReturnType<typeof mock>;
 	let internalPublishAsyncSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
@@ -31,23 +27,13 @@ describe('ErrorManager', () => {
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		// Create mock DaemonHub (retained for backward compatibility)
-		emitSpy = mock(async () => {});
-		publishAsyncSpy = mock(() => {});
-		mockDaemonHub = {
-			emit: emitSpy,
-			publishAsync: publishAsyncSpy,
-			on: mock(() => {}),
-			off: mock(() => {}),
-		} as unknown as DaemonHub;
-
 		// Create mock InternalEventBus (errors now emit via InternalEventBus)
 		internalPublishAsyncSpy = mock(() => {});
 		mockInternalEventBus = {
 			publishAsync: internalPublishAsyncSpy,
 		} as unknown as InternalEventBus<any>;
 
-		errorManager = new ErrorManager(mockMessageHub, mockDaemonHub, mockInternalEventBus);
+		errorManager = new ErrorManager(mockMessageHub, mockInternalEventBus);
 	});
 
 	describe('createError', () => {
@@ -306,16 +292,16 @@ describe('ErrorManager', () => {
 	});
 
 	describe('broadcastError', () => {
-		it('should emit error via DaemonHub for StateManager', async () => {
+		it('should emit error via InternalEventBus for StateManager', async () => {
 			const sessionId = 'test-session-123';
 			const error = errorManager.createError(new Error('test'), ErrorCategory.SYSTEM);
 
 			await errorManager.broadcastError(sessionId, error);
 
-			// Errors now emit via DaemonHub for StateManager to fold into state.session
-			expect(emitSpy).toHaveBeenCalledTimes(1);
-			expect(emitSpy.mock.calls[0][0]).toBe('session.error');
-			expect(emitSpy.mock.calls[0][1]).toMatchObject({
+			// Errors now emit via InternalEventBus for StateManager to fold into state.session
+			expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
+			expect(internalPublishAsyncSpy.mock.calls[0][0]).toBe('session.error');
+			expect(internalPublishAsyncSpy.mock.calls[0][1]).toMatchObject({
 				sessionId,
 				error: error.userMessage,
 			});
@@ -335,8 +321,8 @@ describe('ErrorManager', () => {
 
 			expect(result.message).toBe(errorMessage);
 			expect(result.category).toBe(ErrorCategory.MESSAGE);
-			// Errors now emit via DaemonHub
-			expect(emitSpy).toHaveBeenCalledTimes(1);
+			// Errors now emit via InternalEventBus
+			expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
 		});
 
 		it('should use custom user message when provided', async () => {
@@ -362,7 +348,7 @@ describe('ErrorManager', () => {
 			);
 
 			expect(result.message).toBe('String error');
-			expect(emitSpy).toHaveBeenCalledTimes(1);
+			expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -643,7 +629,7 @@ describe('ErrorManager', () => {
 			expect(result.metadata).toEqual(metadata);
 		});
 
-		it('should emit error via DaemonHub', async () => {
+		it('should emit error via InternalEventBus', async () => {
 			const sessionId = 'test-session-def';
 			const processingState = {
 				status: 'processing',
@@ -660,10 +646,10 @@ describe('ErrorManager', () => {
 				metadata
 			);
 
-			// Errors now emit via DaemonHub for StateManager to fold into state.session
-			expect(emitSpy).toHaveBeenCalledTimes(1);
-			expect(emitSpy.mock.calls[0][0]).toBe('session.error');
-			const emittedData = emitSpy.mock.calls[0][1];
+			// Errors now emit via InternalEventBus for StateManager to fold into state.session
+			expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
+			expect(internalPublishAsyncSpy.mock.calls[0][0]).toBe('session.error');
+			const emittedData = internalPublishAsyncSpy.mock.calls[0][1];
 
 			expect(emittedData.sessionId).toBe(sessionId);
 			expect(emittedData.error).toBe('Custom message');
@@ -765,13 +751,13 @@ describe('ErrorManager', () => {
 			}
 
 			// Clear previous emit calls
-			emitSpy.mockClear();
+			internalPublishAsyncSpy.mockClear();
 
 			// Mark success to trigger recovery
 			await errorManager.markApiSuccess();
 
 			// Should emit api.connection event for recovery
-			const apiConnectionCalls = emitSpy.mock.calls.filter(
+			const apiConnectionCalls = internalPublishAsyncSpy.mock.calls.filter(
 				(call: unknown[]) => call[0] === 'api.connection'
 			);
 			expect(apiConnectionCalls.length).toBe(1);
@@ -783,13 +769,13 @@ describe('ErrorManager', () => {
 
 		it('should not emit recovery event if already connected', async () => {
 			// Start fresh - no errors
-			emitSpy.mockClear();
+			internalPublishAsyncSpy.mockClear();
 
 			// Mark success when already connected
 			await errorManager.markApiSuccess();
 
 			// Should not emit api.connection event
-			const apiConnectionCalls = emitSpy.mock.calls.filter(
+			const apiConnectionCalls = internalPublishAsyncSpy.mock.calls.filter(
 				(call: unknown[]) => call[0] === 'api.connection'
 			);
 			expect(apiConnectionCalls.length).toBe(0);

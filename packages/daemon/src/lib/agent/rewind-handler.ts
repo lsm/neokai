@@ -21,7 +21,6 @@ import type {
 } from '@neokai/shared';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Database } from '../../storage/database';
-import type { DaemonHub } from '../daemon-hub';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
 import {
@@ -76,7 +75,6 @@ export interface RewindCaseAnalysis {
 export interface RewindHandlerContext {
 	readonly session: Session;
 	readonly db: Database;
-	readonly daemonHub: DaemonHub;
 	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly lifecycleManager: QueryLifecycleManager;
 	readonly logger: Logger;
@@ -200,12 +198,7 @@ export class RewindHandler {
 		}
 
 		// Emit rewind.started event
-		await internalEventBus.publish('rewind.started', {
-			namespaceId: session.id,
-			sessionId: session.id,
-			checkpointId,
-			mode,
-		});
+		await internalEventBus.publish('rewind.started', { sessionId: session.id, checkpointId, mode });
 
 		try {
 			// Mode 1: files only
@@ -214,7 +207,6 @@ export class RewindHandler {
 
 				if (!sdkResult.canRewind) {
 					await internalEventBus.publish('rewind.failed', {
-						namespaceId: session.id,
 						sessionId: session.id,
 						checkpointId,
 						mode,
@@ -224,7 +216,6 @@ export class RewindHandler {
 				}
 
 				await internalEventBus.publish('rewind.completed', {
-					namespaceId: session.id,
 					sessionId: session.id,
 					checkpointId,
 					mode,
@@ -268,7 +259,6 @@ export class RewindHandler {
 			const conversationResult = await this.executeConversationRewind(checkpointId, rewindPoint);
 
 			await internalEventBus.publish('rewind.completed', {
-				namespaceId: session.id,
 				sessionId: session.id,
 				checkpointId,
 				mode,
@@ -293,7 +283,6 @@ export class RewindHandler {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
 			await internalEventBus.publish('rewind.failed', {
-				namespaceId: session.id,
 				sessionId: session.id,
 				checkpointId,
 				mode,

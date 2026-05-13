@@ -191,16 +191,6 @@ export function setupSpaceWorkflowRunHandlers(
 			log.warn(`notifyGateDataChanged failed for gate "${gateId}" in run "${runId}":`, err);
 		});
 	}
-
-	function publishSpaceEvent<K extends keyof DaemonInternalEventMap & string>(
-		event: K,
-		payload: DaemonInternalEventMap[K]
-	): void {
-		internalEventBus.publishAsync(
-			event,
-			payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
-		);
-	}
 	// ─── spaceWorkflowRun.start ──────────────────────────────────────────────
 	messageHub.onRequest('spaceWorkflowRun.start', async (data) => {
 		const params = data as {
@@ -307,13 +297,16 @@ export function setupSpaceWorkflowRunHandlers(
 		// blocked → in_progress (human resolved the blocking issue)
 		const updated = workflowRunRepo.transitionStatus(params.id, 'in_progress');
 
-		publishSpaceEvent('space.workflowRun.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: run.spaceId,
-			runId: run.id,
-			run: updated,
-		});
+		internalEventBus
+			.publish('space.workflowRun.updated', {
+				sessionId: 'global',
+				spaceId: run.spaceId,
+				runId: run.id,
+				run: updated,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.workflowRun.updated:', err);
+			});
 
 		return { run: updated };
 	});
@@ -346,13 +339,16 @@ export function setupSpaceWorkflowRunHandlers(
 			const updated =
 				workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
-			publishSpaceEvent('space.workflowRun.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				runId: run.id,
-				run: updated,
-			});
+			internalEventBus
+				.publish('space.workflowRun.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: run.id,
+					run: updated,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.workflowRun.updated:', err);
+				});
 
 			return { run: updated };
 		}
@@ -362,13 +358,16 @@ export function setupSpaceWorkflowRunHandlers(
 		const updated =
 			workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
-		publishSpaceEvent('space.workflowRun.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: run.spaceId,
-			runId: run.id,
-			run: updated,
-		});
+		internalEventBus
+			.publish('space.workflowRun.updated', {
+				sessionId: 'global',
+				spaceId: run.spaceId,
+				runId: run.id,
+				run: updated,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.workflowRun.updated:', err);
+			});
 
 		return { run: updated };
 	});
@@ -403,13 +402,16 @@ export function setupSpaceWorkflowRunHandlers(
 		// Cancel the run (pending/in_progress/blocked → cancelled)
 		const updated = workflowRunRepo.transitionStatus(params.id, 'cancelled');
 
-		publishSpaceEvent('space.workflowRun.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: run.spaceId,
-			runId: run.id,
-			run: updated,
-		});
+		internalEventBus
+			.publish('space.workflowRun.updated', {
+				sessionId: 'global',
+				spaceId: run.spaceId,
+				runId: run.id,
+				run: updated,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.workflowRun.updated:', err);
+			});
 
 		return { success: true };
 	});
@@ -466,22 +468,28 @@ export function setupSpaceWorkflowRunHandlers(
 				updatedRun = workflowRunRepo.updateRun(params.runId, { failureReason: null }) ?? run;
 			}
 
-			publishSpaceEvent('space.workflowRun.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				runId: run.id,
-				run: updatedRun,
-			});
+			internalEventBus
+				.publish('space.workflowRun.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: run.id,
+					run: updatedRun,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.workflowRun.updated:', err);
+				});
 
-			publishSpaceEvent('space.gateData.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				runId: params.runId,
-				gateId: params.gateId,
-				data: gateData.data,
-			});
+			internalEventBus
+				.publish('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: params.runId,
+					gateId: params.gateId,
+					data: gateData.data,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.gateData.updated:', err);
+				});
 
 			// Trigger channel re-evaluation so downstream nodes activate if the gate is now open.
 			fireGateChanged(params.runId, params.gateId);
@@ -524,22 +532,28 @@ export function setupSpaceWorkflowRunHandlers(
 				});
 			}
 
-			publishSpaceEvent('space.workflowRun.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				runId: run.id,
-				run: updated,
-			});
+			internalEventBus
+				.publish('space.workflowRun.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: run.id,
+					run: updated,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.workflowRun.updated:', err);
+				});
 
-			publishSpaceEvent('space.gateData.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				runId: params.runId,
-				gateId: params.gateId,
-				data: gateData.data,
-			});
+			internalEventBus
+				.publish('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: params.runId,
+					gateId: params.gateId,
+					data: gateData.data,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.gateData.updated:', err);
+				});
 
 			return { run: updated, gateData };
 		}
@@ -590,14 +604,17 @@ export function setupSpaceWorkflowRunHandlers(
 
 			const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
 
-			publishSpaceEvent('space.gateData.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				runId: params.runId,
-				gateId: params.gateId,
-				data: gateData.data,
-			});
+			internalEventBus
+				.publish('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: params.runId,
+					gateId: params.gateId,
+					data: gateData.data,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.gateData.updated:', err);
+				});
 
 			// Only trigger channel routing if skipChannelRouting is not set.
 			// E2E tests pass skipChannelRouting: true to seed gate data for visual

@@ -18,7 +18,10 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import {
 	setupSpaceExportImportHandlers,
 	type ImportPreviewResult,
@@ -169,16 +172,23 @@ function createMockHub(): { hub: MessageHub; handlers: Map<string, RequestHandle
 	return { hub, handlers };
 }
 
-function createMockDaemonHub(): {
-	hub: DaemonHub;
+function createMockInternalEventBus(): {
+	hub: InternalEventBus<DaemonInternalEventMap>;
 	emittedEvents: Array<{ name: string; data: unknown }>;
 } {
 	const emittedEvents: Array<{ name: string; data: unknown }> = [];
 	const hub = {
-		emit: mock(async (name: string, data: unknown) => {
+		publish: mock(async (name: string, data: unknown) => {
+			emittedEvents.push({ name, data });
+			return { delivered: 0, failures: [] };
+		}),
+		publishAsync: mock((name: string, data: unknown) => {
 			emittedEvents.push({ name, data });
 		}),
-	} as unknown as DaemonHub;
+		subscribe: mock(() => () => {}),
+		off: mock(() => {}),
+		clear: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
 	return { hub, emittedEvents };
 }
 
@@ -215,7 +225,7 @@ describe('Space Export/Import RPC Handlers', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
 	let handlers: Map<string, RequestHandler>;
-	let daemonHub: DaemonHub;
+	let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	let emittedEvents: Array<{ name: string; data: unknown }>;
 
 	beforeEach(() => {
@@ -240,9 +250,9 @@ describe('Space Export/Import RPC Handlers', () => {
 		const mockHub = createMockHub();
 		handlers = mockHub.handlers;
 
-		const mockDaemonHub = createMockDaemonHub();
-		daemonHub = mockDaemonHub.hub;
-		emittedEvents = mockDaemonHub.emittedEvents;
+		const mockInternalEventBus = createMockInternalEventBus();
+		internalEventBus = mockInternalEventBus.hub;
+		emittedEvents = mockInternalEventBus.emittedEvents;
 
 		setupSpaceExportImportHandlers(
 			mockHub.hub,
@@ -251,7 +261,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowRepo,
 			workflowManager,
 			db as any,
-			daemonHub
+			internalEventBus
 		);
 	});
 
@@ -1256,7 +1266,7 @@ describe('multi-agent step import', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
 	let handlers: Map<string, RequestHandler>;
-	let daemonHub: DaemonHub;
+	let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
@@ -1277,8 +1287,8 @@ describe('multi-agent step import', () => {
 		spaceManager = createMockSpaceManager(SPACE_ID);
 		const mockHub = createMockHub();
 		handlers = mockHub.handlers;
-		const mockDaemonHub = createMockDaemonHub();
-		daemonHub = mockDaemonHub.hub;
+		const mockInternalEventBus = createMockInternalEventBus();
+		internalEventBus = mockInternalEventBus.hub;
 
 		setupSpaceExportImportHandlers(
 			mockHub.hub,
@@ -1287,7 +1297,7 @@ describe('multi-agent step import', () => {
 			workflowRepo,
 			workflowManager,
 			db as any,
-			daemonHub
+			internalEventBus
 		);
 	});
 
@@ -1814,7 +1824,7 @@ describe('full export→import round-trip', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
 	let handlers: Map<string, RequestHandler>;
-	let daemonHub: DaemonHub;
+	let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	let emittedEvents: Array<{ name: string; data: unknown }>;
 
 	beforeEach(() => {
@@ -1837,9 +1847,9 @@ describe('full export→import round-trip', () => {
 
 		const mockHub = createMockHub();
 		handlers = mockHub.handlers;
-		const mockDaemonHub = createMockDaemonHub();
-		daemonHub = mockDaemonHub.hub;
-		emittedEvents = mockDaemonHub.emittedEvents;
+		const mockInternalEventBus = createMockInternalEventBus();
+		internalEventBus = mockInternalEventBus.hub;
+		emittedEvents = mockInternalEventBus.emittedEvents;
 
 		setupSpaceExportImportHandlers(
 			mockHub.hub,
@@ -1848,7 +1858,7 @@ describe('full export→import round-trip', () => {
 			workflowRepo,
 			workflowManager,
 			db as any,
-			daemonHub
+			internalEventBus
 		);
 	});
 

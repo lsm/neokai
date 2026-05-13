@@ -24,7 +24,6 @@ import type { TaskScheduleRepository } from '../../storage/repositories/task-sch
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 
 const log = new Logger('task-schedule-fire-handler');
 
@@ -61,12 +60,15 @@ export interface TaskScheduleFireHandlerDeps {
 	spaceRepo: SpaceRepository;
 	taskRepo: SpaceTaskRepository;
 	/**
-	 * Optional event bus for broadcasting schedule/task changes.
-	 * When provided, the handler publishes `space.task.created` and
+	 * Optional event emitter for broadcasting schedule/task changes.
+	 * When provided, the handler emits `space.task.created` and
 	 * `space.schedule.updated` after a successful fire so the web
 	 * client can refresh its state without polling.
 	 */
-	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+	eventHub?: {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		publish: (event: string, data: any) => Promise<unknown>;
+	};
 }
 
 export async function handleTaskScheduleFire(
@@ -74,7 +76,7 @@ export async function handleTaskScheduleFire(
 	deps: TaskScheduleFireHandlerDeps
 ): Promise<TaskScheduleFireResult> {
 	const { scheduleId } = job.payload as TaskScheduleFirePayload;
-	const { db, scheduleRepo, jobQueue, spaceRepo, taskRepo, internalEventBus } = deps;
+	const { db, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub } = deps;
 
 	const schedule = scheduleRepo.getById(scheduleId);
 
@@ -236,26 +238,32 @@ export async function handleTaskScheduleFire(
 
 		// Emit events so the web client can refresh its state without polling.
 		// Fire-and-forget — handler success must not depend on event delivery.
-		if (internalEventBus) {
+		if (eventHub) {
 			const emittedTask = taskRepo.getTask(taskId);
 			if (emittedTask) {
-				internalEventBus.publishAsync('space.task.created', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId: schedule.spaceId,
-					taskId,
-					task: emittedTask,
-				});
+				eventHub
+					.publish('space.task.created', {
+						sessionId: 'global',
+						spaceId: schedule.spaceId,
+						taskId,
+						task: emittedTask,
+					})
+					.catch(() => {
+						// Swallow — event emission is best-effort.
+					});
 			}
 			const emittedSchedule = scheduleRepo.getById(scheduleId);
 			if (emittedSchedule) {
-				internalEventBus.publishAsync('space.schedule.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId: schedule.spaceId,
-					scheduleId,
-					schedule: emittedSchedule,
-				});
+				eventHub
+					.publish('space.schedule.updated', {
+						sessionId: 'global',
+						spaceId: schedule.spaceId,
+						scheduleId,
+						schedule: emittedSchedule,
+					})
+					.catch(() => {
+						// Swallow — event emission is best-effort.
+					});
 			}
 		}
 	} catch (err) {

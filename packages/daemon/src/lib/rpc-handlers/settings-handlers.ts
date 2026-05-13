@@ -4,18 +4,15 @@
  * Provides RPC methods for managing global and session-specific settings.
  *
  * MIGRATION NOTE: `settings.updated` events are published through
- * `internalEventBus` (not `daemonHub`). This is the first event migrated
- * behind the InternalEventBus facade. See
- * docs/plans/internal-event-command-query-architecture.md.
+ * `internalEventBus`. See docs/plans/internal-event-command-query-architecture.md.
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { GlobalSettings, SessionSettings } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 import type { McpImportService } from '../mcp';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 
 export async function syncProviderModelAllowlists(
 	allowlists?: Record<string, string[]>
@@ -48,7 +45,6 @@ export function applyProviderModelAllowlistsToEnv(allowlists?: Record<string, st
 export function registerSettingsHandlers(
 	messageHub: MessageHub,
 	settingsManager: SettingsManager,
-	daemonHub: DaemonHub,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	db: Database,
 	mcpImportService?: McpImportService

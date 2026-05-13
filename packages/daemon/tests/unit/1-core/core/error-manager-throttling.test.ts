@@ -8,7 +8,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../../src/lib/error-manager';
 import { MessageHub } from '@neokai/shared';
-import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
 import {
 	createDaemonInternalEventBus,
 	type InternalEventBus,
@@ -17,7 +16,6 @@ import {
 describe('ErrorManager - Error Throttling', () => {
 	let errorManager: ErrorManager;
 	let messageHub: MessageHub;
-	let daemonHub: DaemonHub;
 	let internalEventBus: InternalEventBus<any>;
 	let broadcastedErrors: unknown[] = [];
 
@@ -32,19 +30,18 @@ describe('ErrorManager - Error Throttling', () => {
 			command: async () => {},
 		} as unknown as MessageHub;
 
-		// Create DaemonHub (retained for backward compatibility)
-		daemonHub = createDaemonHub('test-hub');
-		await daemonHub.initialize();
-
 		// Create InternalEventBus
 		internalEventBus = createDaemonInternalEventBus();
 
-		// Track emitted errors via DaemonHub (session.error is emitted via daemonHub)
-		daemonHub.on('session.error', (_event: string, data: unknown) => {
-			broadcastedErrors.push(data);
-		});
+		internalEventBus.subscribe(
+			'session.error',
+			(data) => {
+				broadcastedErrors.push(data);
+			},
+			{ subscriberName: 'error-manager-throttling-test' }
+		);
 
-		errorManager = new ErrorManager(messageHub, daemonHub, internalEventBus);
+		errorManager = new ErrorManager(messageHub, internalEventBus);
 	});
 
 	it('should allow first 3 identical errors through', async () => {

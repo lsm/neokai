@@ -20,7 +20,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
 import type { ContextInfo, MessageHub, Session } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
 	isSDKAPIRetryMessage,
@@ -37,7 +37,6 @@ import {
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 import { ErrorCategory, type ErrorManager } from '../error-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
@@ -61,7 +60,6 @@ export interface SDKMessageHandlerContext {
 	readonly session: Session;
 	readonly db: Database;
 	readonly messageHub: MessageHub;
-	readonly daemonHub: DaemonHub;
 	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly stateManager: ProcessingStateManager;
 	readonly contextTracker: ContextTracker;
@@ -141,13 +139,20 @@ export class SDKMessageHandler {
 	 * - Publish session.reset notification
 	 */
 	private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
-		const { session, stateManager, messageQueue, errorManager, lifecycleManager } = this.ctx;
+		const {
+			session,
+			stateManager,
+			messageQueue,
+			internalEventBus,
+			errorManager,
+			lifecycleManager,
+		} = this.ctx;
 
 		try {
 			// Clear state before stopping
 			messageQueue.clear();
 			this.resetCircuitBreaker();
-			await this.ctx.daemonHub.emit('session.errorClear', {
+			await internalEventBus.publish('session.errorClear', {
 				sessionId: session.id,
 			});
 
@@ -276,7 +281,6 @@ export class SDKMessageHandler {
 		});
 
 		await internalEventBus.publish('messages.statusChanged', {
-			namespaceId: session.id,
 			sessionId: session.id,
 			messageIds: [persistedMessage.dbId],
 			status: 'consumed',
@@ -293,10 +297,9 @@ export class SDKMessageHandler {
 			{ channel: `session:${session.id}` }
 		);
 
-		// Emit on DaemonHub for server-side listeners (e.g. group message mirroring)
+		// Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. group message mirroring)
 		// so pre-persisted user messages appear in the group timeline.
 		await internalEventBus.publish('sdk.message', {
-			namespaceId: session.id,
 			sessionId: session.id,
 			message: sdkReplayMessage,
 		});
@@ -324,7 +327,6 @@ export class SDKMessageHandler {
 			// The original timestamp (when user consumed it) is a better approximation
 			// than turn-end time.
 			await internalEventBus.publish('messages.statusChanged', {
-				namespaceId: session.id,
 				sessionId: session.id,
 				messageIds: [enqueuedUser.dbId],
 				status: 'consumed',
@@ -368,12 +370,13 @@ export class SDKMessageHandler {
 				db.updateMessageStatus([deferredMessage.dbId], 'consumed');
 				db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
 			});
-			internalEventBus.publishAsync('messages.statusChanged', {
-				namespaceId: session.id,
-				sessionId: session.id,
-				messageIds: [deferredMessage.dbId],
-				status: 'consumed',
-			});
+			internalEventBus
+				.publish('messages.statusChanged', {
+					sessionId: session.id,
+					messageIds: [deferredMessage.dbId],
+					status: 'consumed',
+				})
+				.catch(() => {});
 			this.acknowledgedPersistedUserThisTurn = true;
 
 			const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = deferredMessage;
@@ -386,12 +389,13 @@ export class SDKMessageHandler {
 				},
 				{ channel: `session:${session.id}` }
 			);
-			internalEventBus.publishAsync('sdk.message', {
-				namespaceId: session.id,
-				sessionId: session.id,
-				// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
-				message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
-			});
+			internalEventBus
+				.publish('sdk.message', {
+					sessionId: session.id,
+					// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
+					message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
+				})
+				.catch(() => {});
 			return;
 		}
 
@@ -402,12 +406,13 @@ export class SDKMessageHandler {
 		});
 
 		// Emit status change event (for queue overlay polling)
-		internalEventBus.publishAsync('messages.statusChanged', {
-			namespaceId: session.id,
-			sessionId: session.id,
-			messageIds: [enqueuedMessage.dbId],
-			status: 'consumed',
-		});
+		internalEventBus
+			.publish('messages.statusChanged', {
+				sessionId: session.id,
+				messageIds: [enqueuedMessage.dbId],
+				status: 'consumed',
+			})
+			.catch(() => {});
 
 		// Mark as acknowledged so fallback path doesn't fire again
 		this.acknowledgedPersistedUserThisTurn = true;
@@ -425,14 +430,15 @@ export class SDKMessageHandler {
 			{ channel: `session:${session.id}` }
 		);
 
-		// Emit on InternalEventBus for server-side listeners (e.g. group message mirroring)
+		// Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. group message mirroring)
 		// so injected user messages (like leader envelope) appear in the group timeline.
-		internalEventBus.publishAsync('sdk.message', {
-			namespaceId: session.id,
-			sessionId: session.id,
-			// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
-			message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
-		});
+		internalEventBus
+			.publish('sdk.message', {
+				sessionId: session.id,
+				// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
+				message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
+			})
+			.catch(() => {});
 	}
 
 	/**
@@ -463,7 +469,7 @@ export class SDKMessageHandler {
 					`error ${message.error}`
 			);
 			// Emit event for UI to show retry progress
-			await this.ctx.daemonHub.emit('session.retryAttempt', {
+			await this.ctx.internalEventBus.publish('session.retryAttempt', {
 				sessionId: session.id,
 				attempt: message.attempt,
 				max_retries: message.max_retries,
@@ -531,9 +537,8 @@ export class SDKMessageHandler {
 			{ channel: `session:${session.id}` }
 		);
 
-		// Emit on DaemonHub for server-side listeners (e.g. conversation session mirroring)
+		// Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. conversation session mirroring)
 		await this.ctx.internalEventBus.publish('sdk.message', {
-			namespaceId: session.id,
 			sessionId: session.id,
 			message,
 		});
@@ -577,7 +582,7 @@ export class SDKMessageHandler {
 	 * Handle system message (capture SDK session ID and slash commands)
 	 */
 	private async handleSystemMessage(message: SDKMessage): Promise<void> {
-		const { session, db } = this.ctx;
+		const { session, db, internalEventBus } = this.ctx;
 
 		if (!isSDKSystemMessage(message)) return;
 
@@ -606,7 +611,7 @@ export class SDKMessageHandler {
 
 			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
-			await this.ctx.daemonHub.emit('session.updated', {
+			await internalEventBus.publish('session.updated', {
 				sessionId: session.id,
 				source: 'sdk-session',
 				session: { sdkSessionId: message.session_id, sdkOriginPath },
@@ -682,7 +687,7 @@ export class SDKMessageHandler {
 
 		// Emit session.updated event so StateManager broadcasts the change
 		// Include data for decoupled state management
-		await this.ctx.daemonHub.emit('session.updated', {
+		await internalEventBus.publish('session.updated', {
 			sessionId: session.id,
 			source: 'metadata',
 			session: {
@@ -712,7 +717,7 @@ export class SDKMessageHandler {
 
 		// Clear any session errors since we successfully completed a turn
 		// This resolves persistent error banners that weren't being cleared
-		await this.ctx.daemonHub.emit('session.errorClear', {
+		await internalEventBus.publish('session.errorClear', {
 			sessionId: session.id,
 		});
 
@@ -723,10 +728,7 @@ export class SDKMessageHandler {
 		// Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
 		if (session.config.queryMode !== 'manual') {
 			try {
-				await internalEventBus.publish('query.trigger', {
-					namespaceId: session.id,
-					sessionId: session.id,
-				});
+				await internalEventBus.publish('query.trigger', { sessionId: session.id });
 			} catch (error) {
 				this.logger.warn('Failed to dispatch deferred messages on turn end:', error);
 			}
@@ -740,7 +742,7 @@ export class SDKMessageHandler {
 	 * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
 	 */
 	private async handleAssistantMessage(message: SDKMessage): Promise<void> {
-		const { session, db } = this.ctx;
+		const { session, db, internalEventBus } = this.ctx;
 
 		if (!isSDKAssistantMessage(message)) return;
 
@@ -756,7 +758,7 @@ export class SDKMessageHandler {
 
 			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
-			await this.ctx.daemonHub.emit('session.updated', {
+			await internalEventBus.publish('session.updated', {
 				sessionId: session.id,
 				source: 'metadata',
 				session: { metadata: session.metadata },
@@ -828,7 +830,7 @@ export class SDKMessageHandler {
 			return this.pendingContextRefresh;
 		}
 
-		const { session, contextTracker, queryObject } = this.ctx;
+		const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
 		// If there's no live query yet (or anymore), skip silently — context
 		// info is a best-effort side effect.
 		if (!queryObject) return Promise.resolve();
@@ -842,7 +844,7 @@ export class SDKMessageHandler {
 				);
 				if (!contextInfo) return;
 				contextTracker.updateWithDetailedBreakdown(contextInfo);
-				await this.ctx.daemonHub.emit('context.updated', {
+				await internalEventBus.publish('context.updated', {
 					sessionId: session.id,
 					contextInfo,
 				});

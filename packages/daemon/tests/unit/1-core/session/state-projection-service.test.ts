@@ -25,6 +25,7 @@ describe('StateProjectionService', () => {
 	let mockAuthManager: AuthManager;
 	let mockSettingsManager: SettingsManager;
 	let mockConfig: Config;
+	let mockMessageHub: { event: ReturnType<typeof mock>; onRequest: ReturnType<typeof mock> };
 	let mockInternalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	let eventSubscribers: Map<string, Function[]>;
 
@@ -62,6 +63,11 @@ describe('StateProjectionService', () => {
 			dbPath: '/test/db.sqlite',
 		} as unknown as Config;
 
+		mockMessageHub = {
+			event: mock(async () => {}),
+			onRequest: mock(() => () => {}),
+		};
+
 		// InternalEventBus mock — collects subscribers so we can fire events manually
 		mockInternalEventBus = {
 			subscribe: mock((event: string, handler: Function) => {
@@ -75,6 +81,7 @@ describe('StateProjectionService', () => {
 		} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
 		service = new StateProjectionService(
+			mockMessageHub as never,
 			mockSessionManager,
 			mockAuthManager,
 			mockSettingsManager,
@@ -278,7 +285,7 @@ describe('StateProjectionService', () => {
 			// Simulate session.updated event populating the cache
 			const updateHandler = eventSubscribers.get('session.updated')?.[0];
 			await updateHandler!({
-				namespaceId: 'leader-session-id',
+				sessionId: 'leader-session-id',
 				processingState: { status: 'waiting_for_input', pendingQuestion },
 			});
 
@@ -355,7 +362,7 @@ describe('StateProjectionService', () => {
 				// Now update it
 				const updateHandler = eventSubscribers.get('session.updated')?.[0];
 				await updateHandler!({
-					namespaceId: 'test-id',
+					sessionId: 'test-id',
 					session: { title: 'Updated' },
 					processingState: { status: 'processing' },
 				});
@@ -404,27 +411,10 @@ describe('StateProjectionService', () => {
 
 				// Now delete it
 				const deleteHandler = eventSubscribers.get('session.deleted')?.[0];
-				await deleteHandler!({ namespaceId: 'test-id' });
+				await deleteHandler!({ sessionId: 'test-id' });
 
 				// Session should be removed from cache — getSessionState should throw
 				await expect(service.getSessionState('test-id')).rejects.toThrow('Session not found');
-			});
-
-			it('should clean up channelVersions for deleted session', async () => {
-				// Seed channel versions by incrementing
-				service.incrementVersion(`${STATE_CHANNELS.SESSION}:test-id`);
-				service.incrementVersion(`${STATE_CHANNELS.SESSION}:test-id`);
-				expect(service.getVersion(`${STATE_CHANNELS.SESSION}:test-id`)).toBe(2);
-
-				// Delete the session
-				const deleteHandler = eventSubscribers.get('session.deleted')?.[0];
-				await deleteHandler!({ namespaceId: 'test-id' });
-
-				// After deletion, version should be reset
-				expect(service.getVersion(`${STATE_CHANNELS.SESSION}:test-id`)).toBe(0);
-
-				// Incrementing again starts from 1
-				expect(service.incrementVersion(`${STATE_CHANNELS.SESSION}:test-id`)).toBe(1);
 			});
 		});
 
@@ -432,7 +422,7 @@ describe('StateProjectionService', () => {
 			it('should handle settings.updated event without error', async () => {
 				const handler = eventSubscribers.get('settings.updated')?.[0];
 				// Should not throw — handler is a no-op (broadcast handled by ClientEventBridge)
-				await handler!({ namespaceId: 'global', settings: {} as GlobalSettings });
+				await handler!({ sessionId: 'global', settings: {} as GlobalSettings });
 				expect(true).toBe(true);
 			});
 		});
@@ -440,7 +430,7 @@ describe('StateProjectionService', () => {
 		describe('commands.updated', () => {
 			it('should cache commands', async () => {
 				const handler = eventSubscribers.get('commands.updated')?.[0];
-				await handler!({ namespaceId: 'test-id', commands: ['cmd1', 'cmd2'] });
+				await handler!({ sessionId: 'test-id', commands: ['cmd1', 'cmd2'] });
 
 				// Verify by checking session state — commands should be in cache
 				const mockAgentSession = {
@@ -464,7 +454,7 @@ describe('StateProjectionService', () => {
 			it('should cache error', async () => {
 				const handler = eventSubscribers.get('session.error')?.[0];
 				await handler!({
-					namespaceId: 'test-id',
+					sessionId: 'test-id',
 					error: 'Something went wrong',
 					details: { code: 'ERR_001' },
 				});
@@ -490,13 +480,13 @@ describe('StateProjectionService', () => {
 				// First set an error
 				const errorHandler = eventSubscribers.get('session.error')?.[0];
 				await errorHandler!({
-					namespaceId: 'test-id',
+					sessionId: 'test-id',
 					error: 'Something went wrong',
 				});
 
 				// Now clear it
 				const clearHandler = eventSubscribers.get('session.errorClear')?.[0];
-				await clearHandler!({ namespaceId: 'test-id' });
+				await clearHandler!({ sessionId: 'test-id' });
 
 				// Verify error is cleared
 				const mockAgentSession = {
@@ -527,24 +517,6 @@ describe('StateProjectionService', () => {
 				const state = await service.getSystemState();
 				expect(state.apiConnection.status).toBe('disconnected');
 			});
-		});
-	});
-
-	describe('ChannelVersionSource interface', () => {
-		it('should increment and get versions independently per channel', () => {
-			expect(service.incrementVersion('channel-a')).toBe(1);
-			expect(service.incrementVersion('channel-a')).toBe(2);
-			expect(service.incrementVersion('channel-b')).toBe(1);
-
-			expect(service.getVersion('channel-a')).toBe(2);
-			expect(service.getVersion('channel-b')).toBe(1);
-			expect(service.getVersion('unknown')).toBe(0);
-		});
-
-		it('should delete versions', () => {
-			service.incrementVersion('channel-a');
-			service.deleteVersion('channel-a');
-			expect(service.getVersion('channel-a')).toBe(0);
 		});
 	});
 });

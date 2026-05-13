@@ -29,7 +29,10 @@ import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/sp
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository.ts';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -120,14 +123,14 @@ function createMockMessageHub(): {
 	return { hub, handlers };
 }
 
-function createMockDaemonHub(): DaemonHub {
+function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
 	return {
+		publish: mock(async () => ({ delivered: 0, failures: [] })),
 		publishAsync: mock(() => {}),
-		emit: mock(async () => {}),
-		on: mock(() => () => {}),
+		subscribe: mock(() => () => {}),
 		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
+		clear: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
 }
 
 function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
@@ -286,7 +289,7 @@ function createMockJobQueue(): JobQueueRepository {
 describe('space-workflow-run-handlers', () => {
 	let hub: MessageHub;
 	let handlers: Map<string, RequestHandler>;
-	let daemonHub: DaemonHub;
+	let internalEventBus: InternalEventBus;
 	let spaceManager: SpaceManager;
 	let workflowManager: SpaceWorkflowManager;
 	let runRepo: SpaceWorkflowRunRepository;
@@ -311,7 +314,7 @@ describe('space-workflow-run-handlers', () => {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
-		daemonHub = createMockDaemonHub();
+		internalEventBus = createMockInternalEventBus();
 		// Use undefined check (not nullish coalescing) so null is preserved
 		const resolvedSpace = 'space' in opts ? opts.space : mockSpace;
 		spaceManager = createMockSpaceManager(resolvedSpace ?? null);
@@ -336,7 +339,7 @@ describe('space-workflow-run-handlers', () => {
 			createMockGateDataRepo(),
 			runtimeService,
 			taskManagerFactory,
-			daemonHub,
+			internalEventBus,
 			spaceTaskRepo,
 			spaceWorktreeManager,
 			createMockArtifactRepo(),
@@ -430,7 +433,7 @@ describe('space-workflow-run-handlers', () => {
 				'Some context'
 			);
 			expect(
-				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
 			).not.toHaveBeenCalled();
 		});
 
@@ -626,9 +629,8 @@ describe('space-workflow-run-handlers', () => {
 
 			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
 			expect(
-				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
 			).toHaveBeenCalledWith('space.workflowRun.updated', {
-				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				runId: 'run-1',
@@ -688,7 +690,7 @@ describe('space-workflow-run-handlers', () => {
 			const mh = createMockMessageHub();
 			hub = mh.hub;
 			handlers = mh.handlers;
-			daemonHub = createMockDaemonHub();
+			internalEventBus = createMockInternalEventBus();
 			spaceManager = createMockSpaceManager();
 			workflowManager = createMockWorkflowManager();
 			runRepo = createMockRunRepo();
@@ -701,7 +703,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				taskManagerFactory,
-				daemonHub,
+				internalEventBus,
 				createMockSpaceTaskRepo([mockTask]),
 				createMockSpaceWorktreeManager(),
 				createMockArtifactRepo(),
@@ -754,7 +756,7 @@ describe('space-workflow-run-handlers', () => {
 			const mh = createMockMessageHub();
 			hub = mh.hub;
 			handlers = mh.handlers;
-			daemonHub = createMockDaemonHub();
+			internalEventBus = createMockInternalEventBus();
 			spaceManager = createMockSpaceManager(mockSpace);
 			workflowManager = createMockWorkflowManager([mockWorkflow], mockWorkflow);
 			runRepo = createMockRunRepo(mockRun, [mockRun]);
@@ -775,7 +777,7 @@ describe('space-workflow-run-handlers', () => {
 				customGateRepo,
 				runtimeService,
 				taskManagerFactory,
-				daemonHub,
+				internalEventBus,
 				createMockSpaceTaskRepo([mockTask]),
 				createMockSpaceWorktreeManager(),
 				createMockArtifactRepo(),
@@ -830,7 +832,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				mockTaskRepo,
 				mockWorktreeManager,
 				createMockArtifactRepo(),
@@ -867,7 +869,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				mockTaskRepo,
 				mockWorktreeManager,
 				createMockArtifactRepo(),
@@ -902,7 +904,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				mockTaskRepo,
 				mockWorktreeManager,
 				createMockArtifactRepo(),
@@ -937,7 +939,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				mockTaskRepo,
 				mockWorktreeManager,
 				createMockArtifactRepo(),
@@ -1008,7 +1010,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				mockTaskRepo,
 				mockWorktreeManager,
 				createMockArtifactRepo(),
@@ -1044,7 +1046,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				mockTaskRepo,
 				mockWorktreeManager,
 				createMockArtifactRepo(),
@@ -1078,7 +1080,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				mockTaskRepo,
 				mockWorktreeManager,
 				createMockArtifactRepo(),
@@ -1142,7 +1144,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				createMockSpaceTaskRepo([mockTask]),
 				createMockSpaceWorktreeManager('/tmp/fake-worktree'),
 				createMockArtifactRepo(),
@@ -1258,7 +1260,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				createMockSpaceTaskRepo([mockTask]),
 				createMockSpaceWorktreeManager('/tmp/fake-worktree'),
 				createMockArtifactRepo(),
@@ -1321,7 +1323,7 @@ describe('space-workflow-run-handlers', () => {
 				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				mock(() => createMockTaskManager()),
-				createMockDaemonHub(),
+				createMockInternalEventBus(),
 				createMockSpaceTaskRepo([mockTask]),
 				createMockSpaceWorktreeManager('/tmp/fake-worktree'),
 				createMockArtifactRepo(),

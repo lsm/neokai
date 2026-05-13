@@ -35,7 +35,10 @@ import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/sp
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository.ts';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 
 // ─── Mock module for execFile (async) ─────────────────────────────────────────
 //
@@ -146,14 +149,14 @@ function createMockMessageHub(): {
 	return { hub, handlers };
 }
 
-function createMockDaemonHub(): DaemonHub {
+function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
 	return {
+		publish: mock(async () => ({ delivered: 0, failures: [] })),
 		publishAsync: mock(() => {}),
-		emit: mock(async () => {}),
-		on: mock(() => () => {}),
+		subscribe: mock(() => () => {}),
 		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
+		clear: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
 }
 
 function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
@@ -236,7 +239,7 @@ function createMockSpaceWorktreeManager(): SpaceWorktreeManager {
 describe('space-workflow-run gate handlers', () => {
 	let hub: MessageHub;
 	let handlers: Map<string, RequestHandler>;
-	let daemonHub: DaemonHub;
+	let internalEventBus: InternalEventBus;
 	let runRepo: SpaceWorkflowRunRepository;
 	let gateDataRepo: GateDataRepository;
 	let taskManagerFactory: SpaceWorkflowRunTaskManagerFactory;
@@ -254,7 +257,7 @@ describe('space-workflow-run gate handlers', () => {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
-		daemonHub = createMockDaemonHub();
+		internalEventBus = createMockInternalEventBus();
 		const resolvedRun = 'run' in opts ? opts.run : mockRun;
 		runRepo = createMockRunRepo(resolvedRun ?? null);
 		gateDataRepo = createMockGateDataRepo(
@@ -275,7 +278,7 @@ describe('space-workflow-run gate handlers', () => {
 			gateDataRepo,
 			createMockRuntimeService(),
 			taskManagerFactory,
-			daemonHub,
+			internalEventBus,
 			createMockSpaceTaskRepo(),
 			createMockSpaceWorktreeManager(),
 			{
@@ -366,7 +369,7 @@ describe('space-workflow-run gate handlers', () => {
 			});
 			expect(result.gateData.data.approved).toBe(true);
 			expect(
-				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
 			).toHaveBeenCalledWith(
 				'space.workflowRun.updated',
 				expect.objectContaining({ runId: 'run-1', spaceId: 'space-1' })
@@ -407,7 +410,7 @@ describe('space-workflow-run gate handlers', () => {
 			expect(result.run.status).toBe('blocked');
 			expect(result.run.failureReason).toBe('humanRejected');
 			expect(
-				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
 			).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
 		});
 
@@ -476,7 +479,7 @@ describe('space-workflow-run gate handlers', () => {
 			// null from updateRun({ failureReason: null }) — effectively cleared
 			expect(result.run.failureReason).toBeFalsy();
 			expect(
-				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
 			).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
 		});
 
@@ -522,7 +525,7 @@ describe('space-workflow-run gate handlers', () => {
 				approved: true,
 			});
 			expect(
-				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
 			).toHaveBeenCalledWith(
 				'space.gateData.updated',
 				expect.objectContaining({
@@ -542,7 +545,7 @@ describe('space-workflow-run gate handlers', () => {
 				reason: 'Not ready',
 			});
 			expect(
-				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
 			).toHaveBeenCalledWith(
 				'space.gateData.updated',
 				expect.objectContaining({
@@ -886,11 +889,10 @@ describe('space-workflow-run gate handlers', () => {
 			});
 
 			expect(
-				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
 			).toHaveBeenCalledWith(
 				'space.gateData.updated',
 				expect.objectContaining({
-					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: mockRun.spaceId,
 					runId: 'run-1',

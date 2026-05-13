@@ -47,7 +47,6 @@ import type {
 	QuestionDraftResponse,
 	Session,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
@@ -63,7 +62,6 @@ export interface AskUserQuestionHandlerContext {
 	readonly session: Session;
 	readonly db: Database;
 	readonly stateManager: ProcessingStateManager;
-	readonly daemonHub: DaemonHub;
 	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly messageQueue: MessageQueue;
 	/**
@@ -170,7 +168,6 @@ export class AskUserQuestionHandler {
 					`AskUserQuestion ${options.toolUseID}: consuming queued answer (behavior=${queued.behavior})`
 				);
 				await internalEventBus.publish('question.injected_as_tool_result', {
-					namespaceId: session.id,
 					sessionId: session.id,
 					toolUseId: options.toolUseID,
 					mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
@@ -203,7 +200,6 @@ export class AskUserQuestionHandler {
 
 			// Emit event for logging/debugging
 			await internalEventBus.publish('question.asked', {
-				namespaceId: session.id,
 				sessionId: session.id,
 				pendingQuestion,
 			});
@@ -348,7 +344,7 @@ export class AskUserQuestionHandler {
 	 * the UI only renders one orphan-cancelled state today) and the
 	 * processing state is reset to `idle` so the UI removes the dead-end card.
 	 *
-	 * @param telemetryReason Annotates the `question.orphaned` daemonHub event
+	 * @param telemetryReason Annotates the `question.orphaned` internalEventBus event
 	 *   only. Does NOT affect the persisted `cancelReason` on the resolved
 	 *   record — that's hardcoded to `agent_session_terminated` because the UI
 	 *   has no separate rendering for `rehydrate_failed`. If a future UX
@@ -397,7 +393,6 @@ export class AskUserQuestionHandler {
 		await stateManager.setIdle();
 
 		await internalEventBus.publish('question.orphaned', {
-			namespaceId: session.id,
 			sessionId: session.id,
 			toolUseId: pendingQuestion.toolUseId,
 			reason: telemetryReason,
@@ -477,7 +472,6 @@ export class AskUserQuestionHandler {
 		const mode: 'submitted' | 'cancelled' = result.behavior === 'allow' ? 'submitted' : 'cancelled';
 
 		await internalEventBus.publish('question.injected_as_tool_result', {
-			namespaceId: session.id,
 			sessionId: session.id,
 			toolUseId,
 			mode,

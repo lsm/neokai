@@ -747,18 +747,19 @@ export class SpaceGitHubService {
 	}
 
 	private appendTaskActivity(taskId: string, event: NormalizedSpaceGitHubEvent): void {
-		this.internalEventBus?.publishAsync('space.githubEvent.routed', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			taskId,
-			event: {
-				repo: `${event.repoOwner}/${event.repoName}`,
-				prNumber: event.prNumber,
-				eventType: event.eventType,
-				summary: event.summary,
-				externalUrl: event.externalUrl,
-			},
-		});
+		this.internalEventBus
+			?.publish('space.githubEvent.routed', {
+				sessionId: 'global',
+				taskId,
+				event: {
+					repo: `${event.repoOwner}/${event.repoName}`,
+					prNumber: event.prNumber,
+					eventType: event.eventType,
+					summary: event.summary,
+					externalUrl: event.externalUrl,
+				},
+			})
+			.catch(() => {});
 	}
 
 	private scheduleTaskNotification(taskId: string, eventId: string): void {

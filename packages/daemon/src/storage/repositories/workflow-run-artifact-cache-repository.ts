@@ -8,7 +8,7 @@
  * `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts`.
  *
  * The frontend learns about new rows via the `space.artifactCache.updated`
- * DaemonHub event emitted from the job handlers — there is no LiveQuery on
+ * InternalEventBus<DaemonInternalEventMap> event emitted from the job handlers — there is no LiveQuery on
  * this table, so the repo does not notify the `ReactiveDatabase`.
  */
 

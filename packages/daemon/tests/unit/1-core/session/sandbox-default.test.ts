@@ -46,7 +46,6 @@ import {
 	type SessionLifecycleConfig,
 } from '../../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import type { SessionCache, AgentSessionFactory } from '../../../../src/lib/session/session-cache';
@@ -58,7 +57,7 @@ describe('Sandbox Default Configuration', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
-	let mockDaemonHub: DaemonHub;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -117,13 +116,7 @@ describe('Sandbox Default Configuration', () => {
 		} as unknown as SessionCache;
 
 		// Event bus mocks
-		const emitSpy = mock(async () => {});
-		mockDaemonHub = {
-			on: mock(() => () => {}),
-			emit: emitSpy,
-		} as unknown as DaemonHub;
-
-		const mockInternalEventBus = {
+		mockInternalEventBus = {
 			publish: mock(async () => {}),
 			publishAsync: mock(() => {}),
 			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
@@ -157,12 +150,11 @@ describe('Sandbox Default Configuration', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
+			mockInternalEventBus,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
-			mockAgentSessionFactory,
-			mockInternalEventBus,
-			mockDaemonHub
+			mockAgentSessionFactory
 		);
 	});
 

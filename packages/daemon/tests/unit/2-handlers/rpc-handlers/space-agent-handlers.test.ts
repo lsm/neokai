@@ -18,7 +18,10 @@ import type { MessageHub } from '@neokai/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
@@ -57,15 +60,19 @@ function createMockMessageHub(): { hub: MessageHub; handlers: Map<string, Reques
 	return { hub, handlers };
 }
 
-function createMockDaemonHub(): { daemonHub: DaemonHub; emitMock: ReturnType<typeof mock> } {
-	const emitMock = mock(async () => {});
-	const daemonHub = {
-		emit: emitMock,
-		on: mock(() => () => {}),
+function createMockInternalEventBus(): {
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+	publishMock: ReturnType<typeof mock>;
+} {
+	const publishMock = mock(async () => ({ delivered: 0, failures: [] }));
+	const internalEventBus = {
+		publish: publishMock,
+		publishAsync: mock(() => {}),
+		subscribe: mock(() => () => {}),
 		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
-	return { daemonHub, emitMock };
+		clear: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
+	return { internalEventBus, publishMock };
 }
 
 function createMockSpaceManager(): {
@@ -102,7 +109,7 @@ describe('Space Agent RPC Handlers', () => {
 	let db: Database;
 	let manager: SpaceAgentManager;
 	let hubData: ReturnType<typeof createMockMessageHub>;
-	let daemonData: ReturnType<typeof createMockDaemonHub>;
+	let daemonData: ReturnType<typeof createMockInternalEventBus>;
 	let spaceManagerData: ReturnType<typeof createMockSpaceManager>;
 
 	beforeEach(() => {
@@ -113,7 +120,7 @@ describe('Space Agent RPC Handlers', () => {
 		const repo = new SpaceAgentRepository(db as any);
 		manager = new SpaceAgentManager(repo);
 		hubData = createMockMessageHub();
-		daemonData = createMockDaemonHub();
+		daemonData = createMockInternalEventBus();
 		spaceManagerData = createMockSpaceManager();
 
 		// Disable model validation (no models in cache)
@@ -121,7 +128,7 @@ describe('Space Agent RPC Handlers', () => {
 
 		setupSpaceAgentHandlers(
 			hubData.hub,
-			daemonData.daemonHub,
+			daemonData.internalEventBus,
 			manager,
 			spaceManagerData.spaceManager
 		);
@@ -223,8 +230,8 @@ describe('Space Agent RPC Handlers', () => {
 			// Allow microtask queue to flush
 			await new Promise((r) => setTimeout(r, 0));
 
-			expect(daemonData.emitMock).toHaveBeenCalled();
-			const [eventName, payload] = daemonData.emitMock.mock.calls[0] as [
+			expect(daemonData.publishMock).toHaveBeenCalled();
+			const [eventName, payload] = daemonData.publishMock.mock.calls[0] as [
 				string,
 				{ spaceId: string; agent: { name: string } },
 			];
@@ -355,7 +362,7 @@ describe('Space Agent RPC Handlers', () => {
 				name: 'Original',
 			});
 			agentId = created.agent.id;
-			daemonData.emitMock.mockClear();
+			daemonData.publishMock.mockClear();
 		});
 
 		it('registers the handler', () => {
@@ -387,8 +394,8 @@ describe('Space Agent RPC Handlers', () => {
 			await call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'Updated' });
 			await new Promise((r) => setTimeout(r, 0));
 
-			expect(daemonData.emitMock).toHaveBeenCalled();
-			const [eventName] = daemonData.emitMock.mock.calls[0] as [string, unknown];
+			expect(daemonData.publishMock).toHaveBeenCalled();
+			const [eventName] = daemonData.publishMock.mock.calls[0] as [string, unknown];
 			expect(eventName).toBe('spaceAgent.updated');
 		});
 
@@ -439,7 +446,7 @@ describe('Space Agent RPC Handlers', () => {
 				name: 'ToDelete',
 			});
 			agentId = created.agent.id;
-			daemonData.emitMock.mockClear();
+			daemonData.publishMock.mockClear();
 		});
 
 		it('registers the handler', () => {
@@ -457,8 +464,8 @@ describe('Space Agent RPC Handlers', () => {
 			// delete handler awaits the emit, so the mock is called before call() returns
 			await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
 
-			expect(daemonData.emitMock).toHaveBeenCalled();
-			const [eventName, payload] = daemonData.emitMock.mock.calls[0] as [
+			expect(daemonData.publishMock).toHaveBeenCalled();
+			const [eventName, payload] = daemonData.publishMock.mock.calls[0] as [
 				string,
 				{ agentId: string },
 			];
@@ -638,7 +645,7 @@ describe('Space Agent RPC Handlers', () => {
 			});
 			if (!created.ok) throw new Error('create failed');
 
-			daemonData.emitMock.mockClear();
+			daemonData.publishMock.mockClear();
 
 			const result = await call<{ agent: { id: string; templateName: string | null } }>(
 				hubData.handlers,
@@ -650,8 +657,8 @@ describe('Space Agent RPC Handlers', () => {
 			expect(result.agent.templateName).toBe('Coder');
 
 			await new Promise((r) => setTimeout(r, 0));
-			expect(daemonData.emitMock).toHaveBeenCalled();
-			const [eventName, payload] = daemonData.emitMock.mock.calls[0] as [
+			expect(daemonData.publishMock).toHaveBeenCalled();
+			const [eventName, payload] = daemonData.publishMock.mock.calls[0] as [
 				string,
 				{ spaceId: string; agent: { id: string } },
 			];

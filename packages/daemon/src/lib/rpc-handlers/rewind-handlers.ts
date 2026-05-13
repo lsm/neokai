@@ -6,19 +6,19 @@
  *
  * Follows the 3-layer communication pattern:
  * - RPC handlers do minimal work and return fast (<100ms)
- * - Heavy operations are deferred to DaemonHub subscribers
+ * - Heavy operations are deferred to InternalEventBus<DaemonInternalEventMap> subscribers
  * - State updates are broadcast via State Channels
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SessionManager } from '../session-manager';
 import type { RewindMode, SelectiveRewindRequest } from '@neokai/shared';
 
 export function setupRewindHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	_daemonHub: DaemonHub
+	_internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): void {
 	/**
 	 * Get all rewind points for a session

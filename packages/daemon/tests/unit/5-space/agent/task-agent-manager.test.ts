@@ -12,7 +12,7 @@
  *   - Error handling
  *
  * Strategy: AgentSession.fromInit() is spied upon to return controllable mock
- * sessions. Real SQLite DB is used for space/task repositories. DaemonHub is
+ * sessions. Real SQLite DB is used for space/task repositories. InternalEventBus is
  * implemented as a minimal in-process event bus.
  */
 
@@ -37,18 +37,23 @@ import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/
 import type { AgentProcessingState } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
-// Minimal in-process DaemonHub for tests
+// Minimal in-process InternalEventBus for tests
 // ---------------------------------------------------------------------------
 
 type EventHandler = (data: Record<string, unknown>) => void;
 
-class TestDaemonHub {
+class TestInternalEventBus {
 	private listeners = new Map<string, Map<string, EventHandler>>();
 	/** Tracks all emitted events for assertion in tests */
 	readonly emitted: Array<{ event: string; data: Record<string, unknown> }> = [];
 
-	on(event: string, handler: EventHandler, opts?: { sessionId?: string }): () => void {
-		const key = opts?.sessionId ? `${event}:${opts.sessionId}` : `${event}:*`;
+	subscribe(
+		event: string,
+		handler: EventHandler,
+		opts?: { sessionId?: string; namespaceId?: string; subscriberName?: string }
+	): () => void {
+		const scope = opts?.sessionId ?? opts?.namespaceId;
+		const key = scope ? `${event}:${scope}` : `${event}:*`;
 		if (!this.listeners.has(key)) {
 			this.listeners.set(key, new Map());
 		}
@@ -59,7 +64,10 @@ class TestDaemonHub {
 		};
 	}
 
-	emit(event: string, data: Record<string, unknown>): Promise<void> {
+	async publish(
+		event: string,
+		data: Record<string, unknown>
+	): Promise<{ delivered: number; failures: [] }> {
 		this.emitted.push({ event, data });
 		const sessionId = (data as { sessionId?: string }).sessionId;
 		// Emit to session-specific listeners
@@ -73,7 +81,11 @@ class TestDaemonHub {
 		for (const handler of this.listeners.get(`${event}:*`)?.values() ?? []) {
 			handler(data);
 		}
-		return Promise.resolve();
+		return { delivered: 0, failures: [] };
+	}
+
+	publishAsync(event: string, data: Record<string, unknown>): void {
+		void this.publish(event, data);
 	}
 }
 
@@ -244,7 +256,7 @@ interface TestCtx {
 	workflowManager: SpaceWorkflowManager;
 	spaceManager: SpaceManager;
 	runtime: SpaceRuntime;
-	daemonHub: TestDaemonHub;
+	internalEventBus: TestInternalEventBus;
 	/**
 	 * Tracks calls to the (removed) legacy `SessionManager.deleteSession` helper.
 	 * Task #85 forbids deletion from non-UI code paths, so in the current test
@@ -298,7 +310,7 @@ function makeCtx(): TestCtx {
 		taskRepo,
 		nodeExecutionRepo,
 	});
-	const daemonHub = new TestDaemonHub();
+	const internalEventBus = new TestInternalEventBus();
 	const space = makeSpace(spaceId, workspacePath);
 
 	// Track session creation and deleted sessions
@@ -386,7 +398,7 @@ function makeCtx(): TestCtx {
 			mockSpaceRuntimeService as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 		taskRepo,
 		workflowRunRepo,
-		daemonHub: daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+		internalEventBus: internalEventBus as never,
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
@@ -406,7 +418,7 @@ function makeCtx(): TestCtx {
 		workflowManager,
 		spaceManager,
 		runtime,
-		daemonHub,
+		internalEventBus,
 		sessionManagerDeleteCalls,
 		sessionManagerArchiveCalls,
 		sessionManagerInterruptCalls,
@@ -1058,7 +1070,7 @@ describe('TaskAgentManager', () => {
 			const taskAgentSession = ctx.createdSessions.get(taskAgentSessionId)!;
 			const msgsBefore = taskAgentSession._enqueuedMessages.length;
 
-			ctx.daemonHub.emit('session.updated', {
+			ctx.internalEventBus.publish('session.updated', {
 				sessionId: subSessionId,
 				processingState: { status: 'idle' },
 			});
@@ -1121,7 +1133,7 @@ describe('TaskAgentManager', () => {
 	// -----------------------------------------------------------------------
 
 	describe('completion callbacks', () => {
-		test('onComplete fires when DaemonHub emits session.updated with idle status', async () => {
+		test('onComplete fires when InternalEventBus publishes session.updated with idle status', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
@@ -1141,7 +1153,7 @@ describe('TaskAgentManager', () => {
 			subSession._sdkMessageCount = 3;
 
 			// Emit idle event to trigger callback
-			ctx.daemonHub.emit('session.updated', {
+			ctx.internalEventBus.publish('session.updated', {
 				sessionId: subSessionId,
 				processingState: { status: 'idle' },
 			});
@@ -1170,11 +1182,11 @@ describe('TaskAgentManager', () => {
 			subSession._sdkMessageCount = 1;
 
 			// Emit idle twice
-			ctx.daemonHub.emit('session.updated', {
+			ctx.internalEventBus.publish('session.updated', {
 				sessionId: subSessionId,
 				processingState: { status: 'idle' },
 			});
-			ctx.daemonHub.emit('session.updated', {
+			ctx.internalEventBus.publish('session.updated', {
 				sessionId: subSessionId,
 				processingState: { status: 'idle' },
 			});
@@ -1199,7 +1211,7 @@ describe('TaskAgentManager', () => {
 			});
 
 			// Sub-session has 0 SDK messages — should NOT trigger
-			ctx.daemonHub.emit('session.updated', {
+			ctx.internalEventBus.publish('session.updated', {
 				sessionId: subSessionId,
 				processingState: { status: 'idle' },
 			});
@@ -2314,8 +2326,7 @@ describe('TaskAgentManager', () => {
 					{} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
-				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+				internalEventBus: ctx.internalEventBus as never,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',
@@ -2382,8 +2393,7 @@ describe('TaskAgentManager', () => {
 					{} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
-				daemonHub:
-					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+				internalEventBus: ctx.internalEventBus as never,
 				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 				getApiKey: async () => 'test-key',
 				defaultModel: 'claude-sonnet-4-5-20250929',

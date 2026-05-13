@@ -2,8 +2,7 @@
  * InternalEventBus — Semantic daemon messaging primitive (v1)
  *
  * First-class facade for typed internal events with explicit await-vs-fire-and-forget
- * semantics.  New daemon/domain code publishes and subscribes through this facade
- * instead of importing DaemonHub directly.
+ * semantics. Daemon/domain code publishes and subscribes through this facade.
  *
  * Semantics
  * ---------
@@ -68,12 +67,14 @@ export class InternalEventBusPublishError extends Error {
 
 /**
  * Generic constraint for event-map entries.
- * All events must be plain objects so we can safely read `namespaceId` for
+ * All events must be plain objects so we can safely read `sessionId` for
  * scoped routing.
  */
 export interface InternalEventPayload {
-	/** Namespace routing key.  Use `'global'` for app-wide events. */
-	namespaceId: string;
+	/** Session-scoped routing key. Use `'global'` for app-wide events. */
+	sessionId?: string;
+	/** Namespace-scoped routing key used by newer space/runtime events. */
+	namespaceId?: string;
 
 	[key: string]: unknown;
 }
@@ -90,8 +91,9 @@ export interface SubscribeOptions {
 
 	/**
 	 * When provided, the handler only receives events whose payload carries
-	 * the matching `namespaceId`.  Omit for a global subscription.
+	 * the matching `sessionId`/`namespaceId`.  Omit for a global subscription.
 	 */
+	sessionId?: string;
 	namespaceId?: string;
 }
 
@@ -102,7 +104,7 @@ interface RegisteredHandler {
 	handler: (data: unknown) => void | Promise<void>;
 }
 
-const GLOBAL_NAMESPACE_KEY = '__global__';
+const GLOBAL_SESSION_KEY = '__global__';
 
 /**
  * InternalEventBus
@@ -110,7 +112,7 @@ const GLOBAL_NAMESPACE_KEY = '__global__';
  * @template TEventMap — map of dot-separated event names to payload shapes.
  */
 export class InternalEventBus<TEventMap extends object = Record<string, InternalEventPayload>> {
-	// event → namespaceId → handlers
+	// event → sessionId → handlers
 	private handlers = new Map<string, Map<string, Set<RegisteredHandler>>>();
 
 	/**
@@ -118,7 +120,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 	 *
 	 * @param event     — typed event name
 	 * @param handler   — callback invoked when the event is published
-	 * @param options   — must include `subscriberName`; optional `namespaceId` filter
+	 * @param options   — must include `subscriberName`; optional `sessionId` filter
 	 * @returns unsubscribe function
 	 */
 	subscribe<K extends keyof TEventMap & string>(
@@ -127,11 +129,11 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		options: SubscribeOptions
 	): () => void {
 		const eventKey = event;
-		const namespaceKey = options.namespaceId ?? GLOBAL_NAMESPACE_KEY;
+		const sessionKey = options.sessionId ?? options.namespaceId ?? GLOBAL_SESSION_KEY;
 
-		if (options.namespaceId === GLOBAL_NAMESPACE_KEY) {
+		if ((options.sessionId ?? options.namespaceId) === GLOBAL_SESSION_KEY) {
 			throw new Error(
-				`'${GLOBAL_NAMESPACE_KEY}' is a reserved namespace key and cannot be used as an explicit namespaceId`
+				`'${GLOBAL_SESSION_KEY}' is a reserved session key and cannot be used as an explicit sessionId`
 			);
 		}
 
@@ -139,16 +141,16 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 			throw new Error('InternalEventBus.subscribe requires a non-empty subscriberName');
 		}
 
-		let namespaceMap = this.handlers.get(eventKey);
-		if (!namespaceMap) {
-			namespaceMap = new Map();
-			this.handlers.set(eventKey, namespaceMap);
+		let sessionMap = this.handlers.get(eventKey);
+		if (!sessionMap) {
+			sessionMap = new Map();
+			this.handlers.set(eventKey, sessionMap);
 		}
 
-		let handlerSet = namespaceMap.get(namespaceKey);
+		let handlerSet = sessionMap.get(sessionKey);
 		if (!handlerSet) {
 			handlerSet = new Set();
-			namespaceMap.set(namespaceKey, handlerSet);
+			sessionMap.set(sessionKey, handlerSet);
 		}
 
 		const registered: RegisteredHandler = {
@@ -161,10 +163,10 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		return () => {
 			const map = this.handlers.get(eventKey);
 			if (!map) return;
-			const set = map.get(namespaceKey);
+			const set = map.get(sessionKey);
 			if (!set) return;
 			set.delete(registered);
-			if (set.size === 0) map.delete(namespaceKey);
+			if (set.size === 0) map.delete(sessionKey);
 			if (map.size === 0) this.handlers.delete(eventKey);
 		};
 	}
@@ -185,28 +187,28 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		data: TEventMap[K] & InternalEventPayload
 	): Promise<PublishResult> {
 		const eventKey = event;
-		const namespaceMap = this.handlers.get(eventKey);
+		const sessionMap = this.handlers.get(eventKey);
 
-		if (!namespaceMap || namespaceMap.size === 0) {
+		if (!sessionMap || sessionMap.size === 0) {
 			return { delivered: 0, failures: [] };
 		}
 
-		const namespaceId = data.namespaceId;
+		const sessionId = data.sessionId ?? data.namespaceId ?? GLOBAL_SESSION_KEY;
 		const failures: HandlerFailure[] = [];
 		let delivered = 0;
 
 		const targets: RegisteredHandler[] = [];
 
-		// Namespace-scoped handlers
-		const scoped = namespaceMap.get(namespaceId);
+		// Session-scoped handlers
+		const scoped = sessionMap.get(sessionId);
 		if (scoped) {
 			for (const h of scoped) targets.push(h);
 		}
 
-		// Global handlers — only add when namespaceId is not the global sentinel
+		// Global handlers — only add when sessionId is not the global sentinel
 		// to prevent double-delivery of the same handler set.
-		if (namespaceId !== GLOBAL_NAMESPACE_KEY) {
-			const global = namespaceMap.get(GLOBAL_NAMESPACE_KEY);
+		if (sessionId !== GLOBAL_SESSION_KEY) {
+			const global = sessionMap.get(GLOBAL_SESSION_KEY);
 			if (global) {
 				for (const h of global) targets.push(h);
 			}
@@ -264,7 +266,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 	}
 
 	/**
-	 * Remove every handler for the given event (all namespaces).
+	 * Remove every handler for the given event (all sessions).
 	 */
 	off<K extends keyof TEventMap & string>(event: K): void {
 		this.handlers.delete(event);
@@ -279,16 +281,28 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 
 	/**
 	 * Return the total number of registered handlers for an event
-	 * across all namespace scopes.
+	 * across all session scopes.
 	 */
 	getHandlerCount<K extends keyof TEventMap & string>(event: K): number {
-		const namespaceMap = this.handlers.get(event);
-		if (!namespaceMap) return 0;
+		const sessionMap = this.handlers.get(event);
+		if (!sessionMap) return 0;
 		let total = 0;
-		for (const set of namespaceMap.values()) {
+		for (const set of sessionMap.values()) {
 			total += set.size;
 		}
 		return total;
+	}
+
+	/**
+	 * Return the number of registered handlers for a specific session scope.
+	 */
+	getHandlerCountForSession<K extends keyof TEventMap & string>(
+		event: K,
+		sessionId: string
+	): number {
+		const sessionMap = this.handlers.get(event);
+		if (!sessionMap) return 0;
+		return sessionMap.get(sessionId)?.size ?? 0;
 	}
 
 	/**
@@ -298,9 +312,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		event: K,
 		namespaceId: string
 	): number {
-		const namespaceMap = this.handlers.get(event);
-		if (!namespaceMap) return 0;
-		return namespaceMap.get(namespaceId)?.size ?? 0;
+		return this.getHandlerCountForSession(event, namespaceId);
 	}
 }
 
@@ -320,9 +332,8 @@ export function createInternalEventBus<
 }
 
 // ---------------------------------------------------------------------------
-// Event contracts — canonical payloads for events migrated to InternalEventBus.
-// Expand this map as new events are migrated off DaemonHub; keep each domain's
-// events in a separate interface and intersect them here.
+// Event contracts — canonical payloads for InternalEventBus events.
+// Keep each domain's events in a separate interface and intersect them here.
 //
 // Naming convention: dot-separated, lower camelCase per segment, fact/state-
 // change wording. See docs/plans/internal-event-command-query-architecture.md.
@@ -334,10 +345,11 @@ export function createInternalEventBus<
  * `.mcp.json` import refresh. Subscribers (e.g. StateProjectionService) re-broadcast
  * the latest settings to clients on the global settings channel.
  *
- * Always carries `namespaceId: 'global'` — settings are application-wide.
+ * Always carries `sessionId: 'global'` — settings are application-wide.
  */
 export interface SettingsUpdatedEvent {
-	namespaceId: string;
+	sessionId?: string;
+	namespaceId?: string;
 	settings: GlobalSettings;
 }
 
@@ -356,28 +368,28 @@ export interface ExternalEventEvents {
 }
 
 /**
- * Session domain events — migrated from DaemonHub to InternalEventBus in M5.
+ * Session domain events.
  * These events drive StateProjectionService cache updates.
  */
 export interface SessionEvents {
-	'session.created': { namespaceId: string; session: import('@neokai/shared').Session };
+	'session.created': { sessionId: string; session: import('@neokai/shared').Session };
 	'session.updated': {
-		namespaceId: string;
+		sessionId: string;
 		source?: string;
 		session?: Partial<import('@neokai/shared').Session>;
 		processingState?: import('@neokai/shared').AgentProcessingState;
 	};
-	'session.deleted': { namespaceId: string };
-	'commands.updated': { namespaceId: string; commands: string[] };
-	'session.error': { namespaceId: string; error: string; details?: unknown };
-	'session.errorClear': { namespaceId: string };
+	'session.deleted': { sessionId: string };
+	'commands.updated': { sessionId: string; commands: string[] };
+	'session.error': { sessionId: string; error: string; details?: unknown };
+	'session.errorClear': { sessionId: string };
 }
 
 /**
- * API connection events — migrated from DaemonHub to InternalEventBus in M5.
+ * API connection events.
  */
 export interface ApiConnectionEvents {
-	'api.connection': { namespaceId: string } & import('@neokai/shared').ApiConnectionState;
+	'api.connection': { sessionId: string } & import('@neokai/shared').ApiConnectionState;
 }
 
 // ---------------------------------------------------------------------------
@@ -387,7 +399,7 @@ export interface ApiConnectionEvents {
 
 /** A task has transitioned to `blocked` and requires judgment. */
 export interface SpaceTaskBlockedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	reason: string;
@@ -401,7 +413,7 @@ export interface SpaceTaskBlockedEvent {
  * emitted by any publisher. Will be wired when the runtime adds an unblock path.
  */
 export interface SpaceTaskUnblockedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	reason: string;
@@ -416,7 +428,7 @@ export interface SpaceTaskUnblockedEvent {
  * for terminal runs rather than per-task completion events.
  */
 export interface SpaceTaskCompletedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	status: 'done' | 'cancelled' | 'blocked';
@@ -431,7 +443,7 @@ export interface SpaceTaskCompletedEvent {
  * `space.task.blocked` with the failure reason.
  */
 export interface SpaceTaskFailedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	reason: string;
@@ -440,7 +452,7 @@ export interface SpaceTaskFailedEvent {
 
 /** A Task Agent session crashed unexpectedly. */
 export interface SpaceAgentCrashedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	timestamp: string;
@@ -454,7 +466,7 @@ export interface SpaceAgentCrashedEvent {
  * without emitting a dedicated recovery event.
  */
 export interface SpaceAgentRecoveredEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	timestamp: string;
@@ -462,7 +474,7 @@ export interface SpaceAgentRecoveredEvent {
 
 /** A stuck agent was auto-completed by the runtime after timeout. */
 export interface SpaceAgentAutoCompletedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	elapsedMs: number;
@@ -471,7 +483,7 @@ export interface SpaceAgentAutoCompletedEvent {
 
 /** A node agent went idle without a terminal SDK message or reported status. */
 export interface SpaceAgentIdleNonTerminalEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	runId: string;
@@ -484,7 +496,7 @@ export interface SpaceAgentIdleNonTerminalEvent {
 
 /** A workflow run has reached a terminal state. */
 export interface SpaceWorkflowRunCompletedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	runId: string;
 	status: 'done' | 'cancelled' | 'blocked';
@@ -494,7 +506,7 @@ export interface SpaceWorkflowRunCompletedEvent {
 
 /** A workflow run has failed with an unrecoverable error. */
 export interface SpaceWorkflowRunFailedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	runId: string;
 	reason: string;
@@ -503,7 +515,7 @@ export interface SpaceWorkflowRunFailedEvent {
 
 /** A workflow run has transitioned to `blocked`. */
 export interface SpaceWorkflowRunBlockedEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	runId: string;
 	reason: string;
@@ -512,7 +524,8 @@ export interface SpaceWorkflowRunBlockedEvent {
 
 /** A previously-terminal workflow run has been reopened back to `in_progress`. */
 export interface SpaceWorkflowRunReopenedEvent {
-	namespaceId: string;
+	sessionId?: string;
+	namespaceId?: string;
 	spaceId: string;
 	runId: string;
 	fromStatus: 'done' | 'cancelled';
@@ -523,7 +536,7 @@ export interface SpaceWorkflowRunReopenedEvent {
 
 /** A blocked execution is being automatically retried by the runtime. */
 export interface SpaceWorkflowRunRetryEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	runId: string;
@@ -535,7 +548,7 @@ export interface SpaceWorkflowRunRetryEvent {
 
 /** A blocked workflow run has exhausted automatic retries and needs attention. */
 export interface SpaceWorkflowRunNeedsAttentionEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	runId: string;
 	taskId: string;
@@ -546,7 +559,7 @@ export interface SpaceWorkflowRunNeedsAttentionEvent {
 
 /** A task has paused at a completion action that requires approval. */
 export interface SpaceTaskAwaitingApprovalEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	actionId: string;
@@ -561,7 +574,7 @@ export interface SpaceTaskAwaitingApprovalEvent {
 
 /** A task has been running longer than the configured timeout threshold. */
 export interface SpaceTaskTimeoutEvent {
-	namespaceId: string;
+	sessionId: string;
 	spaceId: string;
 	taskId: string;
 	elapsedMs: number;
@@ -591,289 +604,135 @@ export interface SpaceEvents {
 }
 
 /**
- * Client-visible Space events — migrated from DaemonHub to InternalEventBus in M2.
+ * Canonical daemon internal event map.
  *
- * These are broadcast events consumed by ClientEventBridge and the web UI. They
- * intentionally keep the historical event names so existing client subscriptions
- * remain unchanged. Runtime/domain-only events (for example `space.task.blocked`)
- * stay in `SpaceEvents` above.
+ * Each domain should own its slice; this type is the intersection of all
+ * domain event maps so the bus can be typed with the full surface.
+ *
+ * This map is the canonical event surface for daemon application/domain code.
+ * The permissive payload entry keeps the remaining long-tail event names routable
+ * through InternalEventBus while narrower domain slices document payloads for
+ * active subscribers.
  */
-export interface SpaceClientEvents {
+type InternalEventBusPayload = { sessionId?: string; namespaceId?: string } & Record<
+	string,
+	unknown
+>;
+
+interface AgentControlEvents {
+	'model.switchRequest': { sessionId: string; model: string; provider: string };
+	'model.switched': { sessionId: string; success: boolean; model: string; error?: string };
+	'agent.interruptRequest': { sessionId: string };
+	'agent.interrupted': { sessionId: string };
+	'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
+	'agent.reset': { sessionId: string; success: boolean; error?: string };
+	'message.persisted': {
+		sessionId: string;
+		messageId: string;
+		messageContent: string | import('@neokai/shared').MessageContent[];
+		userMessageText: string;
+		needsWorkspaceInit: boolean;
+		hasDraftToClear: boolean;
+		sendStatus: 'deferred' | 'enqueued' | 'consumed';
+		deliveryMode: import('@neokai/shared').MessageDeliveryMode;
+		skipQueryStart?: boolean;
+	};
+	'query.trigger': { sessionId: string };
+	'query.sendEnqueuedOnTurnEnd': { sessionId: string };
+	'context.updated': { sessionId: string; contextInfo: import('@neokai/shared').ContextInfo };
+}
+
+interface ClientForwardingEvents {
+	'auth.changed': {
+		sessionId: string;
+		method: import('@neokai/shared').AuthMethod;
+		isAuthenticated: boolean;
+	};
+	'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+	'space.updated': {
+		sessionId: string;
+		spaceId: string;
+		space?: Partial<import('@neokai/shared').Space>;
+	};
+	'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+	'space.deleted': { sessionId: string; spaceId: string };
 	'space.task.created': {
-		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		taskId: string;
 		task: import('@neokai/shared').SpaceTask;
 	};
 	'space.task.updated': {
-		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		taskId: string;
 		task: import('@neokai/shared').SpaceTask;
 		archiveSource?: 'user' | 'system_reconcile';
 	};
+	'space.schedule.updated': {
+		sessionId: string;
+		spaceId: string;
+		scheduleId: string;
+		schedule: import('@neokai/shared').TaskSchedule;
+	};
 	'space.workflowRun.created': {
-		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		runId: string;
 		run: import('@neokai/shared').SpaceWorkflowRun;
 	};
 	'space.workflowRun.updated': {
-		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		runId: string;
 		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
 	};
 	'space.gateData.updated': {
-		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		runId: string;
 		gateId: string;
 		data: Record<string, unknown>;
 	};
-	'space.created': {
-		namespaceId: string;
+	'spaceAgent.created': {
 		sessionId: string;
 		spaceId: string;
-		space: import('@neokai/shared').Space;
+		agent: import('@neokai/shared').SpaceAgent;
 	};
-	'space.updated': {
-		namespaceId: string;
+	'spaceAgent.updated': {
 		sessionId: string;
 		spaceId: string;
-		space?: Partial<import('@neokai/shared').Space>;
+		agent: import('@neokai/shared').SpaceAgent;
 	};
-	'space.archived': {
-		namespaceId: string;
+	'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
+	'spaceWorkflow.created': {
 		sessionId: string;
 		spaceId: string;
-		space: import('@neokai/shared').Space;
+		workflow: import('@neokai/shared').SpaceWorkflow;
 	};
-	'space.deleted': { namespaceId: string; sessionId: string; spaceId: string };
-	'space.githubEvent.routed': {
-		namespaceId: string;
-		sessionId: string;
-		taskId: string;
-		event: {
-			repo: string;
-			prNumber: number;
-			eventType: string;
-			summary: string;
-			externalUrl: string;
-		};
-	};
-	'space.artifactCache.updated': {
-		namespaceId: string;
+	'spaceWorkflow.updated': {
 		sessionId: string;
 		spaceId: string;
-		runId: string;
-		taskId: string;
-		cacheKey: string;
-		status: 'ok' | 'syncing' | 'error';
+		workflow: import('@neokai/shared').SpaceWorkflow;
 	};
-	'space.pendingMessage.queued': {
-		namespaceId: string;
-		sessionId: string;
-		spaceId: string;
-		workflowRunId: string;
-		taskId: string | null;
-		targetAgentName: string;
-		targetKind: 'node_agent' | 'space_agent';
-		messageId: string;
-		attempts: number;
-		maxAttempts: number;
-		expiresAt: number;
-		deduped: boolean;
-	};
-	'space.pendingMessage.delivered': {
-		namespaceId: string;
-		sessionId: string;
-		spaceId: string;
-		workflowRunId: string;
-		targetAgentName: string;
-		targetKind: string;
-		messageId: string;
-		deliveredSessionId: string;
-	};
-	'space.schedule.updated': {
-		namespaceId: string;
-		sessionId: string;
-		spaceId: string;
-		scheduleId: string;
-		schedule: import('@neokai/shared').TaskSchedule;
-	};
-	'space.workflowRun.cyclesReset': {
-		namespaceId: string;
-		sessionId: string;
-		runId: string;
-		reason: 'human_touch';
-		taskId?: string;
-		rowsReset: number;
-	};
+	'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
 }
 
 /**
- * Canonical daemon internal event map.
+ * Full-surface event map for daemon application code.
  *
- * Each domain should own its slice; this type is the intersection of all
- * domain event maps so the bus can be typed with the full surface.
- *
- * NOTE: This map intentionally starts small. New events are added here as
- * publishers/subscribers migrate off DaemonHub. Events that have not yet been
- * migrated continue to flow through DaemonHub (`createDaemonHub`) and the
- * compatibility `DaemonEventMap`.
+ * The permissive index signature keeps long-tail event names routable through
+ * InternalEventBus while narrower domain slices document typed payloads for active
+ * subscribers.
  */
-/**
- * Context / session-scoped events — migrated from DaemonHub in M2.
- * These carry sessionId as a field but also need namespaceId for bus routing.
- */
-export interface ContextEvents {
-	'context.updated': {
-		namespaceId: string;
-		sessionId: string;
-		contextInfo: import('@neokai/shared').ContextInfo;
-	};
-}
-
-/**
- * Agent domain events — migrated from DaemonHub in M2.
- */
-export interface AgentEvents {
-	'sdk.message': {
-		namespaceId: string;
-		sessionId: string;
-		message: unknown;
-		deliveryMode?: string;
-	};
-	'question.asked': {
-		namespaceId: string;
-		sessionId: string;
-		[key: string]: unknown;
-	};
-	'question.answered': {
-		namespaceId: string;
-		sessionId: string;
-		answer: unknown;
-	};
-	'question.injected_as_tool_result': {
-		namespaceId: string;
-		sessionId: string;
-		[key: string]: unknown;
-	};
-	'question.orphaned': {
-		namespaceId: string;
-		sessionId: string;
-		[key: string]: unknown;
-	};
-	'model.changed': {
-		namespaceId: string;
-		sessionId: string;
-		model: string;
-		provider: string;
-	};
-	'model.switched': {
-		namespaceId: string;
-		sessionId: string;
-		model: string;
-		provider?: string;
-		success?: boolean;
-		error?: string;
-	};
-	'messages.statusChanged': {
-		namespaceId: string;
-		sessionId: string;
-		messageIds: string[];
-		status: string;
-	};
-	'message.sent': { namespaceId: string; sessionId: string };
-	'message.persisted': {
-		namespaceId: string;
-		sessionId: string;
-		messageId: string;
-		messageContent: unknown;
-		userMessageText?: string;
-		needsWorkspaceInit?: boolean;
-		hasDraftToClear?: boolean;
-		sendStatus: 'deferred' | 'enqueued' | 'consumed';
-		deliveryMode: import('@neokai/shared').MessageDeliveryMode;
-		skipQueryStart?: boolean;
-	};
-	'session.reset': {
-		namespaceId: string;
-		sessionId: string;
-		session: import('@neokai/shared').Session;
-		restartQuery: boolean;
-	};
-	'rewind.started': {
-		namespaceId: string;
-		sessionId: string;
-		mode: string;
-		[key: string]: unknown;
-	};
-	'rewind.completed': {
-		namespaceId: string;
-		sessionId: string;
-		result: unknown;
-		mode: string;
-	};
-	'rewind.failed': { namespaceId: string; sessionId: string; error: string };
-	'rewind.executed': {
-		namespaceId: string;
-		sessionId: string;
-		result: unknown;
-		mode: string;
-	};
-	'sdk.captured': { namespaceId: string; sessionId: string; sdkSessionId: string };
-	'sdk.restart': { namespaceId: string; sessionId: string };
-	'slashCommands.fetched': {
-		namespaceId: string;
-		sessionId: string;
-		commands: string[];
-	};
-	'agent.interrupted': { namespaceId: string; sessionId: string };
-	'agent.reset': {
-		namespaceId: string;
-		sessionId: string;
-		session?: import('@neokai/shared').Session;
-		restartQuery?: boolean;
-		success?: boolean;
-		error?: string;
-	};
-	'agent.restart': {
-		namespaceId: string;
-		sessionId: string;
-		session?: import('@neokai/shared').Session;
-		restartQuery?: boolean;
-		success?: boolean;
-		error?: string;
-	};
-	'agent.interruptRequest': { namespaceId: string; sessionId: string };
-	'query.trigger': { namespaceId: string; sessionId: string };
-}
-
-/**
- * Config/registry domain events — migrated from DaemonHub in M2.
- */
-export interface RegistryEvents {
-	'skills.changed': { namespaceId: string; sessionId: string };
-	'mcp.registry.changed': { namespaceId: string; sessionId: string };
-}
-
-export interface DaemonInternalEventMap
-	extends SettingsEvents,
-		ExternalEventEvents,
-		SessionEvents,
-		ApiConnectionEvents,
-		SpaceEvents,
-		ContextEvents,
-		AgentEvents,
-		RegistryEvents,
-		SpaceClientEvents {}
+export type DaemonInternalEventMap = Record<string, InternalEventBusPayload> &
+	AgentControlEvents &
+	ClientForwardingEvents &
+	SettingsEvents &
+	ExternalEventEvents &
+	SessionEvents &
+	ApiConnectionEvents &
+	SpaceEvents;
 
 /**
  * Convenience factory typed with the canonical daemon internal event map.

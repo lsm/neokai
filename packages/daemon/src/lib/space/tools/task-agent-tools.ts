@@ -120,7 +120,7 @@ export interface TaskAgentToolsConfig {
 		isSyntheticMessage?: boolean
 	) => Promise<void>;
 	/**
-	 * InternalEventBus instance for emitting client-visible space events.
+	 * InternalEventBus<DaemonInternalEventMap> instance for emitting task completion/failure events.
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -228,34 +228,42 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 	/** Reserved agent name used by Task Agent to escalate directly to the Space Agent. */
 	const SPACE_AGENT_TARGET = 'space-agent';
 
-	/** Emit InternalEventBus event + invoke observability hook when a message is queued. */
+	/** Emit InternalEventBus<DaemonInternalEventMap> event + invoke observability hook when a message is queued. */
 	function emitQueued(record: PendingAgentMessageRecord): void {
 		onMessageQueued?.(record);
-		internalEventBus?.publishAsync('space.pendingMessage.queued', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: space.id,
-			workflowRunId,
-			taskId: record.taskId,
-			targetAgentName: record.targetAgentName,
-			targetKind: record.targetKind,
-			messageId: record.id,
-			attempts: record.attempts,
-			maxAttempts: record.maxAttempts,
-			expiresAt: record.expiresAt,
-			deduped: false,
-		});
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('space.pendingMessage.queued', {
+				sessionId: 'global',
+				spaceId: space.id,
+				workflowRunId,
+				taskId: record.taskId,
+				targetAgentName: record.targetAgentName,
+				targetKind: record.targetKind,
+				messageId: record.id,
+				attempts: record.attempts,
+				maxAttempts: record.maxAttempts,
+				expiresAt: record.expiresAt,
+				deduped: false,
+			})
+			.catch(() => {});
 	}
 
-	/** Emit task updated event to InternalEventBus. */
+	/** Emit task updated event to InternalEventBus<DaemonInternalEventMap>. */
 	function emitTaskUpdated(task: SpaceTask): void {
-		internalEventBus?.publishAsync('space.task.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: space.id,
-			taskId: task.id,
-			task,
-		});
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('space.task.updated', {
+				sessionId: 'global',
+				spaceId: space.id,
+				taskId: task.id,
+				task,
+			})
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			});
 	}
 
 	return {
@@ -464,8 +472,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				// `postApprovalBlockedReason` in the same UPDATE.
 				const updated = await taskManager.setTaskStatus(taskId, 'done', {
 					approvalSource: task.approvalSource ?? 'agent',
-					onCascadedTasks: async (cascaded) => {
-						for (const t of cascaded) emitTaskUpdated(t);
+					onCascadedTasks: async (cascadedTasks) => {
+						for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 					},
 				});
 				emitTaskUpdated(updated);
@@ -561,8 +569,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						dependsOn: args.depends_on,
 					},
 					{
-						onCascadedTasks: async (cascaded) => {
-							for (const t of cascaded) emitTaskUpdated(t);
+						onCascadedTasks: async (cascadedTasks) => {
+							for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 						},
 					}
 				);
@@ -1125,14 +1133,17 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					workflowRunRepo.updateRun(workflowRunId, { failureReason: null });
 				}
 
-				internalEventBus?.publishAsync('space.gateData.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId: space.id,
-					runId: workflowRunId,
-					gateId: args.gate_id,
-					data: gateData.data,
-				});
+				if (internalEventBus) {
+					void internalEventBus
+						.publish('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: space.id,
+							runId: workflowRunId,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
 				onGateChanged?.(workflowRunId, args.gate_id);
 
 				return jsonResult({
@@ -1171,14 +1182,17 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					});
 				}
 
-				internalEventBus?.publishAsync('space.gateData.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId: space.id,
-					runId: workflowRunId,
-					gateId: args.gate_id,
-					data: gateData.data,
-				});
+				if (internalEventBus) {
+					void internalEventBus
+						.publish('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: space.id,
+							runId: workflowRunId,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
 
 				return jsonResult({
 					success: true,
