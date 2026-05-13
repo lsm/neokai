@@ -68,17 +68,10 @@ export class SpaceAgentNotificationService {
 	/**
 	 * Tracks consecutive auto-completions per task. Keyed by taskId.
 	 * Incremented on each `space.agent.autoCompleted` for the same task.
-	 * Reset when the threshold is reached (after notification) or when the
-	 * task completes successfully.
+	 * Reset when the threshold is reached (counter deleted immediately
+	 * before notification) or when the task reaches a terminal state.
 	 */
 	private autoCompletedCounts = new Map<string, number>();
-	/**
-	 * Tracks taskIds with a pending threshold notification. Used to prevent
-	 * stale counter restoration after a terminal task transition: if a
-	 * terminal transition clears this set entry, the `.then()` callback
-	 * knows not to restore the counter.
-	 */
-	private notifyInFlight = new Set<string>();
 
 	constructor(config: SpaceAgentNotificationServiceConfig) {
 		this.internalEventBus = config.internalEventBus;
@@ -106,7 +99,6 @@ export class SpaceAgentNotificationService {
 		// Clear stale counters from a previous subscription so a re-init
 		// doesn't carry over partial counts from before the tear-down.
 		this.autoCompletedCounts.clear();
-		this.notifyInFlight.clear();
 		this.unsubscribers = [
 			this.internalEventBus.subscribe(
 				'space.task.blocked',
@@ -164,17 +156,12 @@ export class SpaceAgentNotificationService {
 					if (count >= this.notifyThreshold) {
 						// Immediately clear the counter so concurrent events arriving
 						// while injectMessage is in-flight don't produce duplicates.
+						// Counter is NOT restored on failure — injectMessage is an
+						// in-process call, so a failure means the session is gone and
+						// subsequent notifications would also fail. When the session
+						// recovers (re-provision), subscribe() clears all state anyway.
 						this.autoCompletedCounts.delete(event.taskId);
-						this.notifyInFlight.add(event.taskId);
-						const message = formatAgentAutoCompleted(event, this.autonomyLevel, count);
-						void this.notify(message).then((sent) => {
-							// Only restore if notification failed AND no terminal transition
-							// cleared the in-flight marker in the meantime.
-							if (!sent && this.notifyInFlight.has(event.taskId)) {
-								this.autoCompletedCounts.set(event.taskId, count);
-							}
-							this.notifyInFlight.delete(event.taskId);
-						});
+						void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel, count));
 					}
 				},
 				{
@@ -228,11 +215,10 @@ export class SpaceAgentNotificationService {
 				}
 			),
 			// When a task reaches a terminal or blocked state, clear its
-			// auto-completion counter and in-flight marker so the next cycle
-			// starts fresh. This prevents a successfully-completed or restarted
-			// task from carrying a stale counter forward. Clearing notifyInFlight
-			// prevents a pending .then() callback from restoring a stale counter
-			// after the task has already transitioned to a terminal state.
+			// auto-completion counter so the next cycle starts fresh. This prevents
+			// a successfully-completed or restarted task from carrying a stale
+			// counter forward. Blocked tasks that are manually restarted represent
+			// a new attempt cycle, not a continuation of the previous retry loop.
 			this.internalEventBus.subscribe(
 				'space.task.updated',
 				(event) => {
@@ -243,7 +229,6 @@ export class SpaceAgentNotificationService {
 						event.task.status === 'blocked'
 					) {
 						this.autoCompletedCounts.delete(event.taskId);
-						this.notifyInFlight.delete(event.taskId);
 					}
 				},
 				{
@@ -258,24 +243,21 @@ export class SpaceAgentNotificationService {
 			}
 			this.unsubscribers = [];
 			this.autoCompletedCounts.clear();
-			this.notifyInFlight.clear();
 		};
 	}
 
-	private async notify(message: string): Promise<boolean> {
+	private async notify(message: string): Promise<void> {
 		try {
 			await this.sessionFactory.injectMessage(this.sessionId, message, {
 				deliveryMode: 'defer',
 				origin: 'system',
 			});
-			return true;
 		} catch (err) {
 			// Session not found or unavailable — log warning, do not propagate.
 			// The notification service must not fail the caller's event handler.
 			log.warn(
 				`[SpaceAgentNotificationService] Failed to inject notification into session ${this.sessionId}: ${err instanceof Error ? err.message : String(err)}`
 			);
-			return false;
 		}
 	}
 }
