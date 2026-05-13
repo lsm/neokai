@@ -31,6 +31,7 @@ function createTestDb(): InstanceType<typeof Database> {
 			status TEXT NOT NULL DEFAULT 'active'
 				CHECK(status IN ('active', 'archived')),
 			autonomy_level TEXT DEFAULT 'supervised',
+			max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
 			config TEXT,
 			task_agent_config TEXT,
 			setting_sources TEXT DEFAULT NULL,
@@ -187,6 +188,7 @@ describe('Migration 61 — slug backfill', () => {
 				session_ids TEXT NOT NULL DEFAULT '[]',
 				status TEXT NOT NULL DEFAULT 'active',
 				autonomy_level TEXT DEFAULT 'supervised',
+				max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
 				config TEXT,
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL
@@ -231,6 +233,7 @@ describe('Migration 61 — slug backfill', () => {
 				session_ids TEXT NOT NULL DEFAULT '[]',
 				status TEXT NOT NULL DEFAULT 'active',
 				autonomy_level TEXT DEFAULT 'supervised',
+				max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
 				config TEXT,
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL
@@ -275,6 +278,7 @@ describe('Migration 61 — slug backfill', () => {
 				session_ids TEXT NOT NULL DEFAULT '[]',
 				status TEXT NOT NULL DEFAULT 'active',
 				autonomy_level TEXT DEFAULT 'supervised',
+				max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
 				config TEXT,
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL
@@ -316,6 +320,7 @@ describe('Migration 61 — slug backfill', () => {
 				session_ids TEXT NOT NULL DEFAULT '[]',
 				status TEXT NOT NULL DEFAULT 'active',
 				autonomy_level TEXT DEFAULT 'supervised',
+				max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
 				config TEXT,
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL

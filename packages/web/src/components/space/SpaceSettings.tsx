@@ -9,6 +9,7 @@
 
 import { useState, useEffect } from 'preact/hooks';
 import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@neokai/shared';
+import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { globalSettings } from '../../lib/state.ts';
 import { spaceStore } from '../../lib/space-store.ts';
@@ -37,6 +38,9 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [instructions, setInstructions] = useState(space.instructions ?? '');
 	const [backgroundContext, setBackgroundContext] = useState(space.backgroundContext ?? '');
 	const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
+	const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(
+		space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS
+	);
 	const [defaultModel, setDefaultModel] = useState<string | undefined>(space.defaultModel);
 	const [settingSources, setSettingSources] = useState<SettingSource[]>(
 		space.settingSources ?? getInheritedSettingSources()
@@ -55,6 +59,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setInstructions(space.instructions ?? '');
 		setBackgroundContext(space.backgroundContext ?? '');
 		setAutonomyLevel(space.autonomyLevel ?? 1);
+		setMaxConcurrentTasks(space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS);
 		setDefaultModel(space.defaultModel);
 		setSettingSources(space.settingSources ?? getInheritedSettingSources());
 		setClearSettingSources(false);
@@ -66,6 +71,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		space.instructions,
 		space.backgroundContext,
 		space.autonomyLevel,
+		space.maxConcurrentTasks,
 		space.defaultModel,
 		space.settingSources,
 	]);
@@ -76,6 +82,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		instructions !== (space.instructions ?? '') ||
 		backgroundContext !== (space.backgroundContext ?? '') ||
 		autonomyLevel !== (space.autonomyLevel ?? 1) ||
+		maxConcurrentTasks !== (space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS) ||
 		defaultModel !== space.defaultModel ||
 		JSON.stringify(settingSources) !==
 			JSON.stringify(space.settingSources ?? getInheritedSettingSources()) ||
@@ -102,6 +109,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				instructions: instructions.trim() || undefined,
 				backgroundContext: backgroundContext.trim() || undefined,
 				autonomyLevel,
+				maxConcurrentTasks,
 				defaultModel: defaultModel || null,
 				...(clearSettingSources ||
 				JSON.stringify(settingSources) !==
@@ -318,6 +326,34 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 						</div>
 
 						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1">Concurrent Tasks</label>
+							<p class="text-xs text-gray-500 mb-2">
+								Maximum number of Space tasks that may run simultaneously. Independent work runs in
+								parallel when set above 1. Dependencies still block regardless of available slots.
+							</p>
+							<div class="flex items-center gap-3">
+								<input
+									type="range"
+									min={MIN_SPACE_CONCURRENT_TASKS}
+									max={MAX_SPACE_CONCURRENT_TASKS}
+									step={1}
+									value={maxConcurrentTasks}
+									data-testid="concurrent-tasks-slider"
+									onInput={(e) =>
+										setMaxConcurrentTasks(Number((e.target as HTMLInputElement).value))
+									}
+									class="flex-1 h-2 rounded-full appearance-none cursor-pointer bg-dark-700 accent-blue-500"
+								/>
+								<span
+									class="text-sm font-mono text-gray-200 w-8 text-center tabular-nums"
+									data-testid="concurrent-tasks-value"
+								>
+									{maxConcurrentTasks}
+								</span>
+							</div>
+						</div>
+
+						<div>
 							<label class="block text-xs font-medium text-gray-400 mb-1">Default Model</label>
 							<p class="text-xs text-gray-500 mb-2">
 								Default model for agents and sessions in this Space. Falls back to the app-level
@@ -427,6 +463,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										setInstructions(space.instructions ?? '');
 										setBackgroundContext(space.backgroundContext ?? '');
 										setAutonomyLevel(space.autonomyLevel ?? 1);
+										setMaxConcurrentTasks(space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS);
 										setDefaultModel(space.defaultModel);
 										setSettingSources(space.settingSources ?? getInheritedSettingSources());
 										setClearSettingSources(false);

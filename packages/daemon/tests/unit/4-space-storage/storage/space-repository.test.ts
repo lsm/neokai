@@ -37,6 +37,7 @@ describe('SpaceRepository', () => {
 			expect(space.instructions).toBe('');
 			expect(space.status).toBe('active');
 			expect(space.autonomyLevel).toBe(1);
+			expect(space.maxConcurrentTasks).toBe(1);
 			expect(space.sessionIds).toEqual([]);
 			expect(space.config).toBeUndefined();
 			expect(space.createdAt).toBeGreaterThan(0);
@@ -63,6 +64,7 @@ describe('SpaceRepository', () => {
 			expect(space.defaultModel).toBe('claude-opus');
 			expect(space.allowedModels).toEqual(['claude-opus', 'claude-sonnet']);
 			expect(space.autonomyLevel).toBe(3);
+			expect(space.maxConcurrentTasks).toBe(3);
 			expect(space.config).toEqual({ maxConcurrentTasks: 3, taskTimeoutMs: 60000 });
 		});
 
@@ -236,7 +238,18 @@ describe('SpaceRepository', () => {
 			const updated = repo.updateSpace(space.id, {
 				config: { maxConcurrentTasks: 5, taskTimeoutMs: 30000 },
 			});
+			expect(updated!.maxConcurrentTasks).toBe(5);
 			expect(updated!.config).toEqual({ maxConcurrentTasks: 5, taskTimeoutMs: 30000 });
+		});
+
+		it('prefers explicit maxConcurrentTasks over legacy config updates', () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			const updated = repo.updateSpace(space.id, {
+				maxConcurrentTasks: 4,
+				config: { maxConcurrentTasks: 2, taskTimeoutMs: 30000 },
+			});
+			expect(updated!.maxConcurrentTasks).toBe(4);
+			expect(updated!.config).toEqual({ maxConcurrentTasks: 2, taskTimeoutMs: 30000 });
 		});
 
 		it('clears config by replacing with empty object', () => {

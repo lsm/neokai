@@ -49,6 +49,7 @@ function makeSpace(id = 'space-1'): Space {
 		status: 'active',
 		paused: false,
 		stopped: false,
+		maxConcurrentTasks: 1,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};

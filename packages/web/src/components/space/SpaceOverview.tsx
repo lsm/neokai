@@ -15,6 +15,7 @@ import type {
 	SpaceAutonomyLevel,
 	SpaceWorkflowSummary,
 } from '@neokai/shared';
+import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import {
 	navigateToSpaceTask,
@@ -222,6 +223,33 @@ function AutonomyLevelBar({
 	);
 }
 
+// ─── Concurrency Bar ──────────────────────────────────────────────────────
+
+function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: number) => void }) {
+	return (
+		<div class="rounded-xl border border-dark-700 bg-dark-850/80 px-5 py-4">
+			<div class="flex items-center justify-between mb-2.5">
+				<span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+					Concurrency
+				</span>
+				<span class="text-xs text-gray-500">
+					{limit} task{limit !== 1 ? 's' : ''}
+				</span>
+			</div>
+			<input
+				type="range"
+				min={MIN_SPACE_CONCURRENT_TASKS}
+				max={MAX_SPACE_CONCURRENT_TASKS}
+				step={1}
+				value={limit}
+				data-testid="concurrency-slider"
+				onChange={(e) => onChange(Number((e.target as HTMLInputElement).value))}
+				class="w-full h-2 rounded-full appearance-none cursor-pointer bg-dark-700 accent-blue-500"
+			/>
+		</div>
+	);
+}
+
 // ─── Recent Tasks ─────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
@@ -320,6 +348,16 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 		}
 	}, []);
 
+	const handleConcurrencyChange = useCallback(async (limit: number) => {
+		const current = spaceStore.space.value?.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS;
+		if (limit === current) return;
+		try {
+			await spaceStore.updateSpace({ maxConcurrentTasks: limit });
+		} catch {
+			toast.error('Failed to update concurrency');
+		}
+	}, []);
+
 	const handleNewSession = useCallback(async () => {
 		const space = spaceStore.space.value;
 		const response = await createSession({ spaceId, workspacePath: space?.workspacePath });
@@ -402,6 +440,12 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 					level={space.autonomyLevel ?? 1}
 					workflows={workflows}
 					onChange={(l) => void handleAutonomyChange(l)}
+				/>
+
+				{/* Concurrency limit */}
+				<ConcurrencyBar
+					limit={space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS}
+					onChange={(n) => void handleConcurrencyChange(n)}
 				/>
 
 				{/* Stats strip */}

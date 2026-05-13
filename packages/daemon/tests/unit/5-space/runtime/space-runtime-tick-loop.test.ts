@@ -40,12 +40,25 @@ function makeDb(): BunDatabase {
 	return db;
 }
 
-function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
+function seedSpaceRow(
+	db: BunDatabase,
+	spaceId: string,
+	workspacePath = '/tmp/workspace',
+	maxConcurrentTasks = 1
+): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, slug, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
-	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, max_concurrent_tasks, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?, ?)`
+	).run(
+		spaceId,
+		workspacePath,
+		`Space ${spaceId}`,
+		spaceId,
+		maxConcurrentTasks,
+		Date.now(),
+		Date.now()
+	);
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
@@ -726,6 +739,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 	describe('multiple independent workflow runs in same tick', () => {
 		test('tick spawns agents for tasks across multiple runs', async () => {
+			db.prepare(`UPDATE spaces SET max_concurrent_tasks = ? WHERE id = ?`).run(2, SPACE_ID);
+
 			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: (taskId: string) => {
 					const task = taskRepo.getTask(taskId);
@@ -874,6 +889,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 	describe('tick handles spawn failure gracefully', () => {
 		test('spawn failure for one task does not prevent spawning another task', async () => {
+			db.prepare(`UPDATE spaces SET max_concurrent_tasks = ? WHERE id = ?`).run(2, SPACE_ID);
+
 			let callCount = 0;
 			const spawned: string[] = [];
 			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {

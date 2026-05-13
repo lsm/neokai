@@ -34,6 +34,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			stopped INTEGER NOT NULL DEFAULT 0,
 			autonomy_level INTEGER NOT NULL DEFAULT 1
 				CHECK(autonomy_level BETWEEN 1 AND 5),
+			max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
 			config TEXT,
 			task_agent_config TEXT DEFAULT NULL,
 			setting_sources TEXT DEFAULT NULL,
