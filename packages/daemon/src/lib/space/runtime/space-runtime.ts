@@ -904,6 +904,19 @@ export class SpaceRuntime {
 				store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
 				return;
 			}
+			// Re-check run deliverability before queueing a retry — the run may
+			// have transitioned to terminal while the dispatch was in flight.
+			const currentRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
+			if (!currentRun || !isExternallyDeliverableRun(currentRun.status)) {
+				store.markDeliveryFailed(event.eventId, deliveryKey, {
+					terminal: true,
+					reason: 'run_not_externally_deliverable',
+				});
+				store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+				this.clearExternalEventRetry(deliveryKey);
+				this.clearQueuedDelivery(target, deliveryKey);
+				return;
+			}
 			this.queueForRetry(target, event, deliveryKey, deliveryMode, failureReason);
 		} finally {
 			this.externalEventDeliveriesInFlight.delete(deliveryKey);
