@@ -2273,6 +2273,9 @@ export class SpaceRuntime {
 
 		const recovered = recoverTx();
 		await this.ensureExecutorRegistered(recovered.run);
+		this.registerInterestsForRun(
+			this.config.workflowRunRepo.getRun(recovered.run.id) ?? recovered.run
+		);
 		await this.ensurePollsForRun(
 			this.config.workflowRunRepo.getRun(recovered.run.id) ?? recovered.run
 		);

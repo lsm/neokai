@@ -66,6 +66,10 @@ class MockTaskAgentManager {
 
 	async tryResumeNodeAgentSession(): Promise<void> {}
 
+	async prepareSubSessionForWorkflowResume(): Promise<boolean> {
+		return true;
+	}
+
 	async flushPendingMessagesForTarget(): Promise<void> {}
 
 	async spawnWorkflowNodeAgentForExecution(
@@ -1429,6 +1433,46 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
 		expect(delivery.state).toBe('failed');
 		expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+	});
+
+	test('re-registers interests when recovering a terminal workflow run', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const task = tasks[0]!;
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-pre-terminal',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-pre-terminal');
+
+		// Simulate terminal cleanup — clear interests and mark run done
+		runtime.clearRunInterests(run.id);
+		workflowRunRepo.updateRun(run.id, { status: 'done' });
+		tam.alive.delete('session-pre-terminal'); // session dies at terminalization
+
+		// Recover the terminal run back to active
+		await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+
+		// Set up a live session for the recovered execution
+		const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
+		const pendingExec = executions.find((e) => e.status === 'pending');
+		expect(pendingExec).toBeDefined();
+		nodeExecutionRepo.update(pendingExec!.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-recovered',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-recovered');
+
+		// Publish an event — interests should be re-registered after recovery
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected.length).toBeGreaterThanOrEqual(1);
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('delivered');
 	});
 
 	test('clears retry state when pending queue overflow drops a retry delivery', async () => {
