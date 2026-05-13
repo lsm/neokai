@@ -223,7 +223,12 @@ import {
 	AskUserQuestionHandler,
 	type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler';
-import { QueryRunner, type QueryRunnerContext, type OriginalEnvVars } from './query-runner';
+import {
+	QueryRunner,
+	type QueryRunnerContext,
+	type OriginalEnvVars,
+	type TrackedAgentProcess,
+} from './query-runner';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
 import {
@@ -291,6 +296,9 @@ export class AgentSession
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 	originalEnvVars: OriginalEnvVars = {};
 	processExitedPromise: Promise<void> | null = null;
+	private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
+	private rootProcessPid: number | null = null;
+	private forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Session state
 	private _isCleaningUp = false;
@@ -1227,6 +1235,70 @@ export class AgentSession
 
 	setCleaningUp(value: boolean): void {
 		this._isCleaningUp = value;
+	}
+
+	trackAgentProcess(proc: TrackedAgentProcess): void {
+		const pid = proc.pid;
+		if (typeof pid === 'number' && pid > 0) {
+			this.trackedAgentProcesses.set(pid, proc);
+			this.rootProcessPid = pid;
+		}
+
+		this.processExitedPromise = new Promise<void>((resolve) => {
+			proc.once('exit', () => {
+				if (typeof pid === 'number') {
+					this.trackedAgentProcesses.delete(pid);
+					if (this.rootProcessPid === pid) {
+						this.rootProcessPid = null;
+					}
+				}
+				resolve();
+			});
+		});
+	}
+
+	terminateTrackedAgentProcesses(options?: { forceDelayMs?: number }): void {
+		const forceDelayMs = options?.forceDelayMs ?? 2000;
+		if (this.forceKillTimer) {
+			clearTimeout(this.forceKillTimer);
+			this.forceKillTimer = null;
+		}
+
+		this.signalTrackedAgentProcesses('SIGTERM');
+		this.forceKillTimer = setTimeout(() => {
+			this.forceKillTimer = null;
+			this.signalTrackedAgentProcesses('SIGKILL');
+		}, forceDelayMs);
+		this.forceKillTimer.unref?.();
+	}
+
+	private signalTrackedAgentProcesses(signal: NodeJS.Signals): void {
+		const rootPid = this.rootProcessPid;
+		if (process.platform !== 'win32' && typeof rootPid === 'number' && rootPid > 0) {
+			try {
+				process.kill(-rootPid, signal);
+			} catch {
+				// Process group may have already exited.
+			}
+		}
+
+		for (const [pid, proc] of this.trackedAgentProcesses) {
+			try {
+				if (typeof proc.kill === 'function') {
+					proc.kill(signal);
+				} else {
+					process.kill(pid, signal);
+				}
+			} catch {
+				// Child may have already exited.
+			}
+			if (signal === 'SIGKILL') {
+				this.trackedAgentProcesses.delete(pid);
+				if (this.rootProcessPid === pid) {
+					this.rootProcessPid = null;
+				}
+			}
+		}
 	}
 
 	cleanupEventSubscriptions(): void {

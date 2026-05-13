@@ -48,6 +48,7 @@ import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from 
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
 import { NeoAgentManager } from './lib/neo/neo-agent-manager';
+import { ProcessWatchdog } from './lib/process-watchdog';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -179,9 +180,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	//       Ephemeral, within a single async call; cleaned up before the call returns.
 	//   • app.ts graceful-shutdown readiness check (this file, waitForPendingCalls)
 	//       One-shot shutdown polling with hard timeout; not a recurring task.
+	//   • ProcessWatchdog timer (process-watchdog.ts)
+	//       Last-resort OS process leak safety net; intentionally independent from the job queue.
 	jobProcessor.setChangeNotifier((table) => {
 		reactiveDb.notifyChange(table);
 	});
+	const processWatchdog = new ProcessWatchdog();
 
 	// Initialize Space agent manager
 	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
@@ -681,6 +685,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Start job queue processor last (after all handler registrations)
 	jobProcessor.start();
 	logInfo('[Daemon] Job queue processor started');
+	processWatchdog.start();
+	logInfo('[Daemon] Process watchdog started');
 
 	// Provision the Neo agent session (skip in test mode unless explicitly enabled).
 	// Mirrors the spaces agent guard: test runs are clean by default; online/e2e
@@ -792,7 +798,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				}
 			}
 
-			// Stop job queue processor before MessageHub cleanup
+			// Stop background processors before MessageHub cleanup
+			processWatchdog.stop();
+			logInfo('[Daemon] Process watchdog stopped');
 			await jobProcessor.stop();
 			logInfo('[Daemon] Job queue processor stopped');
 

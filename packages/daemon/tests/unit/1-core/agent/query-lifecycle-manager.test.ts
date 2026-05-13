@@ -45,6 +45,7 @@ describe('QueryLifecycleManager', () => {
 	let getInterruptPromiseSpy: ReturnType<typeof mock>;
 	let handleErrorSpy: ReturnType<typeof mock>;
 	let clearModelsCacheSpy: ReturnType<typeof mock>;
+	let terminateTrackedAgentProcessesSpy: ReturnType<typeof mock>;
 	let internalPublishAsyncSpy: ReturnType<typeof mock>;
 	let internalPublishSpy: ReturnType<typeof mock>;
 
@@ -89,6 +90,7 @@ describe('QueryLifecycleManager', () => {
 		getInterruptPromiseSpy = mock(() => null);
 		handleErrorSpy = mock(async () => {});
 		clearModelsCacheSpy = mock(async () => {});
+		terminateTrackedAgentProcessesSpy = mock(() => {});
 		internalPublishAsyncSpy = mock(async () => {});
 		internalPublishSpy = mock(async () => {});
 
@@ -139,6 +141,7 @@ describe('QueryLifecycleManager', () => {
 			processExitedPromise: null,
 			startupTimeoutTimer: null,
 			queryAbortController: null,
+			terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,
 			// Cleanup support methods
 			setCleaningUp: mock(() => {}),
 			cleanupEventSubscriptions: mock(() => {}),
@@ -270,6 +273,24 @@ describe('QueryLifecycleManager', () => {
 
 			// Should not throw
 			await manager.stop();
+		});
+
+		test('terminates tracked process group before closing query object', async () => {
+			const closeMock = mock(() => {});
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: closeMock,
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({ forceDelayMs: 2000 });
+			expect(closeMock).toHaveBeenCalled();
+			expect(terminateTrackedAgentProcessesSpy.mock.invocationCallOrder[0]).toBeLessThan(
+				closeMock.mock.invocationCallOrder[0]
+			);
 		});
 
 		test('calls close() on query object to terminate subprocess', async () => {

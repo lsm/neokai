@@ -36,6 +36,7 @@ import {
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
+const FORCE_PROCESS_KILL_DELAY_MS = 2000;
 const MAX_TIMEOUT_DELIVERY_RETRIES = 1;
 
 export type EnsureQueryStartedResult = 'started' | 'already-running' | 'blocked';
@@ -65,6 +66,7 @@ export interface QueryLifecycleManagerContext {
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	/** Abort controller for the current query — must be cleared during stop(). */
 	queryAbortController: AbortController | null;
+	terminateTrackedAgentProcesses(options?: { forceDelayMs?: number }): void;
 
 	// Mutable session state
 	pendingRestartReason: 'settings.local.json' | null;
@@ -265,7 +267,12 @@ export class QueryLifecycleManager {
 			}
 		}
 
-		// 4. Close query only if runQuery()'s finally block has not already done so.
+		// 4. Ask the tracked SDK process group to terminate. queryObject.close()
+		// kills the direct SDK child, but detached process-group cleanup also reaches
+		// tool grandchildren (bun test, make dev, etc.) that would otherwise survive.
+		this.ctx.terminateTrackedAgentProcesses({ forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS });
+
+		// 5. Close query only if runQuery()'s finally block has not already done so.
 		// When queryPromise resolves normally, the finally block ran during the await
 		// above: it called close() and nulled ctx.queryObject. Check the live reference
 		// against our local snapshot — if they differ (null or new query), skip close()
@@ -279,7 +286,7 @@ export class QueryLifecycleManager {
 			}
 		}
 
-		// 5. Wait for the SDK subprocess to fully exit after close().
+		// 6. Wait for the SDK subprocess to fully exit after close().
 		// close() sends SIGTERM but the process may take time to clean up.
 		// Without this, starting a new subprocess immediately can fail because
 		// the old process still holds workspace locks (.claude/ files).
@@ -294,7 +301,7 @@ export class QueryLifecycleManager {
 			this.ctx.processExitedPromise = null;
 		}
 
-		// 6. Clear stale startup timer and abort controller.
+		// 7. Clear stale startup timer and abort controller.
 		// The old runQuery()'s finally block normally clears these, but if stop()
 		// timed out waiting for queryPromise, finally hasn't run yet. Leaving them
 		// alive is dangerous: the old timer's closure reads this.ctx.firstMessageReceived
@@ -312,7 +319,7 @@ export class QueryLifecycleManager {
 			this.ctx.queryAbortController = null;
 		}
 
-		// 7. Clear references
+		// 8. Clear references
 		this.ctx.queryObject = null;
 		this.ctx.queryPromise = null;
 	}
