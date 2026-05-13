@@ -107,7 +107,7 @@ Subscriptions use glob-style patterns:
 
 > **V1 scope note:** The `**` (multi-segment) wildcard is deferred to a follow-up. All v1 use cases are covered by segment-local `*` wildcards (e.g., `github/*/*/pull_request/5.review_submitted`, `github/*/*/pull_request/5.*`). Adding `**` support requires a depth-bounded recursive trie walk and is not justified by current subscription patterns.
 
-Pattern validation (enforced at workflow create/update time):
+Pattern validation (enforced when a runtime subscription is created or updated):
 - Must be non-empty.
 - Must have at least 2 segments (source + one scope segment).
 - Must not contain `..` segments.
@@ -118,12 +118,14 @@ Pattern validation (enforced at workflow create/update time):
 
 We implement matching via a **trie-based prefix index** (see §6), scoped as a workflow-runtime utility.
 
-## 2. Node-Level Event Subscription (`eventInterests`)
+## 2. Runtime Event Subscription (`EventInterest`)
 
-### Schema addition to `WorkflowNodeAgent`
+### Runtime subscription type
+
+`EventInterest` is a shared type for runtime subscription APIs. It is **not** stored on `WorkflowNodeAgent` or any static workflow schema. Subscriptions are created by runtime scripts and agent tools that already have the concrete context needed to subscribe narrowly.
 
 ```typescript
-// packages/shared/src/types/space.ts — add to WorkflowNodeAgent
+// packages/shared/src/types/space.ts
 
 export interface EventInterest {
   /**
@@ -143,22 +145,11 @@ export interface EventInterest {
    */
   label?: string;
 }
-
-// Added to WorkflowNodeAgent:
-export interface WorkflowNodeAgent {
-  // ... existing fields ...
-
-  /**
-   * Events this node is interested in receiving. When matched, the event is
-   * injected into the agent's session as a structured message.
-   * Omit or empty array = no event subscriptions (default).
-   */
-  eventInterests?: EventInterest[];
-}
 ```
 
-### Example workflow definition
+### Why subscriptions are runtime-driven
 
+<<<<<<< HEAD
 ```json
 {
   "nodes": [
@@ -200,7 +191,18 @@ export interface WorkflowNodeAgent {
     }
   ]
 }
+=======
+Workflows operate on a concrete unit of work, such as one pull request. When an agent creates or discovers that unit of work, the artifact or gate script that reacts to the event already has all required context: source, owner, repo, PR number, and target node or agent. That script can mechanically subscribe to exactly the relevant topic pattern:
+
+```text
+Agent creates PR #142 in lsm/neokai
+  → artifact/gate script receives context: owner=lsm, repo=neokai, pr=142, targetNode=Coding
+  → script subscribes: { topic: 'github/lsm/neokai/pull_request.142_*', label: 'PR #142 activity' }
+  → matched events are injected into the target node/agent session
+>>>>>>> origin/dev
 ```
+
+Static workflow-level declarations like `github/*/*/pull_request.*` are usually too broad, while precise subscriptions are not known until runtime. Keeping subscriptions runtime-driven avoids coupling reusable workflow definitions to a specific repository, PR, or external source instance.
 
 ### Topic pattern IS the filter
 
@@ -211,13 +213,13 @@ The source-specific topic format encodes enough context for routing without any 
 - `github/lsm/neokai/pull_request/5.*` — all actions for a specific PR
 - `github/lsm/neokai/pull_request/*.*` — all events for any PR in a specific repo
 
-Subscription matching is a **workflow-runtime concern**, not an event-pipeline concern. The pipeline publishes events; the workflow runtime matches topic patterns against subscription rules. No scope concepts (`repo`, `global`, `task`) exist in the event pipeline.
+Subscription matching is a **workflow-runtime concern**, not an event-pipeline concern. The pipeline publishes events; the workflow runtime matches topic patterns against runtime subscription records. No scope concepts (`repo`, `global`, `task`) exist in the event pipeline.
 
 ### Dynamic event subscriptions
 
-Event subscriptions are defined as **data** in the workflow definition (via `eventInterests`), and agents can also subscribe dynamically at runtime via an MCP tool exposed through node agent tools. This allows:
+Runtime scripts and node-agent tools create event subscriptions while a workflow run is active. This allows:
 
-1. **Workflow-defined subscriptions** — `eventInterests` on the agent definition specify which topics the node cares about. The workflow runtime matches these against incoming events.
+1. **Script-created subscriptions** — gate/artifact scripts subscribe to events derived from concrete workflow actions (for example, a PR URL emitted by an agent).
 2. **Agent-initiated subscriptions** — A new MCP tool (`subscribe_external_event`) allows agents to dynamically subscribe to events during execution. The agent can inspect event payloads and decide relevance based on its own context (task, PR, branch).
 3. **No pipeline-level filtering** — The event pipeline does not understand repos, tasks, or any domain-specific scoping. It publishes normalized events with opaque payloads. All filtering happens at the subscriber level.
 
@@ -631,8 +633,8 @@ The extension may keep source-local tables such as `space_github_watched_repos` 
 The event pipeline does **not** include a router. Subscription matching and event delivery are **workflow-runtime concerns**:
 
 1. **ExternalEventService** publishes `externalEvent.published` to InternalEventBus.
-2. **Workflow runtime** subscribes to the bus and matches events against data-driven subscription rules (topic patterns from `eventInterests`).
-3. **Agent MCP tool** (`subscribe_external_event`) allows agents to dynamically subscribe to events during execution.
+2. **Workflow runtime** subscribes to the bus and matches events against active runtime subscription records.
+3. **Gate/artifact scripts and agent MCP tools** create subscriptions during execution using `EventInterest` topic patterns.
 4. **Node agents** receive matched events as structured messages via the existing `agent.message.inject` command.
 
 The pipeline is a **dumb pipe**: validate, dedupe, publish. Everything else is a subscriber concern.
@@ -651,9 +653,10 @@ The original design included an `ExternalEventRouter` that owned subscription in
 Subscription matching happens in the **workflow runtime**, not in a standalone router:
 
 1. The workflow runtime subscribes to `externalEvent.published` on InternalEventBus.
-2. When an event arrives, the runtime matches its topic against all active `eventInterests` using glob-pattern matching.
-3. Topic-pattern matching is the **only filter**. No scope layer. The topic `github/lsm/neokai/pull_request.review_submitted` already identifies the repo; `github/*/*/pull_request.*` catches all PR events.
-4. Matched events are delivered to the node's agent session via `agent.message.inject`.
+2. Runtime scripts or agent tools create subscription records for active workflow runs using `EventInterest` topic patterns.
+3. When an event arrives, the runtime matches its topic against active runtime subscriptions using glob-pattern matching.
+4. Topic-pattern matching is the **only filter**. No scope layer. The topic `github/lsm/neokai/pull_request.review_submitted` already identifies the repo; `github/*/*/pull_request.*` catches all PR events.
+5. Matched events are delivered to the target node's agent session via `agent.message.inject`.
 
 The runtime can use a TopicTrie or simple linear scan — this is an implementation detail of the workflow system, not the event pipeline.
 
@@ -1065,15 +1068,20 @@ function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): Externa
 
 4. **Extension-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventExtensionRepository`. This table remains source-specific and is not queried by the event pipeline.
 
-5. **No node-execution schema change**: event interests are stored as part of the workflow definition JSON in `space_workflows.nodes[].agents[].eventInterests`.
+5. **No workflow schema change**: event interests are not stored in `space_workflows.nodes[].agents[]`. Runtime subscriptions are created by gate/artifact scripts and agent tools for active workflow runs.
 
 ### Type changes
 
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts` (topic pattern + label only, no scope).
+<<<<<<< HEAD
 2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
 3. Add validation in the workflow create/update path:
    - `topic` must pass `validateGlobPattern()` (non-empty, at least 2 segments, valid characters).
    - Max 10 interests per agent slot.
+=======
+2. Do not add `eventInterests` to `WorkflowNodeAgent`; static workflow definitions should remain source-agnostic and reusable.
+3. Validate runtime subscription topic patterns with `validateGlobPattern()` when scripts or tools create subscriptions.
+>>>>>>> origin/dev
 
 ### New files
 
@@ -1128,12 +1136,12 @@ for (const extension of extensions) {
 }
 ```
 
-The workflow runtime (not the event pipeline) subscribes to `externalEvent.published`, matches topic patterns against `eventInterests`, and dispatches `agent.message.inject` for matched events.
+The workflow runtime (not the event pipeline) subscribes to `externalEvent.published`, matches topic patterns against active runtime subscription records, and dispatches `agent.message.inject` for matched events.
 
 ### Phased rollout
 
 **Phase 1 (target MVP):**
-- Add `EventInterest` type to `WorkflowNodeAgent`.
+- Add the shared `EventInterest` runtime subscription type.
 - Implement `ExternalEventService`, `ExternalEventStore`, `TopicTrie`.
 - Implement `ExternalEventExtension` interfaces and a minimal extension manager/config store.
 - Extract `GitHubEventExtension` as the primary GitHub event source.
