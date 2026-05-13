@@ -378,7 +378,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const spaceGitHubService = new SpaceGitHubService(
 		db.getDatabase(),
 		internalEventBus,
-		undefined,
 		process.env.GITHUB_TOKEN,
 		() => reactiveDb.notifyChange('space_github_events')
 	);

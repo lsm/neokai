@@ -185,31 +185,6 @@ describe('Space GitHub integration', () => {
 		);
 		expect(db.prepare('SELECT state FROM space_github_events').get()).toEqual({ state: 'ignored' });
 	});
-
-	test('persists task activity and debounced task-agent notification', async () => {
-		const db = setupDb();
-		seedTask(db);
-		let notified = '';
-		const service = new SpaceGitHubService(db, undefined, async (_taskId, message) => {
-			notified = message;
-		});
-		db.prepare(
-			`UPDATE space_tasks SET task_agent_session_id = 'space:agent' WHERE id = 'task-1'`
-		).run();
-		await service.ingest(
-			'space-1',
-			normalizeSpaceGitHubWebhook('issue_comment', 'd6', payloadFor('issue_comment'))!
-		);
-		expect(db.prepare('SELECT task_id FROM space_github_events').get()).toEqual({
-			task_id: 'task-1',
-		});
-		await new Promise((resolve) => setTimeout(resolve, 1700));
-		expect(notified).toContain('GitHub PR activity');
-		expect(db.prepare('SELECT state FROM space_github_events').get()).toEqual({
-			state: 'delivered',
-		});
-	});
-
 	test('extension polling uses auth/cursors and publishes to ExternalEventService', async () => {
 		const db = setupDb();
 		seedTask(db);
