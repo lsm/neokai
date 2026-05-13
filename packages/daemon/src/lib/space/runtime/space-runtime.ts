@@ -776,12 +776,15 @@ export class SpaceRuntime {
 		}
 	}
 
-	private registerInterestsForRun(run: SpaceWorkflowRun): void {
+	private registerInterestsForRun(
+		run: SpaceWorkflowRun,
+		options: { clearQueuedDeliveries?: boolean } = {}
+	): void {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
 		if (!workflow) return;
 		const task = this.pickCanonicalTaskForRun(run, this.config.taskRepo.listByWorkflowRun(run.id));
 		if (!task) return;
-		this.registerRunInterests(run.id, task.id, workflow.nodes);
+		this.registerRunInterests(run.id, task.id, workflow.nodes, options);
 	}
 
 	private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
@@ -1196,7 +1199,7 @@ export class SpaceRuntime {
 				run.status === 'in_progress' ||
 				(run.status === 'blocked' && this.hasActiveExecutionForRun(run.id))
 			) {
-				this.registerInterestsForRun(run);
+				this.registerInterestsForRun(run, { clearQueuedDeliveries: true });
 			}
 		}
 		this.pollManager?.refreshPollsForWorkflow(workflowId);
@@ -1885,6 +1888,7 @@ export class SpaceRuntime {
 				await this.recoverStalledRuns();
 				this.rehydrated = true;
 				this.acceptingExternalEvents = true;
+				this.redispatchPublishedEventsWithoutDeliveries();
 			}
 
 			await this.attachStandaloneTasksToWorkflows();
@@ -2501,7 +2505,6 @@ export class SpaceRuntime {
 			}
 		}
 
-		this.redispatchPublishedEventsWithoutDeliveries();
 		this.requeuePersistedPendingDeliveries();
 
 		// Rehydrate Task Agent sessions after executors are ready.

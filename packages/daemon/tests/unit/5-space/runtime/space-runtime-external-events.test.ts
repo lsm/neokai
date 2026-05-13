@@ -510,7 +510,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 			taskAgentManager: tam as never,
 		});
 		runtime.start();
-		await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'New run before rehydrate');
 
 		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request.comment_created' });
 		await eventService.publish(event);
@@ -554,13 +553,50 @@ describe('SpaceRuntime external event subscriptions', () => {
 			taskAgentManager: tam as never,
 		});
 
-		await runtime.rehydrateExecutors();
+		await runtime.executeTick();
 
 		expect(eventStore.listDeliveries('evt-stranded-without-deliveries')).toHaveLength(1);
 		const delivery = eventStore.listDeliveries('evt-stranded-without-deliveries')[0]!;
 		expect(delivery.state).toBe('delivered');
 		expect(delivery.taskId).toBe(tasks[0]!.id);
 		expect(eventStore.getById('evt-stranded-without-deliveries')?.state).toBe('delivered');
+	});
+
+	test('marks stranded published events without matches ignored after rehydrate opens delivery', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-redispatch-unmatched',
+			startedAt: Date.now(),
+		});
+		await runtime.stop();
+		eventStore.store(
+			makeEvent({
+				id: 'evt-stranded-without-matches',
+				topic: 'github/lsm/neokai/pull_request.comment_created',
+			})
+		);
+
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: createInternalCommandBus(),
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+
+		await runtime.executeTick();
+
+		expect(eventStore.listDeliveries('evt-stranded-without-matches')).toHaveLength(0);
+		expect(eventStore.getById('evt-stranded-without-matches')?.state).toBe('ignored');
 	});
 
 	test('requeues persisted pending deliveries during runtime rehydrate', async () => {
@@ -664,6 +700,46 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(addedInterestEvent.id)?.state).toBe('delivered');
 		expect(eventStore.listDeliveries(addedInterestEvent.id)[0]!.taskId).toBe(tasks[0]!.id);
 		expect(injected).toHaveLength(1);
+	});
+
+	test('clears stale queued deliveries when workflow definition changes remove interests', async () => {
+		const workflow = createWorkflow('github/*/*/pull_request.review_*');
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent({ id: 'evt-queued-before-interest-update' });
+		await eventService.publish(event);
+		const queuedDelivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(queuedDelivery.state).toBe('pending');
+
+		const updatedWorkflow = workflowManager.updateWorkflow(workflow.id, {
+			nodes: [
+				{
+					id: 'code',
+					name: 'Code',
+					agents: [
+						{
+							agentId: AGENT_ID,
+							name: 'coder',
+							eventInterests: [{ topic: 'github/*/*/pull_request.comment_*' }],
+						},
+					],
+				},
+			],
+		});
+		expect(updatedWorkflow).not.toBeNull();
+		runtime.onWorkflowDefChanged(workflow.id);
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-stale-after-update',
+		});
+
+		expect(injected).toHaveLength(0);
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('run_interests_rebuilt');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
 	});
 
 	test('ignores blocked runs with no active execution path', async () => {
