@@ -27,10 +27,6 @@ interface GitHubEventExtensionOptions {
 	githubToken?: string;
 	pollIntervalMs?: number;
 	onWatchedReposChanged?: () => void;
-	legacyIngest?: (
-		spaceId: string,
-		event: import('./github-normalizer').NormalizedGitHubEvent
-	) => Promise<void>;
 }
 
 export class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEventExtension {
@@ -204,7 +200,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		for (const repo of validForRepo) {
 			const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
 			if (spaceConfig && !spaceConfig.enabled) continue;
-			await this.publishAndLegacyIngest(repo.spaceId, normalized);
+			await this.publishNormalizedEvent(repo.spaceId, normalized);
 			this.repo.markWebhookReceived(repo.id);
 			published++;
 		}
@@ -266,13 +262,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		}
 	}
 
-	private async publishAndLegacyIngest(
+	private async publishNormalizedEvent(
 		spaceId: string,
 		event: import('./github-normalizer').NormalizedGitHubEvent
 	): Promise<void> {
 		if (!this.context) return;
 		await this.context.publisher.publish(toExternalEvent(spaceId, event));
-		await this.options.legacyIngest?.(spaceId, event);
 	}
 
 	async pollWatchedRepo(
@@ -325,7 +320,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			for (const row of rows) {
 				const event = normalizeGitHubPollingRow(watched, row, endpoint.key);
 				if (event) {
-					await this.publishAndLegacyIngest(watched.spaceId, event);
+					await this.publishNormalizedEvent(watched.spaceId, event);
 					watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
 					count++;
 				}

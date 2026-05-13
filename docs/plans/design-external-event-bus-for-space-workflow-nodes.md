@@ -916,7 +916,7 @@ GitHub webhook / polling
 - Move `space.github.watchRepo`, `space.github.listWatchedRepos`, and `space.github.pollOnce` registration behind `RpcExternalEventExtension.registerRpcHandlers(...)` as compatibility RPCs.
 - Register `/webhook/github/space` through the extension route registry rather than hard-coding a direct call to `spaceGitHubService.handleWebhook(req)` in `app.ts`.
 
-**Deprecate direct Task Agent injection:** the old `scheduleTaskNotification()` / `flushTaskNotification()` path remains only as a compatibility shim during migration. New node-level delivery goes through the workflow runtime and `agent.message.inject` command.
+**Remove direct Task Agent injection:** the old `scheduleTaskNotification()` / `flushTaskNotification()` path is not invoked by the primary webhook or polling routes. New node-level delivery goes through the workflow runtime and `agent.message.inject` command.
 
 ### GitHub extension topic construction
 
@@ -1096,8 +1096,8 @@ The workflow runtime (not the event pipeline) subscribes to `externalEvent.publi
 - Extract `GitHubEventExtension` as the primary GitHub event source.
 - Route GitHub PR events through `ExternalEventService` → `InternalEventBus` → workflow runtime subscription matching.
 
-**Phase 2 (compatibility removal):**
-- Remove direct Task Agent notification delivery from `SpaceGitHubService`.
+**Phase 2 (workflow-runtime hardening):**
+- Keep `/webhook/github/space` and `space.github.pollOnce` on `GitHubEventExtension`; they no longer invoke `SpaceGitHubService.ingest()` or direct Task Agent notification delivery.
 - Migrate remaining `space.github.*` RPC handling into `GitHubEventExtension`.
 - Add persistent per-node delivery queue if restart-safe pending-node delivery is required.
 
@@ -1114,7 +1114,7 @@ The workflow runtime (not the event pipeline) subscribes to `externalEvent.publi
 | **InternalCommandBus** | Owns the `agent.message.inject` command used by the workflow runtime to deliver events into agent sessions. |
 | **MessageHub** | Remains client/RPC transport infrastructure for extension configuration RPCs. |
 | **GitHubService** (Room pipeline) | Unchanged for Room compatibility. |
-| **SpaceGitHubService** (legacy Space pipeline) | Deprecated compatibility path. Source-specific logic is extracted into `GitHubEventExtension`; delivery moves to workflow runtime. |
+| **SpaceGitHubService** (legacy Space pipeline) | Retained only for explicit legacy diagnostics/tests and watched-repo compatibility helpers. Source-specific webhook/polling logic is extracted into `GitHubEventExtension`; primary delivery moves to workflow runtime. Direct Task Agent notification methods are not invoked by webhook or polling routes. |
 | **GitHubEventExtension** | Source extension that owns GitHub webhook verification, polling, normalization, and direct publication to `ExternalEventService`. |
 | **ExternalEventStore** | Core persistence and retry-aware source-level dedup across extensions. |
 
