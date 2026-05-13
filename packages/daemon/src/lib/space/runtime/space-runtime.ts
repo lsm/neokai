@@ -1186,16 +1186,20 @@ export class SpaceRuntime {
 	/**
 	 * Notify the runtime that a workflow definition has changed.
 	 *
-	 * Called when a `spaceWorkflow.updated` InternalEventBus<DaemonInternalEventMap> event fires. Delegates to
-	 * `GatePollManager.refreshPollsForWorkflow`, which re-reads the latest
-	 * workflow definition, diffs poll configs against active timers, and
-	 * starts/stops/updates polls as needed.
-	 *
-	 * No-op when GatePollManager is not initialized (no taskAgentManager).
+	 * Called when a `spaceWorkflow.updated` InternalEventBus<DaemonInternalEventMap> event fires.
+	 * Rebuilds external-event interests for active/recoverable runs and refreshes gate poll timers
+	 * so mid-run workflow config changes are picked up without requiring a task restart.
 	 */
 	onWorkflowDefChanged(workflowId: string): void {
-		if (!this.pollManager) return;
-		this.pollManager.refreshPollsForWorkflow(workflowId);
+		for (const run of this.config.workflowRunRepo.listByWorkflow(workflowId)) {
+			if (
+				run.status === 'in_progress' ||
+				(run.status === 'blocked' && this.hasActiveExecutionForRun(run.id))
+			) {
+				this.registerInterestsForRun(run);
+			}
+		}
+		this.pollManager?.refreshPollsForWorkflow(workflowId);
 	}
 
 	/**
@@ -2419,6 +2423,14 @@ export class SpaceRuntime {
 		}
 	}
 
+	private redispatchPublishedEventsWithoutDeliveries(): void {
+		const store = this.config.externalEventStore;
+		if (!store) return;
+		for (const eventRecord of store.listPublishedEventsWithoutDeliveries()) {
+			void this.handleExternalEvent(this.externalEventPayloadFromRecord(eventRecord.event));
+		}
+	}
+
 	private isTargetStillSubscribed(
 		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
 		topic: string
@@ -2489,6 +2501,7 @@ export class SpaceRuntime {
 			}
 		}
 
+		this.redispatchPublishedEventsWithoutDeliveries();
 		this.requeuePersistedPendingDeliveries();
 
 		// Rehydrate Task Agent sessions after executors are ready.
