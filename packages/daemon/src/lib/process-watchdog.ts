@@ -120,12 +120,15 @@ export async function cleanupSuspiciousProcesses(options?: {
 		if (!threshold) continue;
 
 		try {
-			// Signal the entire process group first (reaches tool-wrapper children).
+			// Signal the entire process group first (reaches tool-wrapper children),
+			// but only if the group leader is not a live root — otherwise we'd kill
+			// an active SDK session that happens to have a suspicious descendant.
 			if (
 				typeof snapshot.pgid === 'number' &&
 				Number.isFinite(snapshot.pgid) &&
 				snapshot.pgid > 0 &&
-				snapshot.pgid !== snapshot.pid
+				snapshot.pgid !== snapshot.pid &&
+				!liveRoots.has(snapshot.pgid)
 			) {
 				try {
 					killer(-snapshot.pgid, 'SIGTERM');

@@ -467,13 +467,16 @@ export class SessionManager {
 	 * Space runtime callers will be added as that subsystem is wired up.
 	 */
 	unregisterSession(sessionId: string): void {
-		const agentSession = this.sessionCache.get(sessionId);
-		if (agentSession && typeof agentSession.getTrackedAgentRootPidsSplit === 'function') {
-			// Capture exited PIDs before eviction so the watchdog retains ownership.
-			const split = agentSession.getTrackedAgentRootPidsSplit();
-			for (const pid of split.exited) {
-				if (!this.recentlyExitedRootPids.has(pid)) {
-					this.recentlyExitedRootPids.set(pid, Date.now());
+		// Use has() to avoid triggering a DB lazy-load via get().
+		if (this.sessionCache.has(sessionId)) {
+			const agentSession = this.sessionCache.get(sessionId);
+			if (agentSession && typeof agentSession.getTrackedAgentRootPidsSplit === 'function') {
+				// Capture exited PIDs before eviction so the watchdog retains ownership.
+				const split = agentSession.getTrackedAgentRootPidsSplit();
+				for (const pid of split.exited) {
+					if (!this.recentlyExitedRootPids.has(pid)) {
+						this.recentlyExitedRootPids.set(pid, Date.now());
+					}
 				}
 			}
 		}
