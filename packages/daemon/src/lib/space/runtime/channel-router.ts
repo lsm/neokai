@@ -297,6 +297,24 @@ export class ChannelRouter {
 	 */
 	private readonly gateEvaluations = new Map<string, Promise<GateEvalResult>>();
 
+	/**
+	 * Per-(runId, gateId) set tracking gates that have been opened at least once.
+	 *
+	 * Once a gate evaluates to `open: true`, it is cached here so that subsequent
+	 * `deliverMessage` calls skip the (potentially expensive) re-evaluation — the
+	 * gate's purpose is to gate *activation*, and after that `canSend` topology
+	 * authorization controls messaging.
+	 *
+	 * Exceptions (always re-evaluate):
+	 * - Cyclic channels whose gate has `resetOnCycle: true` — these gates are
+	 *   explicitly reset each cycle to re-control activation.
+	 *
+	 * The cache is cleared for a gate when `incrementAndResetCyclicChannel`
+	 * resets its data. On daemon restart the cache starts empty; the first call
+	 * re-evaluates and repopulates.
+	 */
+	private readonly openedGates = new Set<string>();
+
 	constructor(private readonly config: ChannelRouterConfig) {
 		this.scriptSemaphore = {
 			acquired: 0,
@@ -485,8 +503,10 @@ export class ChannelRouter {
 		}
 		const { channel, index } = match;
 
+		const channelIsCyclic = this.isChannelCyclicByIndex(index, workflow);
+
 		// ── Per-channel cycle cap check ──────────────────────────────────────
-		if (this.isChannelCyclicByIndex(index, workflow)) {
+		if (channelIsCyclic) {
 			const maxCycles = channel.maxCycles ?? 5;
 			if (this.isCycleCapReached(runId, index, maxCycles)) {
 				return {
@@ -497,8 +517,21 @@ export class ChannelRouter {
 		}
 
 		// ── Gate condition evaluation ────────────────────────────────────────
+		// Cache optimization: skip re-evaluation when the gate was previously
+		// opened, unless cyclic with `resetOnCycle`.
 		if (channel.gateId) {
+			const skipEval =
+				this.isGateCachedOpen(runId, channel.gateId) &&
+				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+
+			if (skipEval) {
+				return { allowed: true };
+			}
+
 			const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+			if (gateResult.open) {
+				this.cacheGateOpened(runId, channel.gateId);
+			}
 			return { allowed: gateResult.open, reason: gateResult.reason };
 		}
 
@@ -625,14 +658,28 @@ export class ChannelRouter {
 		// target — otherwise the tick loop would spawn agent sessions for
 		// gates that have not yet opened (e.g. Task Dispatcher activating
 		// before all 4 reviewers approve in plan-approval-gate).
+		//
+		// Cache optimization: once a gate has evaluated to `open: true`, skip
+		// re-evaluation on subsequent messages. Exception: cyclic channels
+		// whose gate has `resetOnCycle: true` must always re-evaluate because
+		// their gate data is reset on each cycle traversal.
 		if (channel?.gateId) {
-			const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
-			if (!gateResult.open) {
-				throw new ChannelGateBlockedError(
-					gateResult.reason ??
-						`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
-					channel.gateId
-				);
+			const skipEval =
+				this.isGateCachedOpen(runId, channel.gateId) &&
+				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+
+			if (!skipEval) {
+				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+				if (gateResult.open) {
+					this.cacheGateOpened(runId, channel.gateId);
+				}
+				if (!gateResult.open) {
+					throw new ChannelGateBlockedError(
+						gateResult.reason ??
+							`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
+						channel.gateId
+					);
+				}
 			}
 		}
 
@@ -657,14 +704,26 @@ export class ChannelRouter {
 		// activation check (step 3) is still useful because it short-circuits
 		// the common case without creating pending executions; this second
 		// check is the correctness backstop.
+		//
+		// Cache optimization: same as step 3 — skip re-evaluation when the gate
+		// was previously opened, unless cyclic with `resetOnCycle`.
 		if (channel?.gateId) {
-			const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
-			if (!postActivationGate.open) {
-				throw new ChannelGateBlockedError(
-					postActivationGate.reason ??
-						`Gate "${channel.gateId}" closed during activation; blocking delivery from "${fromRole}" to "${toTarget}"`,
-					channel.gateId
-				);
+			const skipEval =
+				this.isGateCachedOpen(runId, channel.gateId) &&
+				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+
+			if (!skipEval) {
+				const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
+				if (postActivationGate.open) {
+					this.cacheGateOpened(runId, channel.gateId);
+				}
+				if (!postActivationGate.open) {
+					throw new ChannelGateBlockedError(
+						postActivationGate.reason ??
+							`Gate "${channel.gateId}" closed during activation; blocking delivery from "${fromRole}" to "${toTarget}"`,
+						channel.gateId
+					);
+				}
 			}
 		}
 
@@ -742,6 +801,9 @@ export class ChannelRouter {
 
 		// Evaluate the gate once (shared across all channels referencing it)
 		const gateResult = await this.evaluateGateById(runId, gateId, workflow);
+		if (gateResult.open) {
+			this.cacheGateOpened(runId, gateId);
+		}
 		if (!gateResult.open) {
 			// Notify caller when the gate is waiting for human approval. Only fires for
 			// external-approval gates — those with an `approved` field with no declared
@@ -837,6 +899,45 @@ export class ChannelRouter {
 		}
 
 		return activatedTasks;
+	}
+
+	// -------------------------------------------------------------------------
+	// Gate-open cache helpers
+	// -------------------------------------------------------------------------
+
+	/** Build the cache key for a `(runId, gateId)` pair. */
+	private gateOpenKey(runId: string, gateId: string): string {
+		return `${runId}:${gateId}`;
+	}
+
+	/** Returns true when the gate has previously evaluated to `open: true`. */
+	private isGateCachedOpen(runId: string, gateId: string): boolean {
+		return this.openedGates.has(this.gateOpenKey(runId, gateId));
+	}
+
+	/** Mark a gate as having been opened at least once. */
+	private cacheGateOpened(runId: string, gateId: string): void {
+		this.openedGates.add(this.gateOpenKey(runId, gateId));
+	}
+
+	/**
+	 * Returns true when a gate's cached open state should be *ignored* for a
+	 * given delivery context — i.e. the gate must be re-evaluated.
+	 *
+	 * This is the case when:
+	 * - The channel is cyclic AND the gate has `resetOnCycle: true`.
+	 *
+	 * For non-cyclic channels or cyclic channels whose gate does not reset,
+	 * the cached state is authoritative.
+	 */
+	private mustReevaluateGate(
+		gateId: string,
+		channelIsCyclic: boolean,
+		workflow: SpaceWorkflow
+	): boolean {
+		if (!channelIsCyclic) return false;
+		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
+		return gateDef?.resetOnCycle === true;
 	}
 
 	// -------------------------------------------------------------------------
@@ -1143,6 +1244,12 @@ export class ChannelRouter {
 		if (!this.config.channelCycleRepo) return;
 
 		const cyclicGates = (workflow.gates ?? []).filter((g) => g.resetOnCycle);
+
+		// Clear cached open state for all gates that are about to be reset,
+		// so the next delivery re-evaluates them against the reset data.
+		for (const gate of cyclicGates) {
+			this.openedGates.delete(this.gateOpenKey(runId, gate.id));
+		}
 
 		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {
 			const transaction = this.config.db.transaction(() => {
