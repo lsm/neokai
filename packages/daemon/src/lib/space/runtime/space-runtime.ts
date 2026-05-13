@@ -789,7 +789,9 @@ export class SpaceRuntime {
 		if (!store) return;
 		const matches = this.topicTrie.lookup(payload.topic).filter((target) => {
 			const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-			return run?.spaceId === payload.spaceId && isExternallyDeliverableRun(run.status);
+			if (!run || run.spaceId !== payload.spaceId) return false;
+			if (run.status === 'blocked') return this.hasActiveExecutionForRun(run.id);
+			return isExternallyDeliverableRun(run.status);
 		});
 
 		if (matches.length === 0) {
@@ -799,13 +801,13 @@ export class SpaceRuntime {
 			return;
 		}
 
-		const deliveries: Array<{ target: SubscriptionTarget; deliveryKey: string }> = [];
+		const deliveries = new Map<string, { target: SubscriptionTarget; deliveryKey: string }>();
 		for (const match of matches) {
 			try {
 				const target = this.resolveSubscriptionTarget(match);
 				const deliveryKey = this.buildDeliveryKey(target, payload);
 				store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
-				deliveries.push({ target, deliveryKey });
+				deliveries.set(deliveryKey, { target, deliveryKey });
 			} catch (err) {
 				log.warn(
 					`SpaceRuntime: failed to register external event ${payload.eventId} for ` +
@@ -814,7 +816,7 @@ export class SpaceRuntime {
 			}
 		}
 
-		for (const { target, deliveryKey } of deliveries) {
+		for (const { target, deliveryKey } of deliveries.values()) {
 			try {
 				if (
 					store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
@@ -1074,9 +1076,11 @@ export class SpaceRuntime {
 			.listByWorkflowRun(workflowRunId)
 			.some(
 				(execution) =>
-					execution.status === 'pending' ||
-					execution.status === 'in_progress' ||
-					execution.status === 'waiting_rebind'
+					(execution.status === 'pending' ||
+						execution.status === 'in_progress' ||
+						execution.status === 'waiting_rebind' ||
+						execution.status === 'blocked') &&
+					execution.completedAt === null
 			);
 	}
 
@@ -2367,7 +2371,18 @@ export class SpaceRuntime {
 			const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
 			const eventRecord = store.getById(delivery.eventId);
 			if (!eventRecord || eventRecord.state !== 'published') continue;
-			if (!run || !isExternallyDeliverableRun(run.status)) {
+			const target = {
+				workflowRunId: delivery.workflowRunId,
+				taskId: delivery.taskId,
+				nodeId: delivery.nodeId,
+				agentName: delivery.agentName,
+			};
+			const canRequeue = run
+				? run.status === 'blocked'
+					? this.hasActiveExecutionForRun(run.id)
+					: isExternallyDeliverableRun(run.status)
+				: false;
+			if (!canRequeue) {
 				store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
 					terminal: true,
 					reason: 'run_not_externally_deliverable',
@@ -2376,12 +2391,6 @@ export class SpaceRuntime {
 				continue;
 			}
 
-			const target = {
-				workflowRunId: delivery.workflowRunId,
-				taskId: delivery.taskId,
-				nodeId: delivery.nodeId,
-				agentName: delivery.agentName,
-			};
 			if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
 				store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
 					terminal: true,

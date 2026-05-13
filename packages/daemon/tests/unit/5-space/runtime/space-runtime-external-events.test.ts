@@ -303,26 +303,26 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected[0]!.sessionId).toBe('session-restart');
 	});
 
-	test('deduplicates pending queue entries for overlapping interests', async () => {
+	test('deduplicates dispatch attempts for overlapping interests', async () => {
 		const workflow = createWorkflow('github/*/*/pull_request.*', [
 			'github/*/*/pull_request.review_*',
 		]);
-		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-dedupe',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-dedupe');
+
 		const event = makeEvent();
 		await eventService.publish(event);
 
 		expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
-		runtime.flushPendingNodeQueue({
-			workflowRunId: run.id,
-			taskId: tasks[0]!.id,
-			nodeId: 'code',
-			agentName: 'coder',
-			sessionId: 'session-dedupe',
-		});
-
-		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(injected).toHaveLength(1);
 		expect(injected[0]!.sessionId).toBe('session-dedupe');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 
 	test('fails queued deliveries during terminal run cleanup', async () => {
@@ -573,6 +573,31 @@ describe('SpaceRuntime external event subscriptions', () => {
 
 		expect(eventStore.getById(event.id)?.state).toBe('ignored');
 		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+	});
+
+	test('ignores blocked runs with no active execution path', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'idle',
+			agentSessionId: 'session-cancelled',
+			completedAt: Date.now(),
+		});
+		workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
+		await runtime.executeTick();
+
+		runtime.registerRunInterests(run.id, taskRepo.listByWorkflowRun(run.id)[0]!.id, workflow.nodes);
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+		expect(nodeExecutionRepo.listByWorkflowRun(run.id).map((item) => item.status)).toEqual([
+			'idle',
+		]);
+		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+		expect(eventStore.getById(event.id)?.state).toBe('ignored');
 	});
 
 	test('preserves queued deliveries while re-registering unchanged interests', async () => {
