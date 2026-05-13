@@ -82,57 +82,6 @@ export type ExternalEventDeliveryState = 'pending' | 'delivered' | 'failed';
 export const TERMINAL_DELIVERY_STATES: ReadonlySet<ExternalEventDeliveryState> =
 	new Set<ExternalEventDeliveryState>(['delivered', 'failed']);
 
-export interface ExternalEventExtensionConfig {
-	source: string;
-	globallyEnabled: boolean;
-	capabilities: {
-		webhooks?: boolean;
-		polling?: boolean;
-		rpcConfig?: boolean;
-	};
-	settings?: Record<string, unknown>;
-}
-
-export interface SpaceExternalEventSourceConfig {
-	spaceId: string;
-	source: string;
-	enabled: boolean;
-	settings: Record<string, unknown>;
-}
-
-export interface ExternalEventExtensionConfigStore {
-	getGlobalConfig(source: string): Promise<ExternalEventExtensionConfig>;
-	getSpaceConfig(spaceId: string, source: string): Promise<SpaceExternalEventSourceConfig | null>;
-	listEnabledSpaces(source: string): Promise<SpaceExternalEventSourceConfig[]>;
-}
-
-export interface ExternalEventExtensionContext {
-	publisher: { publish(event: ExternalEvent): Promise<unknown> };
-	config: ExternalEventExtensionConfigStore;
-	onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }): void;
-}
-
-export interface ExternalEventExtension {
-	readonly sourceId: string;
-	start(context: ExternalEventExtensionContext): Promise<void>;
-	stop(): Promise<void>;
-}
-
-export interface HttpExternalEventExtension extends ExternalEventExtension {
-	readonly routes: readonly {
-		method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-		path: string;
-		handle(req: Request): Promise<Response>;
-	}[];
-}
-
-export interface RpcExternalEventExtension extends ExternalEventExtension {
-	registerRpcHandlers(
-		hub: import('@neokai/shared').MessageHub,
-		context: ExternalEventExtensionContext
-	): void;
-}
-
 /**
  * Stored event row, including current state. Useful for diagnostics and tests.
  */

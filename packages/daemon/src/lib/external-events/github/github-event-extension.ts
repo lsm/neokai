@@ -36,7 +36,11 @@ interface GitHubEventExtensionOptions {
 export class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEventExtension {
 	readonly sourceId = 'github';
 	readonly routes = [
-		{ method: 'POST', path: '/webhook/github/space', handle: this.handleWebhook.bind(this) },
+		{
+			method: 'POST',
+			path: '/webhook/github/space',
+			handle: (req: Request, _context: ExternalEventExtensionContext) => this.handleWebhook(req),
+		},
 	] as const;
 
 	readonly repo: GitHubEventExtensionRepository;
@@ -371,4 +375,15 @@ export class StaticExternalEventExtensionConfigStore implements ExternalEventExt
 		// rows as the source of enabled spaces for the migration period.
 		return [];
 	}
+
+	async setGlobalConfig(
+		_source: string,
+		_config: Awaited<ReturnType<ExternalEventExtensionConfigStore['getGlobalConfig']>>
+	): Promise<void> {}
+
+	async setSpaceConfig(
+		_spaceId: string,
+		_source: string,
+		_config: SpaceExternalEventSourceConfig
+	): Promise<void> {}
 }

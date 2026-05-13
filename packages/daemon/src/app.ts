@@ -517,7 +517,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				(route) => route.path === url.pathname && route.method === req.method
 			);
 			if (githubExtensionRoute) {
-				return githubExtensionRoute.handle(req);
+				return githubExtensionRoute.handle(req, externalEventExtensionContext);
 			}
 
 			// Legacy room GitHub webhook endpoint (kept as a compatibility alias only).
