@@ -351,6 +351,35 @@ export class TaskAgentManager {
 		this.subscribeToTaskArchiveEvents();
 	}
 
+	*getTrackedAgentRootPids(): Iterable<number> {
+		for (const [, session] of this.taskAgentSessions) {
+			yield* session.getTrackedAgentRootPids();
+		}
+		for (const [, nodeSessions] of this.subSessions) {
+			for (const [, session] of nodeSessions) {
+				yield* session.getTrackedAgentRootPids();
+			}
+		}
+	}
+
+	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
+		const live: number[] = [];
+		const exited: number[] = [];
+		for (const [, session] of this.taskAgentSessions) {
+			const split = session.getTrackedAgentRootPidsSplit();
+			live.push(...split.live);
+			exited.push(...split.exited);
+		}
+		for (const [, nodeSessions] of this.subSessions) {
+			for (const [, session] of nodeSessions) {
+				const split = session.getTrackedAgentRootPidsSplit();
+				live.push(...split.live);
+				exited.push(...split.exited);
+			}
+		}
+		return { live, exited };
+	}
+
 	/**
 	 * Subscribe to `space.task.updated` and run the archive pipeline for tasks
 	 * that reach the `archived` state.

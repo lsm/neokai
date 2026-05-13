@@ -401,6 +401,8 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 			processExitedPromise: null,
 			startupTimeoutTimer: null,
 			queryAbortController: null,
+			terminateTrackedAgentProcesses: mock(() => {}),
+			snapshotTrackedAgentProcesses: mock(() => []),
 			pendingRestartReason: null,
 			startStreamingQuery: async () => {
 				startStreamingCalled = true;

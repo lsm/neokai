@@ -409,6 +409,23 @@ export class SessionManager {
 		this.sessionCache.set(agentSession.getSessionData().id, agentSession);
 	}
 
+	*getTrackedAgentRootPids(): Iterable<number> {
+		for (const [, agentSession] of this.sessionCache.entries()) {
+			yield* agentSession.getTrackedAgentRootPids();
+		}
+	}
+
+	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
+		const live: number[] = [];
+		const exited: number[] = [];
+		for (const [, agentSession] of this.sessionCache.entries()) {
+			const split = agentSession.getTrackedAgentRootPidsSplit();
+			live.push(...split.live);
+			exited.push(...split.exited);
+		}
+		return { live, exited };
+	}
+
 	/**
 	 * Remove an AgentSession from the session cache.
 	 *
