@@ -499,6 +499,77 @@ describe('AgentSession', () => {
 			exitHandlerNoPid?.();
 			await expect(promise).resolves.toBeUndefined();
 		});
+
+		it('no-PID-first then numeric-PID keeps no-PID promise in aggregation', async () => {
+			const agentSession = createAgentSession();
+
+			// Track a no-PID process first
+			let noPidExitHandler: (() => void) | null = null;
+			const noPidProc = {
+				once: mock((_event: string, handler: () => void) => {
+					noPidExitHandler = handler;
+					return noPidProc;
+				}),
+				kill: mock(() => true),
+			};
+			agentSession.trackAgentProcess(noPidProc as never);
+
+			// Now track a numeric-PID process — updateProcessExitedPromise must
+			// still include the pending no-PID promise.
+			let numericExitHandler: (() => void) | null = null;
+			const numericProc = {
+				pid: 700,
+				once: mock((_event: string, handler: () => void) => {
+					numericExitHandler = handler;
+					return numericProc;
+				}),
+				kill: mock(() => true),
+			};
+			agentSession.trackAgentProcess(numericProc as never);
+
+			const promise = agentSession.processExitedPromise;
+			expect(promise).not.toBeNull();
+
+			// Resolve the numeric process — promise should NOT resolve yet
+			numericExitHandler?.();
+			await new Promise((resolve) => setTimeout(resolve, 5));
+
+			// Now resolve the no-PID process
+			noPidExitHandler?.();
+			await expect(promise).resolves.toBeUndefined();
+		});
+
+		it('multiple no-PID processes are all aggregated', async () => {
+			const agentSession = createAgentSession();
+
+			const exitHandlers: (() => void)[] = [];
+			const createNoPidProc = () => {
+				const proc = {
+					once: mock((_event: string, handler: () => void) => {
+						exitHandlers.push(handler);
+						return proc;
+					}),
+					kill: mock(() => true),
+				};
+				return proc;
+			};
+
+			agentSession.trackAgentProcess(createNoPidProc() as never);
+			agentSession.trackAgentProcess(createNoPidProc() as never);
+			agentSession.trackAgentProcess(createNoPidProc() as never);
+
+			const promise = agentSession.processExitedPromise;
+			expect(promise).not.toBeNull();
+
+			// Resolve first two — promise should still be pending
+			exitHandlers[0]();
+			exitHandlers[1]();
+			await new Promise((resolve) => setTimeout(resolve, 5));
+
+			// Resolve the last one
+			exitHandlers[2]();
+			await expect(promise).resolves.toBeUndefined();
+		});
 	});
 
 	describe('component initialization', () => {

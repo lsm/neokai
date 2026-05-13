@@ -333,7 +333,7 @@ describe('SessionManager', () => {
 			expect(result).toBeNull();
 		});
 
-		it('unregisterSession preserves exited root PIDs for watchdog', () => {
+		it('unregisterSession preserves live and exited root PIDs for watchdog', () => {
 			const mockSession: Session = {
 				id: 'room:1:task:2:abc',
 				title: 'Room Session',
@@ -346,17 +346,17 @@ describe('SessionManager', () => {
 				getSessionData: mock(() => mockSession),
 				cleanup: mock(async () => {}),
 				getTrackedAgentRootPidsSplit: mock(() => ({
-					live: [],
-					exited: [7000, 7001],
+					live: [7000],
+					exited: [7001],
 				})),
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
 			sessionManager.unregisterSession('room:1:task:2:abc');
 
-			// PIDs should survive eviction via the SessionManager-level map
+			// PIDs should survive eviction — live as live, exited as exited.
 			const split = sessionManager.getTrackedAgentRootPidsSplit();
-			expect(split.exited).toContain(7000);
+			expect(split.live).toContain(7000);
 			expect(split.exited).toContain(7001);
 		});
 	});
@@ -495,12 +495,50 @@ describe('SessionManager', () => {
 			// Interrupt removes the session from cache
 			await sessionManager.interruptInMemorySession('session-with-pids');
 
-			// After interrupt: PIDs should still be visible via the SessionManager-level map
+			// After interrupt: PIDs should still be visible via the SessionManager-level map.
+			// cleanup() transitions live PID 5000 to exited, so all three are preserved as exited.
 			const afterInterrupt = sessionManager.getTrackedAgentRootPidsSplit();
-			expect(afterInterrupt.live).not.toContain(5000); // live becomes "exited" via preserveExitedRootPids
-			expect(afterInterrupt.exited).toContain(5000); // live PID was preserved as exited
+			expect(afterInterrupt.live).not.toContain(5000);
+			expect(afterInterrupt.exited).toContain(5000);
 			expect(afterInterrupt.exited).toContain(5001);
 			expect(afterInterrupt.exited).toContain(5002);
+		});
+
+		it('evicted live root still present in snapshot is tracked as live', async () => {
+			const mockSession: Session = {
+				id: 'session-evicted-live',
+				title: 'Evicted Live',
+				workspacePath: '/test',
+				status: 'active',
+				config: {},
+				metadata: {},
+			};
+
+			// Simulate cleanup that fails to kill the process
+			const getSplit = mock(() => ({
+				live: [8000],
+				exited: [],
+			}));
+			const fakeAgentSession = {
+				getSessionData: mock(() => mockSession),
+				cleanup: mock(async () => {
+					// Process survives cleanup — still live
+					getSplit.mockImplementation(() => ({
+						live: [8000],
+						exited: [],
+					}));
+				}),
+				getTrackedAgentRootPidsSplit: getSplit,
+			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+			sessionManager.registerSession(fakeAgentSession);
+			await sessionManager.interruptInMemorySession('session-evicted-live');
+
+			// The live root PID must appear as live (not exited) so
+			// collectDescendantPids doesn't skip it as a reused PID.
+			const split = sessionManager.getTrackedAgentRootPidsSplit();
+			expect(split.live).toContain(8000);
+			expect(split.exited).not.toContain(8000);
 		});
 	});
 

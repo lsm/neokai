@@ -81,15 +81,19 @@ export class SessionManager {
 	private hardResetInFlight = new Map<string, Promise<{ success: boolean; error?: string }>>();
 
 	/**
-	 * Recently-exited agent root PIDs that survived session cache eviction.
+	 * Agent root PIDs that survived session cache eviction, split by liveness.
 	 *
 	 * When `interruptInMemorySession()` or `unregisterSession()` removes an
-	 * AgentSession from the cache, its own `recentlyExitedAgentRootPids` are
-	 * no longer visible to `getTrackedAgentRootPidsSplit()`. We snapshot those
-	 * PIDs here so the process watchdog retains ownership attribution for the
-	 * full 15-minute retention window.
+	 * AgentSession from the cache, its tracked PIDs are no longer visible to
+	 * `getTrackedAgentRootPidsSplit()`. We snapshot them here so the process
+	 * watchdog retains ownership attribution.
+	 *
+	 * Live PIDs are tracked separately so `collectDescendantPids()` treats them
+	 * as live roots (not exited), avoiding false PID-reuse skips while the
+	 * process is still running.
 	 */
-	private recentlyExitedAgentRootPids = new Map<number, number>();
+	private evictedLiveRootPids = new Set<number>();
+	private evictedExitedRootPids = new Map<number, number>();
 
 	// Extracted modules
 	private sessionCache: SessionCache;
@@ -431,7 +435,7 @@ export class SessionManager {
 	}
 
 	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
-		this.expireRecentlyExitedAgentRootPids();
+		this.expireEvictedRoots();
 		const live: number[] = [];
 		const exited: number[] = [];
 		// Collect from sessions still in the cache.
@@ -440,8 +444,14 @@ export class SessionManager {
 			live.push(...split.live);
 			exited.push(...split.exited);
 		}
-		// Merge session-manager-level PIDs that survived cache eviction.
-		for (const pid of this.recentlyExitedAgentRootPids.keys()) {
+		// Merge session-manager-level live PIDs that survived cache eviction.
+		for (const pid of this.evictedLiveRootPids) {
+			if (!live.includes(pid)) {
+				live.push(pid);
+			}
+		}
+		// Merge session-manager-level exited PIDs that survived cache eviction.
+		for (const pid of this.evictedExitedRootPids.keys()) {
 			if (!exited.includes(pid)) {
 				exited.push(pid);
 			}
@@ -465,7 +475,7 @@ export class SessionManager {
 	unregisterSession(sessionId: string): void {
 		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
 		if (agentSession) {
-			this.preserveExitedRootPids(agentSession);
+			this.preserveRootPids(agentSession);
 		}
 		this.sessionCache.remove(sessionId);
 	}
@@ -576,11 +586,13 @@ export class SessionManager {
 					error
 				);
 			}
-			// Snapshot exited root PIDs AFTER cleanup so the retention window
-			// starts from the actual process exit time, not from eviction time.
-			// cleanup() awaits process exit, so live PIDs will have transitioned
-			// to the exited set with their real exit timestamps.
-			this.preserveExitedRootPids(agentSession);
+			// Snapshot root PIDs AFTER cleanup so the retention window for
+			// exited PIDs starts from the actual process exit time.
+			// cleanup() awaits process exit, so live PIDs will have
+			// transitioned to exited with real exit timestamps. Any
+			// stubborn live roots that survive cleanup are preserved as
+			// live so the watchdog tracks them correctly.
+			this.preserveRootPids(agentSession);
 		}
 		this.sessionCache.remove(sessionId);
 	}
@@ -594,27 +606,34 @@ export class SessionManager {
 	}
 
 	/**
-	 * Snapshot exited root PIDs from an AgentSession after it is removed from
-	 * the session cache, so the process watchdog retains ownership attribution.
+	 * Snapshot live and exited root PIDs from an AgentSession before/after
+	 * it is removed from the session cache.
 	 *
-	 * Callers must invoke this AFTER cleanup so live PIDs have transitioned to
-	 * the exited set with their actual exit timestamps — this ensures the
-	 * 15-minute retention window starts from real exit time, not eviction time.
+	 * Live PIDs are preserved as live so the watchdog tracks them correctly
+	 * (exited roots are skipped if the PID appears in the process snapshot).
+	 * Exited PIDs are preserved with their actual exit timestamp for the
+	 * 15-minute retention window.
 	 */
-	private preserveExitedRootPids(agentSession: AgentSession): void {
+	private preserveRootPids(agentSession: AgentSession): void {
 		const split = agentSession.getTrackedAgentRootPidsSplit();
 		const now = Date.now();
+		// Preserve live PIDs as live so the watchdog can track them
+		// as live roots (not exited) while the process is still running.
+		for (const pid of split.live) {
+			this.evictedLiveRootPids.add(pid);
+		}
+		// Preserve exited PIDs with their actual exit timestamp.
 		for (const pid of split.exited) {
-			if (!this.recentlyExitedAgentRootPids.has(pid)) {
-				this.recentlyExitedAgentRootPids.set(pid, now);
+			if (!this.evictedExitedRootPids.has(pid)) {
+				this.evictedExitedRootPids.set(pid, now);
 			}
 		}
 	}
 
-	private expireRecentlyExitedAgentRootPids(now = Date.now()): void {
-		for (const [pid, exitedAt] of this.recentlyExitedAgentRootPids) {
+	private expireEvictedRoots(now = Date.now()): void {
+		for (const [pid, exitedAt] of this.evictedExitedRootPids) {
 			if (now - exitedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
-				this.recentlyExitedAgentRootPids.delete(pid);
+				this.evictedExitedRootPids.delete(pid);
 			}
 		}
 	}

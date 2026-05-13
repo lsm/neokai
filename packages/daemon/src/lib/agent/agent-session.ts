@@ -300,6 +300,8 @@ export class AgentSession
 	processExitedPromise: Promise<void> | null = null;
 	private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
 	private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
+	/** Durable no-PID exit promises — retained until resolved so updateProcessExitedPromise() never drops them. */
+	private noPidExitPromises: Promise<void>[] = [];
 	private recentlyExitedAgentRootPids = new Map<number, number>();
 	private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -1243,15 +1245,19 @@ export class AgentSession
 	trackAgentProcess(proc: TrackedAgentProcess): void {
 		const pid = proc.pid;
 		if (typeof pid !== 'number' || pid <= 0) {
-			// Aggregate the no-PID exit promise alongside existing tracked
-			// process exit promises instead of overwriting processExitedPromise.
-			// Overwriting would lose the aggregated state of numeric-PID
-			// processes still being tracked during restart/overlap.
+			// Store no-PID promises in a durable collection so
+			// updateProcessExitedPromise() includes them on every rebuild
+			// (e.g. when a later numeric-PID process is tracked).
 			const noPidExitPromise = new Promise<void>((resolve) => {
-				proc.once('exit', () => resolve());
+				proc.once('exit', () => {
+					// Self-clean from the durable collection once resolved.
+					const idx = this.noPidExitPromises.indexOf(noPidExitPromise);
+					if (idx >= 0) this.noPidExitPromises.splice(idx, 1);
+					resolve();
+				});
 			});
-			const existingPromises = [...this.trackedAgentProcessExitPromises.values(), noPidExitPromise];
-			this.processExitedPromise = Promise.all(existingPromises).then(() => {});
+			this.noPidExitPromises.push(noPidExitPromise);
+			this.updateProcessExitedPromise();
 			return;
 		}
 
@@ -1371,7 +1377,10 @@ export class AgentSession
 	}
 
 	private updateProcessExitedPromise(): void {
-		const exitPromises = [...this.trackedAgentProcessExitPromises.values()];
+		const exitPromises = [
+			...this.trackedAgentProcessExitPromises.values(),
+			...this.noPidExitPromises,
+		];
 		this.processExitedPromise =
 			exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
 	}

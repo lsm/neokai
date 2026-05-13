@@ -140,7 +140,11 @@ export async function cleanupSuspiciousProcesses(options?: {
 				Number.isFinite(snapshot.pgid) &&
 				snapshot.pgid > 0
 			) {
-				groupKiller(snapshot.pgid, 'SIGTERM');
+				try {
+					groupKiller(snapshot.pgid, 'SIGTERM');
+				} catch {
+					// Group kill failed; fall through to direct PID signal.
+				}
 			}
 			killer(snapshot.pid, 'SIGTERM');
 			killed++;

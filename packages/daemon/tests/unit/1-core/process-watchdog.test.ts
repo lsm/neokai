@@ -104,6 +104,41 @@ describe('process-watchdog', () => {
 		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
 	});
 
+	test('still kills individual PID when killProcessGroup throws', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {
+			throw new Error('group kill failed');
+		});
+
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 100,
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill was attempted but threw
+		expect(killProcessGroup).toHaveBeenCalledWith(100, 'SIGTERM');
+		// Direct PID signal still ran despite group kill failure
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
 	test('does not kill short-lived bun test processes', async () => {
 		const killProcess = mock(() => {});
 
