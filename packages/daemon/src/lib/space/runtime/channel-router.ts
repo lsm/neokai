@@ -309,11 +309,18 @@ export class ChannelRouter {
 	 * - Cyclic channels whose gate has `resetOnCycle: true` — these gates are
 	 *   explicitly reset each cycle to re-control activation.
 	 *
-	 * The cache is cleared for a gate when `incrementAndResetCyclicChannel`
-	 * resets its data. On daemon restart the cache starts empty; the first call
-	 * re-evaluates and repopulates.
+	 * Lifecycle:
+	 * - Cleared for a gate when `incrementAndResetCyclicChannel` resets its data.
+	 * - Cleared for an entire run via `evictRunCache()` when the run completes
+	 *   (event bus subscription on `space.workflowRun.completed`), when the parent
+	 *   task is archived, or when a terminal run is reopened.
+	 * - On daemon restart the cache starts empty; the first call re-evaluates and
+	 *   repopulates.
 	 */
 	private readonly openedGates = new Set<string>();
+
+	/** Unsubscribe function for the `space.workflowRun.completed` event bus listener. */
+	private unsubscribeCompleted?: () => void;
 
 	constructor(private readonly config: ChannelRouterConfig) {
 		this.scriptSemaphore = {
@@ -321,6 +328,30 @@ export class ChannelRouter {
 			max: config.maxConcurrentScripts ?? DEFAULT_MAX_CONCURRENT_SCRIPTS,
 			waiters: [],
 		};
+
+		// Subscribe to run-completion events to evict gate-open cache entries for
+		// terminal runs. Without this, long-lived routers (e.g. node-agent MCP
+		// sessions) would retain entries for completed runs until GC'd.
+		if (config.internalEventBus) {
+			this.unsubscribeCompleted = config.internalEventBus.subscribe(
+				'space.workflowRun.completed',
+				(event) => {
+					if (event.runId) {
+						this.evictRunCache(event.runId);
+					}
+				},
+				{ subscriberName: 'channel-router.gate-cache' }
+			);
+		}
+	}
+
+	/**
+	 * Tear down event bus subscriptions. Call when the owning session is
+	 * being destroyed to prevent stale listener references.
+	 */
+	destroy(): void {
+		this.unsubscribeCompleted?.();
+		this.unsubscribeCompleted = undefined;
 	}
 
 	// -------------------------------------------------------------------------
@@ -952,11 +983,16 @@ export class ChannelRouter {
 	}
 
 	/**
-	 * Evict all cached gate-open entries for a completed run.
+	 * Evict all cached gate-open entries for a given run.
 	 *
-	 * Called by the runtime when a run reaches a terminal status (done, cancelled)
-	 * or when the parent task is archived. Without this, the in-memory `openedGates`
-	 * set grows unboundedly in long-lived daemons that process many runs.
+	 * Called automatically in three scenarios:
+	 * 1. When `space.workflowRun.completed` fires (via event bus subscription)
+	 *    — covers normal done/cancelled transitions.
+	 * 2. When the parent task is archived (detected in deliverMessage/onGateDataChanged).
+	 * 3. When a terminal run is reopened via activateNode.
+	 *
+	 * Without this, the in-memory `openedGates` set grows unboundedly in
+	 * long-lived daemons that process many runs.
 	 */
 	evictRunCache(runId: string): void {
 		for (const key of this.openedGates) {

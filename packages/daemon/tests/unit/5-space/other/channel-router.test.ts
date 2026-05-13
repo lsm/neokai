@@ -48,6 +48,8 @@ import {
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { computeGateDefaults } from '@neokai/shared';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -3504,6 +3506,83 @@ describe('ChannelRouter', () => {
 			// Now canDeliver should re-evaluate and find the gate closed
 			const result2 = await router.canDeliver(run.id, 'coder', 'planner');
 			expect(result2.allowed).toBe(false);
+		});
+
+		test('event bus subscription evicts cache on run completion', async () => {
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const gate: Gate = {
+				id: 'bus-eviction-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'bus-eviction-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Bus Eviction Test Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Create a router WITH an event bus
+			const busRouter = new ChannelRouter({
+				taskRepo,
+				workflowRunRepo,
+				workflowManager,
+				agentManager,
+				gateDataRepo,
+				channelCycleRepo,
+				db,
+				nodeExecutionRepo: new NodeExecutionRepository(db),
+				internalEventBus: bus,
+			});
+
+			// Open gate, deliver to cache it
+			gateDataRepo.set(run.id, 'bus-eviction-gate', { approved: true });
+			await busRouter.deliverMessage(run.id, 'coder', 'planner', 'msg');
+
+			// Close the gate data — cache should still allow delivery
+			gateDataRepo.set(run.id, 'bus-eviction-gate', { approved: false });
+			const result1 = await busRouter.canDeliver(run.id, 'coder', 'planner');
+			expect(result1.allowed).toBe(true);
+
+			// Simulate the run completing (the event SpaceRuntime would publish)
+			bus.publish('space.workflowRun.completed', {
+				sessionId: 'test-session',
+				spaceId: SPACE_ID,
+				runId: run.id,
+				status: 'done',
+				timestamp: new Date().toISOString(),
+			});
+
+			// The cache should have been evicted — canDeliver now re-evaluates
+			const result2 = await busRouter.canDeliver(run.id, 'coder', 'planner');
+			expect(result2.allowed).toBe(false);
+
+			busRouter.destroy();
 		});
 	});
 });
