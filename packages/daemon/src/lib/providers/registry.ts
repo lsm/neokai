@@ -15,15 +15,6 @@ import type { Provider as ProviderIdStr } from '@neokai/shared';
 
 const log = createLogger('kai:providers:registry');
 
-/** Model IDs that are exclusive to the Antigravity provider. */
-const ANTIGRAVITY_MODEL_IDS = new Set([
-	'claude-sonnet-4-5-20250929',
-	'claude-opus-4-5-20250929',
-	'claude-haiku-4-5-20250929',
-	'gpt-oss-120b',
-	'gpt-oss-20b',
-]);
-
 /**
  * Provider Registry class
  *
@@ -281,55 +272,6 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 			normalizedModelId === 'kimi')
 	) {
 		return 'kimi';
-	}
-
-	// Prefer the available API key provider for Gemini models; fall back to
-	// OAuth if the API key provider is not available (e.g. no key configured).
-	// This must run before the live registry lookup because both Gemini
-	// providers claim the same model IDs, and we want to route based on
-	// availability rather than registration order.
-	if (modelId.startsWith('gemini-') || modelId.startsWith('gemma-')) {
-		// Route Gemini 3 models to Antigravity when available
-		if (modelId.startsWith('gemini-3')) {
-			const registry = getProviderRegistry();
-			const antigravityProvider = registry.get('google-antigravity');
-			if (antigravityProvider) {
-				const available = antigravityProvider.isAvailable();
-				if (typeof available === 'boolean' ? available : true) {
-					return 'google-antigravity';
-				}
-			}
-		}
-
-		const registry = getProviderRegistry();
-		const apiKeyProvider = registry.get('google-gemini');
-		if (apiKeyProvider) {
-			const available = apiKeyProvider.isAvailable();
-			// isAvailable may be sync (boolean) or async (Promise<boolean>).
-			// For the sync case we can check immediately; for async we
-			// conservatively treat the provider as available.
-			if (typeof available === 'boolean' ? available : true) {
-				return 'google-gemini';
-			}
-		}
-		return 'google-gemini-oauth';
-	}
-
-	// Route specific Antigravity model IDs (Claude and GPT-OSS variants)
-	// Only when the provider is authenticated — otherwise buildSdkConfig throws
-	if (ANTIGRAVITY_MODEL_IDS.has(modelId)) {
-		const registry = getProviderRegistry();
-		const agProvider = registry.get('google-antigravity');
-		if (agProvider) {
-			const available = agProvider.isAvailable();
-			if (typeof available === 'boolean' ? available : true) {
-				return 'google-antigravity';
-			}
-		}
-		// When Antigravity is unavailable, skip the live registry lookup
-		// because the registered provider would claim these IDs via ownsModel()
-		// and route to an unauthenticated provider. Fall through to static
-		// fallback instead.
 	}
 
 	// Live registry lookup (populated at daemon startup, empty in unit tests)

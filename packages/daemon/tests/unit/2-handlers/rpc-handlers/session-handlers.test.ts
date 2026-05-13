@@ -4,8 +4,8 @@
  * These tests use real model-service functions with controlled cache state
  * to avoid mock.module cross-file contamination in the 2-handlers shard.
  *
- * NOTE: We avoid clearModelsCache() because gemini-auth-handlers.test.ts
- * installs a top-level mock.module on model-service.js that Bun does not
+ * NOTE: We avoid clearModelsCache() because other test files
+ * install top-level mock.module on model-service.js that Bun does not
  * fully restore, leaving clearModelsCache as a no-op.  setModelsCache()
  * is unaffected, so we use setModelsCache(new Map()) to empty the cache.
  */
