@@ -119,6 +119,26 @@ export function validateLiteralTopic(topic: string): ValidationResult {
 }
 
 /**
+ * Validate a subscription pattern for workflow eventInterests.
+ * Enforces source-specific pattern structure in addition to general
+ * glob pattern validation.
+ */
+export function validateSubscriptionPattern(pattern: string): ValidationResult {
+	const globCheck = validateGlobPattern(pattern);
+	if (!globCheck.valid) {
+		return globCheck;
+	}
+
+	// Source-specific validation for registered sources
+	const source = pattern.split('/')[0];
+	if (source === 'github') {
+		return validateGitHubSubscriptionPattern(pattern);
+	}
+
+	return { valid: true };
+}
+
+/**
  * Validate GitHub literal topic structure.
  * GitHub topics must be 5 segments: {source}/{owner}/{repo}/{resource}/{entityId.action}
  */
@@ -156,6 +176,57 @@ function validateGitHubLiteralTopic(topic: string): ValidationResult {
 				`(entityId.action), got ${dotCount} dots in "${entityIdAction}". ` +
 				`Example: '5.review_submitted'`,
 		};
+	}
+
+	return { valid: true };
+}
+
+/**
+ * Validate GitHub subscription pattern structure.
+ * GitHub patterns must have exactly 5 segments to match real GitHub topics.
+ */
+function validateGitHubSubscriptionPattern(pattern: string): ValidationResult {
+	const segments = pattern.split('/');
+
+	if (segments.length !== 5) {
+		return {
+			valid: false,
+			reason:
+				`GitHub subscription pattern must have exactly 5 segments ` +
+				`(source/owner/repo/resource/entityId.action); got ${segments.length}. ` +
+				`Example: 'github/*/*/pull_request/*.*' or 'github/lsm/neokai/pull_request/5.*'`,
+		};
+	}
+
+	// Final segment pattern must be compatible with entityId.action format:
+	// - `*` (matches whole segment)
+	// - `*.*` (matches any entity.action)
+	// - `*.action` or `entity.*` (matches specific entity or action)
+	// - `*.prefix_*` (matches actions with prefix)
+	// Basically: either `*` or contains exactly one dot with non-empty sides
+	const finalSegment = segments[4];
+	if (finalSegment !== '*') {
+		const dotCount = (finalSegment.match(/\./g) || []).length;
+		if (dotCount !== 1) {
+			return {
+				valid: false,
+				reason:
+					`GitHub subscription pattern final segment must contain exactly one dot ` +
+					`to match entityId.action; got ${dotCount} dots in "${finalSegment}". ` +
+					`Examples: '*.*', '*.review_submitted', '5.*', '5.review_*'`,
+			};
+		}
+
+		const dotIndex = finalSegment.indexOf('.');
+		if (dotIndex <= 0 || dotIndex === finalSegment.length - 1) {
+			return {
+				valid: false,
+				reason:
+					`GitHub subscription pattern final segment must have non-empty sides ` +
+					`around the dot (entityId.action); got "${finalSegment}". ` +
+					`Examples: '*.*', '*.review_submitted', '5.*', '5.review_*'`,
+			};
+		}
 	}
 
 	return { valid: true };

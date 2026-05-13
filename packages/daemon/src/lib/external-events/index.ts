@@ -21,6 +21,7 @@ export {
 export {
 	validateGlobPattern,
 	validateSource,
+	validateSubscriptionPattern,
 	KNOWN_SOURCES,
 	type ValidationResult,
 } from './topic-validator';

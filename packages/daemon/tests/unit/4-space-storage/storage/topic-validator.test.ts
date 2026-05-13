@@ -13,6 +13,7 @@ import {
 	validateGlobPattern,
 	validateLiteralTopic,
 	validateSource,
+	validateSubscriptionPattern,
 } from '../../../../src/lib/external-events/topic-validator';
 
 describe('validateGlobPattern', () => {
@@ -171,6 +172,80 @@ describe('validateSource', () => {
 		const r = validateSource('my_source-2');
 		expect(r.valid).toBe(false);
 		expect(r.reason).toMatch(/not registered/);
+	});
+});
+
+describe('validateSubscriptionPattern', () => {
+	test('accepts valid 5-segment GitHub pattern with wildcards', () => {
+		const r = validateSubscriptionPattern('github/*/*/pull_request/*.*');
+		expect(r.valid).toBe(true);
+	});
+
+	test('accepts GitHub pattern with specific owner/repo', () => {
+		const r = validateSubscriptionPattern('github/lsm/neokai/pull_request/5.*');
+		expect(r.valid).toBe(true);
+	});
+
+	test('accepts GitHub pattern with wildcard final segment', () => {
+		const r = validateSubscriptionPattern('github/lsm/neokai/pull_request/*');
+		expect(r.valid).toBe(true);
+	});
+
+	test('accepts GitHub pattern with wildcard prefix in final segment', () => {
+		const r = validateSubscriptionPattern('github/lsm/neokai/pull_request/*.review_*');
+		expect(r.valid).toBe(true);
+	});
+
+	test('accepts GitHub pattern with wildcard entity ID', () => {
+		const r = validateSubscriptionPattern('github/lsm/neokai/pull_request/*.review_submitted');
+		expect(r.valid).toBe(true);
+	});
+
+	test('accepts non-GitHub 3-segment pattern', () => {
+		const r = validateSubscriptionPattern('slack/workspace/channel/*');
+		expect(r.valid).toBe(true);
+	});
+
+	test('rejects GitHub pattern with wrong segment count', () => {
+		const r = validateSubscriptionPattern('github/owner/repo');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/exactly 5 segments/);
+	});
+
+	test('rejects GitHub pattern with too many segments', () => {
+		const r = validateSubscriptionPattern('github/owner/repo/pull_request/5/review_submitted');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/exactly 5 segments/);
+	});
+
+	test('rejects GitHub pattern with malformed final segment (no dot)', () => {
+		const r = validateSubscriptionPattern('github/*/*/pull_request/review_submitted');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/exactly one dot/);
+	});
+
+	test('rejects GitHub pattern with malformed final segment (multiple dots)', () => {
+		const r = validateSubscriptionPattern('github/*/*/pull_request/5.review.submitted');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/exactly one dot/);
+	});
+
+	test('rejects GitHub pattern with malformed final segment (trailing dot)', () => {
+		const r = validateSubscriptionPattern('github/*/*/pull_request/5.');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/non-empty sides/);
+	});
+
+	test('rejects GitHub pattern with malformed final segment (leading dot)', () => {
+		const r = validateSubscriptionPattern('github/*/*/pull_request/.review_submitted');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/non-empty sides/);
+	});
+
+	test('rejects invalid pattern via validateGlobPattern', () => {
+		const r = validateSubscriptionPattern('github//repo/pull_request/5.*');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/empty segments/);
 	});
 });
 
