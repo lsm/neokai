@@ -4558,7 +4558,11 @@ export class TaskAgentManager {
 						taskId: updated.id,
 						task: updated,
 					})
-					.catch(() => {});
+					.catch((err: unknown) => {
+						log.warn(
+							`Failed to emit space.task.updated (publish) for task ${updated.id}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
 				return jsonResult({ success: true, task: updated });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -4578,7 +4582,11 @@ export class TaskAgentManager {
 						taskId: updated.id,
 						task: updated,
 					})
-					.catch(() => {});
+					.catch((err: unknown) => {
+						log.warn(
+							`Failed to emit space.task.updated (archive) for task ${updated.id}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
 				return jsonResult({ success: true, task: updated });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);

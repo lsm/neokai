@@ -3243,6 +3243,51 @@ describe('createSpaceAgentToolHandlers — archive_task', () => {
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('does not belong');
 	});
+
+	test('clears pending-completion fields when archiving from review', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Review task',
+			description: 'Will archive from review',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Submit for review to set pendingCheckpointType
+		await ctx.taskManager.submitTaskForReview(taskId, {
+			submittedByNodeId: null,
+			reason: 'Test submission',
+		});
+		const reviewTask = ctx.taskRepo.getTask(taskId);
+		expect(reviewTask?.pendingCheckpointType).toBe('task_completion');
+
+		const result = await makeHandlers(ctx).archive_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('archived');
+		// setTaskStatus cleanup should have cleared pending-completion fields
+		expect(parsed.task.pendingCheckpointType).toBeNull();
+		expect(parsed.task.pendingCompletionSubmittedByNodeId).toBeNull();
+		expect(parsed.task.pendingCompletionReason).toBeNull();
+	});
+
+	test('clears post-approval fields when archiving from approved', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Approved task',
+			description: 'Will archive from approved',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Transition to in_progress then approved (via setTaskStatus)
+		await ctx.taskManager.startTask(taskId);
+		await ctx.taskManager.setTaskStatus(taskId, 'approved', {
+			approvalSource: 'human',
+			approvalReason: 'LGTM',
+		});
+
+		const result = await makeHandlers(ctx).archive_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('archived');
+	});
 });
 
 // ---------------------------------------------------------------------------

@@ -467,24 +467,11 @@ export class SpaceTaskManager {
 	 * Validates that the current status allows transitioning to 'archived'.
 	 */
 	async archiveTask(taskId: string): Promise<SpaceTask> {
-		const task = await this.getTask(taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
-
-		if (!isValidSpaceTaskTransition(task.status, 'archived')) {
-			throw new Error(
-				`Cannot archive task in '${task.status}' status. ` +
-					`Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
-			);
-		}
-
-		const updated = this.taskRepo.archiveTask(taskId);
-		if (!updated) {
-			throw new Error(`Failed to archive task: ${taskId}`);
-		}
-
-		return updated;
+		// Delegate to setTaskStatus so that workflow cleanup logic runs:
+		// - Clear pendingCheckpointType/pendingCompletion* when leaving 'review'
+		// - Clear postApproval* fields when leaving 'approved'
+		// updateTask also stamps archived_at when status is 'archived'.
+		return this.setTaskStatus(taskId, 'archived');
 	}
 
 	/**

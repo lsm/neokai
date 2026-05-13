@@ -4182,4 +4182,35 @@ describe('node-agent-tools \u2014 archive_task', () => {
 		expect(publishedEvents[0].data.spaceId).toBe(ctx.spaceId);
 		expect(publishedEvents[0].data.sessionId).toBe('global');
 	});
+
+	test('clears pending-completion fields when archiving from review', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Review task',
+			description: 'Will archive from review',
+			status: 'open',
+		});
+		await ctx.taskManager.startTask(task.id);
+		await ctx.taskManager.submitTaskForReview(task.id, {
+			submittedByNodeId: null,
+			reason: 'Test submission',
+		});
+		const reviewTask = ctx.taskRepo.getTask(task.id);
+		expect(reviewTask?.pendingCheckpointType).toBe('task_completion');
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			const updated = await ctx.taskManager.archiveTask(args.task_id);
+			return jsonResult({ success: true, task: updated });
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('archived');
+		expect(data.task.pendingCheckpointType).toBeNull();
+		expect(data.task.pendingCompletionSubmittedByNodeId).toBeNull();
+	});
 });
