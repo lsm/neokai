@@ -149,49 +149,6 @@ export interface EventInterest {
 
 ### Why subscriptions are runtime-driven
 
-<<<<<<< HEAD
-```json
-{
-  "nodes": [
-    {
-      "id": "coder",
-      "name": "Code",
-      "agents": [{
-        "agentId": "...",
-        "name": "coder",
-        "eventInterests": [
-          {
-            "topic": "github/*/*/pull_request/*.review_submitted",
-            "label": "PR reviews"
-          },
-          {
-            "topic": "github/*/*/pull_request/*.comment_created",
-            "label": "PR comments"
-          },
-          {
-            "topic": "github/*/*/pull_request/*.review_comment_created",
-            "label": "Inline review comments"
-          }
-        ]
-      }]
-    },
-    {
-      "id": "monitor",
-      "name": "PR Monitor",
-      "agents": [{
-        "agentId": "...",
-        "name": "pr-monitor",
-        "eventInterests": [
-          {
-            "topic": "github/*/*/pull_request/*.*",
-            "label": "All PR activity"
-          }
-        ]
-      }]
-    }
-  ]
-}
-=======
 Workflows operate on a concrete unit of work, such as one pull request. When an agent creates or discovers that unit of work, the artifact or gate script that reacts to the event already has all required context: source, owner, repo, PR number, and target node or agent. That script can mechanically subscribe to exactly the relevant topic pattern:
 
 ```text
@@ -199,7 +156,6 @@ Agent creates PR #142 in lsm/neokai
   → artifact/gate script receives context: owner=lsm, repo=neokai, pr=142, targetNode=Coding
   → script subscribes: { topic: 'github/lsm/neokai/pull_request.142_*', label: 'PR #142 activity' }
   → matched events are injected into the target node/agent session
->>>>>>> origin/dev
 ```
 
 Static workflow-level declarations like `github/*/*/pull_request.*` are usually too broad, while precise subscriptions are not known until runtime. Keeping subscriptions runtime-driven avoids coupling reusable workflow definitions to a specific repository, PR, or external source instance.
@@ -1073,15 +1029,8 @@ function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): Externa
 ### Type changes
 
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts` (topic pattern + label only, no scope).
-<<<<<<< HEAD
-2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
-3. Add validation in the workflow create/update path:
-   - `topic` must pass `validateGlobPattern()` (non-empty, at least 2 segments, valid characters).
-   - Max 10 interests per agent slot.
-=======
 2. Do not add `eventInterests` to `WorkflowNodeAgent`; static workflow definitions should remain source-agnostic and reusable.
 3. Validate runtime subscription topic patterns with `validateGlobPattern()` when scripts or tools create subscriptions.
->>>>>>> origin/dev
 
 ### New files
 
