@@ -351,6 +351,35 @@ export class TaskAgentManager {
 		this.subscribeToTaskArchiveEvents();
 	}
 
+	*getTrackedAgentRootPids(): Iterable<number> {
+		for (const [, session] of this.taskAgentSessions) {
+			yield* session.getTrackedAgentRootPids();
+		}
+		for (const [, nodeSessions] of this.subSessions) {
+			for (const [, session] of nodeSessions) {
+				yield* session.getTrackedAgentRootPids();
+			}
+		}
+	}
+
+	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
+		const live: number[] = [];
+		const exited: number[] = [];
+		for (const [, session] of this.taskAgentSessions) {
+			const split = session.getTrackedAgentRootPidsSplit();
+			live.push(...split.live);
+			exited.push(...split.exited);
+		}
+		for (const [, nodeSessions] of this.subSessions) {
+			for (const [, session] of nodeSessions) {
+				const split = session.getTrackedAgentRootPidsSplit();
+				live.push(...split.live);
+				exited.push(...split.exited);
+			}
+		}
+		return { live, exited };
+	}
+
 	/**
 	 * Subscribe to `space.task.updated` and run the archive pipeline for tasks
 	 * that reach the `archived` state.
@@ -4519,6 +4548,53 @@ export class TaskAgentManager {
 			}
 		};
 
+		const onPublishTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await boundTaskManager.publishTask(args.task_id);
+				// Emit event so subscribers (e.g. task list UI) see the status change.
+				this.config.internalEventBus
+					?.publish('space.task.updated', {
+						sessionId: 'global',
+						spaceId,
+						taskId: updated.id,
+						task: updated,
+					})
+					.catch((err: unknown) => {
+						log.warn(
+							`Failed to emit space.task.updated (publish) for task ${updated.id}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await boundTaskManager.archiveTask(args.task_id);
+				// Emit event so subscribeToTaskArchiveEvents() triggers cleanup
+				// (session teardown, SDK JSONL archival, worktree removal).
+				this.config.internalEventBus
+					?.publish('space.task.updated', {
+						sessionId: 'global',
+						spaceId,
+						taskId: updated.id,
+						task: updated,
+					})
+					.catch((err: unknown) => {
+						log.warn(
+							`Failed to emit space.task.updated (archive) for task ${updated.id}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myAgentName: agentName,
@@ -4548,6 +4624,8 @@ export class TaskAgentManager {
 			onSubmitForApproval,
 			onMarkComplete,
 			onCreateStandaloneTask,
+			onPublishTask,
+			onArchiveTask,
 			artifactRepo: this.config.artifactRepo,
 			taskRepo: this.config.taskRepo,
 			auditLogRepo: this.auditLogRepo,

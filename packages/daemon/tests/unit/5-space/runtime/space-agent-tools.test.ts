@@ -3071,3 +3071,253 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
 		expect(names).toContain('update_task');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// publish_task
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — publish_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('publishes a draft task to open', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Draft task',
+			description: 'Created as draft',
+			draft: true,
+		});
+		const parsed = JSON.parse(createResult.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('draft');
+		const taskId = parsed.task.id;
+
+		const result = await makeHandlers(ctx).publish_task({ task_id: taskId });
+		const publishParsed = JSON.parse(result.content[0].text);
+		expect(publishParsed.success).toBe(true);
+		expect(publishParsed.task.status).toBe('open');
+		expect(publishParsed.task.id).toBe(taskId);
+	});
+
+	test('returns error when task is not in draft status', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Open task',
+			description: 'Created as open',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).publish_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain("not 'draft'");
+	});
+
+	test('returns error when task not found', async () => {
+		const result = await makeHandlers(ctx).publish_task({ task_id: 'task-nonexistent' });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('not found');
+	});
+
+	test('returns error when task belongs to different space', async () => {
+		// Create task in current space
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Draft',
+			description: 'Test',
+			draft: true,
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Create handlers for a different space
+		const otherSpaceId = 'space-other';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
+		const otherHandlers = createSpaceAgentToolHandlers({
+			spaceId: otherSpaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: otherTaskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+		});
+
+		const result = await otherHandlers.publish_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('does not belong');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// archive_task
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — archive_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('archives a draft task', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Draft task',
+			description: 'Will archive',
+			draft: true,
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).archive_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('archived');
+		expect(parsed.task.archivedAt).toBeTruthy();
+	});
+
+	test('archives a done task', async () => {
+		const t = await ctx.taskManager.createTask({ title: 'T', description: 'Done' });
+		await ctx.taskManager.startTask(t.id);
+		await ctx.taskManager.completeTask(t.id, 'done');
+
+		const result = await makeHandlers(ctx).archive_task({ task_id: t.id });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('archived');
+	});
+
+	test('archives a cancelled task', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Cancel then archive',
+			description: 'Will cancel and archive',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Cancel first
+		await makeHandlers(ctx).cancel_task({ task_id: taskId });
+
+		const result = await makeHandlers(ctx).archive_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('archived');
+	});
+
+	test('returns error when task not found', async () => {
+		const result = await makeHandlers(ctx).archive_task({ task_id: 'task-nonexistent' });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('not found');
+	});
+
+	test('returns error when task belongs to different space', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Draft',
+			description: 'Test',
+			draft: true,
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const otherSpaceId = 'space-other-2';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
+		const otherHandlers = createSpaceAgentToolHandlers({
+			spaceId: otherSpaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: otherTaskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+		});
+
+		const result = await otherHandlers.archive_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('does not belong');
+	});
+
+	test('clears pending-completion fields when archiving from review', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Review task',
+			description: 'Will archive from review',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Submit for review to set pendingCheckpointType
+		await ctx.taskManager.submitTaskForReview(taskId, {
+			submittedByNodeId: null,
+			reason: 'Test submission',
+		});
+		const reviewTask = ctx.taskRepo.getTask(taskId);
+		expect(reviewTask?.pendingCheckpointType).toBe('task_completion');
+
+		const result = await makeHandlers(ctx).archive_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('archived');
+		// setTaskStatus cleanup should have cleared pending-completion fields
+		expect(parsed.task.pendingCheckpointType).toBeNull();
+		expect(parsed.task.pendingCompletionSubmittedByNodeId).toBeNull();
+		expect(parsed.task.pendingCompletionReason).toBeNull();
+	});
+
+	test('clears post-approval fields when archiving from approved', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Approved task',
+			description: 'Will archive from approved',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Transition to in_progress then approved (via setTaskStatus)
+		await ctx.taskManager.startTask(taskId);
+		await ctx.taskManager.setTaskStatus(taskId, 'approved', {
+			approvalSource: 'human',
+			approvalReason: 'LGTM',
+		});
+
+		const result = await makeHandlers(ctx).archive_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('archived');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// cancel_task on draft (verifies error message consistency)
+// ---------------------------------------------------------------------------
+
+describe('cancel_task on draft — error message consistency', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('cancel_task on draft returns error with allowed transitions', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Draft task',
+			description: 'Cannot cancel',
+			draft: true,
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).cancel_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain("'draft'");
+		expect(parsed.error).toContain("'cancelled'");
+		// Should mention what transitions ARE allowed from draft
+		expect(parsed.error).toContain('open');
+		expect(parsed.error).toContain('archived');
+	});
+});

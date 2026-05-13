@@ -30,6 +30,7 @@ import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-mess
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
+import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 import type {
 	DaemonInternalEventMap,
@@ -1590,7 +1591,7 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		});
 	});
 
-	test('onGateDataChanged fires after gate-write via send_message', async () => {
+	test('onGateDataChanged fires after successful gated delivery via send_message', async () => {
 		const gate: Gate = {
 			id: 'gate-callback',
 			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
@@ -1600,6 +1601,7 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		const calls: Array<{ runId: string; gateId: string }> = [];
 		const config = makeConfig(ctx, {
 			workflow,
+			channelResolver: makeResolver(workflow.channels ?? []),
 			onGateDataChanged: async (runId, gateId) => {
 				calls.push({ runId, gateId });
 			},
@@ -1612,6 +1614,188 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0].runId).toBe(ctx.workflowRunId);
 		expect(calls[0].gateId).toBe('gate-callback');
+	});
+
+	test('onGateDataChanged fires after queued-only gated delivery via send_message', async () => {
+		const gate: Gate = {
+			id: 'gate-queued-callback',
+			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId: ctx.workflowRunId,
+			workflowChannels: workflow.channels ?? [],
+			messageInjector: async () => {
+				throw new Error('Should not be called — reviewer has no live session');
+			},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+		});
+		const calls: Array<{ runId: string; gateId: string }> = [];
+		const config = makeConfig(ctx, {
+			workflow,
+			channelResolver: makeResolver(workflow.channels ?? []),
+			agentMessageRouter,
+			onGateDataChanged: async (runId, gateId) => {
+				calls.push({ runId, gateId });
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const reviewerExecution = ctx.nodeExecutionRepo
+			.listByWorkflowRun(ctx.workflowRunId)
+			.find((execution) => execution.agentName === 'reviewer')!;
+		ctx.nodeExecutionRepo.update(reviewerExecution.id, { agentSessionId: null });
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'queued but gate data changed',
+			data: { ready: true },
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.queued).toHaveLength(1);
+		expect(calls).toEqual([{ runId: ctx.workflowRunId, gateId: 'gate-queued-callback' }]);
+		expect(pendingMessageRepo.listPendingForTarget(ctx.workflowRunId, 'reviewer')).toHaveLength(1);
+	});
+
+	test('onGateDataChanged fires after failed gated delivery via send_message', async () => {
+		const gate: Gate = {
+			id: 'gate-failed-callback',
+			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId: ctx.workflowRunId,
+			workflowChannels: workflow.channels ?? [],
+			messageInjector: async () => {
+				throw new Error('transport unavailable');
+			},
+		});
+		const calls: Array<{ runId: string; gateId: string }> = [];
+		const config = makeConfig(ctx, {
+			workflow,
+			channelResolver: makeResolver(workflow.channels ?? []),
+			agentMessageRouter,
+			onGateDataChanged: async (runId, gateId) => {
+				calls.push({ runId, gateId });
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'fails but gate data changed',
+			data: { ready: true },
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.failed).toHaveLength(1);
+		expect(parsed.queued).toBeUndefined();
+		expect(calls).toEqual([{ runId: ctx.workflowRunId, gateId: 'gate-failed-callback' }]);
+	});
+
+	test('does not notify gate data changed before the current gated delivery finishes', async () => {
+		const gate: Gate = {
+			id: 'review-posted-gate',
+			fields: [
+				{ name: 'pr_url', type: 'string', writers: ['Review'], check: { op: 'exists' } },
+				{ name: 'review_url', type: 'string', writers: ['Review'], check: { op: 'exists' } },
+			],
+			resetOnCycle: true,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-review-posted-race',
+			spaceId: ctx.spaceId,
+			name: 'Review Posted Race Workflow',
+			description: '',
+			nodes: [
+				{
+					id: ctx.nodeId,
+					name: 'Review',
+					agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+				},
+				{
+					id: 'node-coding',
+					name: 'Coding',
+					agents: [{ agentId: 'agent-coder', name: 'coder' }],
+				},
+			],
+			startNodeId: ctx.nodeId,
+			rules: [],
+			tags: [],
+			channels: [{ id: 'ch-review-coding', from: 'Review', to: 'Coding', gateId: gate.id }],
+			gates: [gate],
+		};
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			'node-coding',
+			'coder',
+			'in_progress',
+			null,
+			ctx.coderSessionId
+		);
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const gateSnapshotsDuringDelivery: Array<Record<string, unknown> | undefined> = [];
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId: ctx.workflowRunId,
+			workflowChannels: workflow.channels ?? [],
+			nodeGroups: { Review: ['reviewer'], Coding: ['coder'] },
+			messageInjector: async () => {
+				gateSnapshotsDuringDelivery.push(gateDataRepo.get(ctx.workflowRunId, gate.id)?.data);
+			},
+		});
+		const notifications: string[] = [];
+		const config = makeConfig(ctx, {
+			workflow,
+			channelResolver: makeResolver(workflow.channels ?? []),
+			workflowNodeId: ctx.nodeId,
+			myAgentName: 'reviewer',
+			mySessionId: ctx.reviewerSessionId,
+			gateDataRepo,
+			agentMessageRouter,
+			onGateDataChanged: async (_runId, gateId) => {
+				notifications.push(gateId);
+				gateDataRepo.reset(ctx.workflowRunId, gateId, {});
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'Coding',
+			message: 'Changes requested',
+			data: {
+				pr_url: 'https://github.com/test/repo/pull/42',
+				review_url: 'https://github.com/test/repo/pull/42#pullrequestreview-1',
+			},
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed).toMatchObject({ success: true });
+		expect(gateSnapshotsDuringDelivery).toEqual([
+			{
+				pr_url: 'https://github.com/test/repo/pull/42',
+				review_url: 'https://github.com/test/repo/pull/42#pullrequestreview-1',
+				approvalSource: 'agent',
+			},
+			{
+				pr_url: 'https://github.com/test/repo/pull/42',
+				review_url: 'https://github.com/test/repo/pull/42#pullrequestreview-1',
+				approvalSource: 'agent',
+			},
+		]);
+		expect(notifications).toEqual(['review-posted-gate']);
+		expect(gateDataRepo.get(ctx.workflowRunId, gate.id)?.data).toEqual({});
 	});
 
 	test('internalEventBus publishes space.gateData.updated after gate-write via send_message', async () => {
@@ -3719,5 +3903,314 @@ describe('node-agent-tools: list_audit_entries', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('Audit log repository not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// publish_task
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools \u2014 publish_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('publishes a draft task via callback', async () => {
+		const draftTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Draft task',
+			description: 'Will publish',
+			status: 'draft',
+		});
+
+		const onPublishTask = async (args: { task_id: string }) => {
+			const updated = await ctx.taskManager.publishTask(args.task_id);
+			return jsonResult({ success: true, task: updated });
+		};
+
+		const config = makeConfig(ctx, { onPublishTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.publish_task({ task_id: draftTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('open');
+	});
+
+	test('returns error when callback is not available', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.publish_task({ task_id: 'any-id' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not available');
+	});
+
+	test('returns error when callback fails', async () => {
+		const openTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Open task',
+			description: 'Not draft',
+			status: 'open',
+		});
+
+		const onPublishTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await ctx.taskManager.publishTask(args.task_id);
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const config = makeConfig(ctx, { onPublishTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.publish_task({ task_id: openTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain("'open'");
+	});
+	test('callback emits space.task.updated event after publishing', async () => {
+		const draftTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Draft task',
+			description: 'Event emission test',
+			status: 'draft',
+		});
+
+		const publishedEvents: Array<{
+			event: string;
+			data: { sessionId: string; spaceId: string; taskId: string };
+		}> = [];
+		const mockEventBus = {
+			publish: async (
+				event: string,
+				data: { sessionId: string; spaceId: string; taskId: string }
+			) => {
+				publishedEvents.push({ event, data });
+				return { delivered: 1, failures: [] };
+			},
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+		// This callback mirrors the wiring in task-agent-manager.ts
+		const onPublishTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await ctx.taskManager.publishTask(args.task_id);
+				mockEventBus
+					?.publish('space.task.updated', {
+						sessionId: 'global',
+						spaceId: ctx.spaceId,
+						taskId: updated.id,
+						task: updated,
+					})
+					.catch(() => {});
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const config = makeConfig(ctx, { onPublishTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.publish_task({ task_id: draftTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('open');
+		expect(publishedEvents).toHaveLength(1);
+		expect(publishedEvents[0].event).toBe('space.task.updated');
+		expect(publishedEvents[0].data.taskId).toBe(draftTask.id);
+		expect(publishedEvents[0].data.spaceId).toBe(ctx.spaceId);
+		expect(publishedEvents[0].data.sessionId).toBe('global');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// archive_task
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools \u2014 archive_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('archives a draft task via callback', async () => {
+		const draftTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Draft task',
+			description: 'Will archive',
+			status: 'draft',
+		});
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			const updated = await ctx.taskManager.archiveTask(args.task_id);
+			return jsonResult({ success: true, task: updated });
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: draftTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('archived');
+	});
+
+	test('archives a cancelled task via callback', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Task',
+			description: 'Will cancel then archive',
+			status: 'open',
+		});
+		await ctx.taskManager.cancelTask(task.id);
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			const updated = await ctx.taskManager.archiveTask(args.task_id);
+			return jsonResult({ success: true, task: updated });
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('archived');
+	});
+
+	test('returns error when callback is not available', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: 'any-id' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not available');
+	});
+
+	test('returns error when trying to archive an already-archived task', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Task',
+			description: 'Already archived',
+			status: 'draft',
+		});
+		await ctx.taskManager.archiveTask(task.id);
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await ctx.taskManager.archiveTask(args.task_id);
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('archived');
+	});
+	test('callback emits space.task.updated event after archiving', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Draft task',
+			description: 'Event emission test',
+			status: 'draft',
+		});
+
+		const publishedEvents: Array<{
+			event: string;
+			data: { sessionId: string; spaceId: string; taskId: string };
+		}> = [];
+		const mockEventBus = {
+			publish: async (
+				event: string,
+				data: { sessionId: string; spaceId: string; taskId: string }
+			) => {
+				publishedEvents.push({ event, data });
+				return { delivered: 1, failures: [] };
+			},
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+		// This callback mirrors the wiring in task-agent-manager.ts
+		const onArchiveTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await ctx.taskManager.archiveTask(args.task_id);
+				mockEventBus
+					?.publish('space.task.updated', {
+						sessionId: 'global',
+						spaceId: ctx.spaceId,
+						taskId: updated.id,
+						task: updated,
+					})
+					.catch(() => {});
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('archived');
+		expect(publishedEvents).toHaveLength(1);
+		expect(publishedEvents[0].event).toBe('space.task.updated');
+		expect(publishedEvents[0].data.taskId).toBe(task.id);
+		expect(publishedEvents[0].data.spaceId).toBe(ctx.spaceId);
+		expect(publishedEvents[0].data.sessionId).toBe('global');
+	});
+
+	test('clears pending-completion fields when archiving from review', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Review task',
+			description: 'Will archive from review',
+			status: 'open',
+		});
+		await ctx.taskManager.startTask(task.id);
+		await ctx.taskManager.submitTaskForReview(task.id, {
+			submittedByNodeId: null,
+			reason: 'Test submission',
+		});
+		const reviewTask = ctx.taskRepo.getTask(task.id);
+		expect(reviewTask?.pendingCheckpointType).toBe('task_completion');
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			const updated = await ctx.taskManager.archiveTask(args.task_id);
+			return jsonResult({ success: true, task: updated });
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('archived');
+		expect(data.task.pendingCheckpointType).toBeNull();
+		expect(data.task.pendingCompletionSubmittedByNodeId).toBeNull();
 	});
 });

@@ -58,6 +58,7 @@ describe('QueryRunner', () => {
 	let onSlashCommandsFetchedSpy: ReturnType<typeof mock>;
 	let onModelsFetchedSpy: ReturnType<typeof mock>;
 	let onMarkApiSuccessSpy: ReturnType<typeof mock>;
+	let trackAgentProcessSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockSession = {
@@ -86,6 +87,7 @@ describe('QueryRunner', () => {
 		queryGeneration = 0;
 
 		// Create callback spies
+		trackAgentProcessSpy = mock(() => {});
 		onSDKMessageSpy = mock(async () => {});
 		onSlashCommandsFetchedSpy = mock(async () => {});
 		onModelsFetchedSpy = mock(async () => {});
@@ -198,6 +200,7 @@ describe('QueryRunner', () => {
 			originalEnvVars: {},
 
 			processExitedPromise: null,
+			trackAgentProcess: trackAgentProcessSpy,
 
 			// Methods for state coordination
 			incrementQueryGeneration: () => ++queryGeneration,

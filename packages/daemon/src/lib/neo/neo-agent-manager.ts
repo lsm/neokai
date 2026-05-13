@@ -151,6 +151,17 @@ export class NeoAgentManager {
 		return this.session;
 	}
 
+	*getTrackedAgentRootPids(): Iterable<number> {
+		if (this.session) {
+			yield* this.session.getTrackedAgentRootPids();
+		}
+	}
+
+	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
+		if (!this.session) return { live: [], exited: [] };
+		return this.session.getTrackedAgentRootPidsSplit();
+	}
+
 	/**
 	 * Wire in the query tools dependencies and optional MCP registry manager.
 	 *

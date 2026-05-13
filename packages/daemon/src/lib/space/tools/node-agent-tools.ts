@@ -68,6 +68,8 @@ import {
 	ListTasksSchema,
 	GetTaskSchema,
 	ListAuditEntriesSchema,
+	PublishTaskSchema,
+	ArchiveTaskSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
@@ -83,6 +85,8 @@ import type {
 	ListTasksInput,
 	GetTaskInput,
 	ListAuditEntriesInput,
+	PublishTaskInput,
+	ArchiveTaskInput,
 } from './node-agent-tool-schemas';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -175,7 +179,10 @@ export interface NodeAgentToolsConfig {
 	 * Callback invoked after a gate data write to trigger re-evaluation and
 	 * potential lazy node activation for any channels referencing the changed gate.
 	 *
-	 * Called by `write_gate` after every successful data merge (fire-and-forget).
+	 * Called by `send_message` after a successful gated message delivery. The
+	 * handler awaits and serializes notifications per gate so cyclic reset-on-
+	 * delivery cannot race ahead of the in-flight send and make the same call
+	 * validate against freshly reset data.
 	 * When provided, blocked target nodes are auto-activated the moment their gate
 	 * condition is satisfied — enabling vote-counting and push-on-write semantics.
 	 * When absent, nodes are activated at the next `deliverMessage` call instead.
@@ -222,6 +229,17 @@ export interface NodeAgentToolsConfig {
 	 * namespace.
 	 */
 	onCreateStandaloneTask?: (args: CreateStandaloneTaskInput) => Promise<ToolResult>;
+	/**
+	 * Optional callback for \`publish_task\`. When provided, node agents can
+	 * publish draft tasks (transition draft → open) without the broader
+	 * space-agent-tools namespace.
+	 */
+	onPublishTask?: (args: PublishTaskInput) => Promise<ToolResult>;
+	/**
+	 * Optional callback for \`archive_task\`. When provided, node agents can
+	 * archive tasks without the broader space-agent-tools namespace.
+	 */
+	onArchiveTask?: (args: ArchiveTaskInput) => Promise<ToolResult>;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * When provided, agent gate writes via send_message are blocked when
@@ -279,7 +297,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		agentMessageRouter,
 		workflow,
 		gateDataRepo,
-		onGateDataChanged,
 		scriptExecutor,
 		scriptContext,
 		getSpaceAutonomyLevel,
@@ -312,6 +329,33 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			.map((value) => normalizeAgentNameToken(value))
 			.filter((value) => value.length > 0)
 	);
+
+	const pendingGateChangeNotifications = new Map<string, Promise<unknown>>();
+
+	async function notifyGateDataChanged(gateId: string): Promise<void> {
+		if (!config.onGateDataChanged) return;
+
+		const previous = pendingGateChangeNotifications.get(gateId);
+		const current = (async () => {
+			if (previous) {
+				try {
+					await previous;
+				} catch {
+					// Prior notification failures are already logged by their owner.
+				}
+			}
+			return config.onGateDataChanged!(workflowRunId, gateId);
+		})();
+
+		pendingGateChangeNotifications.set(gateId, current);
+		try {
+			await current;
+		} finally {
+			if (pendingGateChangeNotifications.get(gateId) === current) {
+				pendingGateChangeNotifications.delete(gateId);
+			}
+		}
+	}
 
 	/** Helper to log MCP write operations to the audit log. */
 	function logAudit(
@@ -731,15 +775,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 									}
 								}
 
-								if (onGateDataChanged) {
-									void onGateDataChanged(workflowRunId, gateId).catch((err) => {
-										log.warn(
-											`onGateDataChanged failed for gate "${gateId}" in run "${workflowRunId}":`,
-											err instanceof Error ? err.message : String(err)
-										);
-									});
-								}
-
 								if (internalEventBus) {
 									void internalEventBus
 										.publish('space.gateData.updated', {
@@ -759,6 +794,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				}
 			}
 
+			const gateIdToNotify = gateWriteResult?.gateId;
+
 			// Audit log: gate data writes via send_message
 			if (gateWriteResult) {
 				logAudit('send_message', {
@@ -776,6 +813,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				message,
 				data,
 			});
+
+			if (gateIdToNotify) {
+				try {
+					await notifyGateDataChanged(gateIdToNotify);
+				} catch (err) {
+					log.warn(
+						`onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
+						err instanceof Error ? err.message : String(err)
+					);
+				}
+			}
 
 			if (!result.success) {
 				return jsonResult({
@@ -1186,6 +1234,38 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			return result;
 		},
 
+		async publish_task(args: PublishTaskInput): Promise<ToolResult> {
+			if (!config.onPublishTask) {
+				return jsonResult({
+					success: false,
+					error: 'publish_task is not available in this node-agent session.',
+				});
+			}
+			const result = await config.onPublishTask(args);
+			const payload = decodeToolResultPayload(result);
+			if (payload?.success) {
+				const publishedTask = payload?.task as { id: string } | undefined;
+				logAudit('publish_task', { task_id: args.task_id }, publishedTask?.id);
+			}
+			return result;
+		},
+
+		async archive_task(args: ArchiveTaskInput): Promise<ToolResult> {
+			if (!config.onArchiveTask) {
+				return jsonResult({
+					success: false,
+					error: 'archive_task is not available in this node-agent session.',
+				});
+			}
+			const result = await config.onArchiveTask(args);
+			const payload = decodeToolResultPayload(result);
+			if (payload?.success) {
+				const archivedTask = payload?.task as { id: string } | undefined;
+				logAudit('archive_task', { task_id: args.task_id }, archivedTask?.id);
+			}
+			return result;
+		},
+
 		async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
 			if (!config.onApproveTask) {
 				return jsonResult({
@@ -1477,6 +1557,26 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 						'Create a task request in this Space. Runtime may attach and execute a workflow for this task during orchestration. Supports structured task dependencies via depends_on — the task will be blocked until every listed dependency reaches status=done, and cascade-cancelled if a dependency is cancelled.',
 						CreateStandaloneTaskSchema.shape,
 						(args) => handlers.create_standalone_task(args)
+					),
+				]
+			: []),
+		...(config.onPublishTask
+			? [
+					tool(
+						'publish_task',
+						'Publish a draft task, transitioning it from draft to open status. Published tasks become eligible for orchestration by the runtime tick loop. Only valid for tasks currently in draft status.',
+						PublishTaskSchema.shape,
+						(args) => handlers.publish_task(args)
+					),
+				]
+			: []),
+		...(config.onArchiveTask
+			? [
+					tool(
+						'archive_task',
+						"Archive a task. Archived tasks are excluded from most queries and cannot be reactivated. Valid from any status that allows the 'archived' transition (e.g. draft, done, cancelled, blocked, review, approved).",
+						ArchiveTaskSchema.shape,
+						(args) => handlers.archive_task(args)
 					),
 				]
 			: []),

@@ -6,7 +6,7 @@
  * using mock.module() which affects other test files globally.
  */
 
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import { describe, expect, it, mock, beforeEach, afterEach, spyOn } from 'bun:test';
 import type {
 	Session,
 	ContextInfo,
@@ -229,6 +229,164 @@ describe('AgentSession', () => {
 			expect(response.questionIndex).toBe(0);
 			expect(response.selectedOptionIndices).toEqual([0, 2]);
 			expect(response.customText).toBe('custom input');
+		});
+	});
+
+	describe('process tracking cleanup', () => {
+		let processKillSpy: ReturnType<typeof spyOn> | null = null;
+
+		afterEach(() => {
+			processKillSpy?.mockRestore();
+			processKillSpy = null;
+		});
+
+		function createAgentSession(): AgentSession {
+			const mockSession: Session = {
+				id: `test-session-${Math.random()}`,
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {},
+			} as Session;
+
+			const mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+				getUserMessages: mock(() => []),
+				getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+				deleteMessagesAfter: mock(() => 0),
+				deleteMessagesAtAndAfter: mock(() => 0),
+				getUserMessageByUuid: mock(() => undefined),
+				countMessagesAfter: mock(() => 0),
+				getMessagesByStatus: mock(() => []),
+				updateMessage: mock(() => {}),
+				getSDKMessageCount: mock(() => 0),
+			} as unknown as Database;
+
+			return new AgentSession(
+				mockSession,
+				mockDb,
+				{} as MessageHub,
+				{
+					publish: mock(async () => {}),
+					publishAsync: mock(() => {}),
+					subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+				} as unknown as InternalEventBus<any>,
+				mock(async () => 'test-api-key')
+			);
+		}
+
+		it('exposes tracked root pids for daemon-owned watchdog scoping', () => {
+			const agentSession = createAgentSession();
+			const proc = {
+				pid: 12345,
+				once: mock((_event: string, _handler: () => void) => proc),
+				kill: mock(() => true),
+			};
+
+			agentSession.trackAgentProcess(proc as never);
+
+			expect([...agentSession.getTrackedAgentRootPids()]).toEqual([12345]);
+		});
+
+		it('binds deferred SIGKILL to the process snapshot being terminated', async () => {
+			const agentSession = createAgentSession();
+			processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);
+			const firstProc = {
+				pid: 111,
+				once: mock((_event: string, _handler: () => void) => firstProc),
+				kill: mock(() => true),
+			};
+			const secondProc = {
+				pid: 222,
+				once: mock((_event: string, _handler: () => void) => secondProc),
+				kill: mock(() => true),
+			};
+
+			agentSession.trackAgentProcess(firstProc as never);
+			agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10 });
+			agentSession.trackAgentProcess(secondProc as never);
+
+			await new Promise((resolve) => setTimeout(resolve, 25));
+
+			expect(firstProc.kill).toHaveBeenCalledWith('SIGKILL');
+			expect(secondProc.kill).not.toHaveBeenCalledWith('SIGKILL');
+			expect([...agentSession.getTrackedAgentRootPids()]).toEqual([222, 111]);
+		});
+
+		it('keeps SIGKILL escalation for remaining processes when one exits', async () => {
+			const agentSession = createAgentSession();
+			processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);
+			let firstExitHandler: (() => void) | null = null;
+			const firstProc = {
+				pid: 111,
+				once: mock((_event: string, handler: () => void) => {
+					firstExitHandler = handler;
+					return firstProc;
+				}),
+				kill: mock(() => true),
+			};
+			const secondProc = {
+				pid: 222,
+				once: mock((_event: string, _handler: () => void) => secondProc),
+				kill: mock(() => true),
+			};
+
+			agentSession.trackAgentProcess(firstProc as never);
+			agentSession.trackAgentProcess(secondProc as never);
+			agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 15 });
+			firstExitHandler?.();
+
+			await new Promise((resolve) => setTimeout(resolve, 30));
+
+			expect(secondProc.kill).toHaveBeenCalledWith('SIGKILL');
+		});
+
+		it('signals each tracked process group in the stop snapshot', () => {
+			const agentSession = createAgentSession();
+			processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);
+			const firstProc = {
+				pid: 111,
+				once: mock((_event: string, _handler: () => void) => firstProc),
+				kill: mock(() => true),
+			};
+			const secondProc = {
+				pid: 222,
+				once: mock((_event: string, _handler: () => void) => secondProc),
+				kill: mock(() => true),
+			};
+
+			agentSession.trackAgentProcess(firstProc as never);
+			agentSession.trackAgentProcess(secondProc as never);
+			agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 50 });
+
+			expect(processKillSpy).toHaveBeenCalledWith(-111, 'SIGTERM');
+			expect(processKillSpy).toHaveBeenCalledWith(-222, 'SIGTERM');
+		});
+
+		it('keeps failed SIGKILL deliveries tracked for later cleanup', async () => {
+			const agentSession = createAgentSession();
+			processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);
+			const proc = {
+				pid: 333,
+				once: mock((_event: string, _handler: () => void) => proc),
+				kill: mock((signal: NodeJS.Signals) => signal !== 'SIGKILL'),
+			};
+
+			agentSession.trackAgentProcess(proc as never);
+			agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10 });
+
+			await new Promise((resolve) => setTimeout(resolve, 25));
+
+			expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+			expect([...agentSession.getTrackedAgentRootPids()]).toEqual([333]);
 		});
 	});
 
