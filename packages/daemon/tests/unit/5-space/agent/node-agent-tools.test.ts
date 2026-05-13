@@ -30,6 +30,7 @@ import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-mess
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
+import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 import type {
 	DaemonInternalEventMap,
@@ -3902,5 +3903,175 @@ describe('node-agent-tools: list_audit_entries', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('Audit log repository not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// publish_task
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools \u2014 publish_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('publishes a draft task via callback', async () => {
+		const draftTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Draft task',
+			description: 'Will publish',
+			status: 'draft',
+		});
+
+		const onPublishTask = async (args: { task_id: string }) => {
+			const updated = await ctx.taskManager.publishTask(args.task_id);
+			return jsonResult({ success: true, task: updated });
+		};
+
+		const config = makeConfig(ctx, { onPublishTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.publish_task({ task_id: draftTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('open');
+	});
+
+	test('returns error when callback is not available', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.publish_task({ task_id: 'any-id' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not available');
+	});
+
+	test('returns error when callback fails', async () => {
+		const openTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Open task',
+			description: 'Not draft',
+			status: 'open',
+		});
+
+		const onPublishTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await ctx.taskManager.publishTask(args.task_id);
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const config = makeConfig(ctx, { onPublishTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.publish_task({ task_id: openTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain("'open'");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// archive_task
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools \u2014 archive_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('archives a draft task via callback', async () => {
+		const draftTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Draft task',
+			description: 'Will archive',
+			status: 'draft',
+		});
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			const updated = await ctx.taskManager.archiveTask(args.task_id);
+			return jsonResult({ success: true, task: updated });
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: draftTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('archived');
+	});
+
+	test('archives a cancelled task via callback', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Task',
+			description: 'Will cancel then archive',
+			status: 'open',
+		});
+		await ctx.taskManager.cancelTask(task.id);
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			const updated = await ctx.taskManager.archiveTask(args.task_id);
+			return jsonResult({ success: true, task: updated });
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('archived');
+	});
+
+	test('returns error when callback is not available', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: 'any-id' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not available');
+	});
+
+	test('returns error when trying to archive an already-archived task', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Task',
+			description: 'Already archived',
+			status: 'draft',
+		});
+		await ctx.taskManager.archiveTask(task.id);
+
+		const onArchiveTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await ctx.taskManager.archiveTask(args.task_id);
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('archived');
 	});
 });
