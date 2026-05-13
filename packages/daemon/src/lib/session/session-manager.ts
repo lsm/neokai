@@ -568,9 +568,6 @@ export class SessionManager {
 	async interruptInMemorySession(sessionId: string): Promise<void> {
 		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
 		if (agentSession) {
-			// Snapshot exited root PIDs before cleanup so the watchdog retains
-			// ownership attribution for the full 15-minute retention window.
-			this.preserveExitedRootPids(agentSession);
 			try {
 				await agentSession.cleanup();
 			} catch (error) {
@@ -579,6 +576,11 @@ export class SessionManager {
 					error
 				);
 			}
+			// Snapshot exited root PIDs AFTER cleanup so the retention window
+			// starts from the actual process exit time, not from eviction time.
+			// cleanup() awaits process exit, so live PIDs will have transitioned
+			// to the exited set with their real exit timestamps.
+			this.preserveExitedRootPids(agentSession);
 		}
 		this.sessionCache.remove(sessionId);
 	}
@@ -592,22 +594,17 @@ export class SessionManager {
 	}
 
 	/**
-	 * Snapshot exited root PIDs from an AgentSession before it is removed from
+	 * Snapshot exited root PIDs from an AgentSession after it is removed from
 	 * the session cache, so the process watchdog retains ownership attribution.
+	 *
+	 * Callers must invoke this AFTER cleanup so live PIDs have transitioned to
+	 * the exited set with their actual exit timestamps — this ensures the
+	 * 15-minute retention window starts from real exit time, not eviction time.
 	 */
 	private preserveExitedRootPids(agentSession: AgentSession): void {
 		const split = agentSession.getTrackedAgentRootPidsSplit();
 		const now = Date.now();
 		for (const pid of split.exited) {
-			if (!this.recentlyExitedAgentRootPids.has(pid)) {
-				this.recentlyExitedAgentRootPids.set(pid, now);
-			}
-		}
-		// Also preserve live PIDs — they will transition to exited when the
-		// process actually exits (the session is being interrupted/removed,
-		// so the SDK subprocess will terminate shortly). Without this, live
-		// roots would be lost entirely when the cache entry is removed.
-		for (const pid of split.live) {
 			if (!this.recentlyExitedAgentRootPids.has(pid)) {
 				this.recentlyExitedAgentRootPids.set(pid, now);
 			}
