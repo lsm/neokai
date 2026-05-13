@@ -834,7 +834,10 @@ export class SpaceRuntime {
 					await this.deliverToSession(target, payload, deliveryKey, 'defer');
 				} else if (this.isPending(target)) {
 					this.queueForPendingNode(target, payload, deliveryKey);
-				} else if (this.hasActiveExecutionForRun(target.workflowRunId)) {
+				} else if (
+					this.hasActiveExecutionForRun(target.workflowRunId) &&
+					!this.hasTerminalExecutionForTarget(target)
+				) {
 					this.queueForPendingNode(target, payload, deliveryKey);
 				} else {
 					store.markDeliveryFailed(payload.eventId, deliveryKey, {
@@ -1104,6 +1107,24 @@ export class SpaceRuntime {
 
 	private isTargetSessionLive(sessionId: string): boolean {
 		return this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false;
+	}
+
+	/**
+	 * Returns true when the target node-agent has at least one terminal
+	 * execution (idle/cancelled). Used to prevent queueing deliveries for
+	 * targets that have permanently finished but whose run is still active
+	 * due to other nodes.
+	 */
+	private hasTerminalExecutionForTarget(
+		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
+	): boolean {
+		return this.config.nodeExecutionRepo
+			.listByNode(target.workflowRunId, target.nodeId)
+			.some(
+				(execution) =>
+					execution.agentName === target.agentName &&
+					(execution.status === 'idle' || execution.status === 'cancelled')
+			);
 	}
 
 	private buildQueueKey(
@@ -1789,6 +1810,11 @@ export class SpaceRuntime {
 		this.subscribeExternalEventPublished();
 		this.acceptingExternalEvents = this.rehydrated;
 		this.rescheduleQueuedExternalEventRetries();
+		// Sweep events that arrived while stopped. On first start this is a
+		// no-op (sweep runs inside executeTick after rehydrate). On
+		// stop→start of the same runtime instance, it catches events that
+		// were persisted while the external-event subscriber was detached.
+		this.redispatchPublishedEventsWithoutDeliveries();
 		const interval = this.config.tickIntervalMs ?? 5_000;
 
 		// Kick off the first tick immediately, then schedule the loop.

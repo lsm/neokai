@@ -599,6 +599,32 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById('evt-stranded-without-matches')?.state).toBe('ignored');
 	});
 
+	test('redispatches events that arrived during stop when runtime restarts', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-stop-start-sweep',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-stop-start-sweep');
+		await runtime.executeTick();
+		await runtime.stop();
+		// Event arrives while stopped (subscriber detached, persisted only)
+		eventStore.store(makeEvent({ id: 'evt-arrived-while-stopped' }));
+
+		// Restart the same runtime instance (rehydrated=true, interests intact)
+		runtime.start();
+		// The sweep in start() fires async — wait for microtasks to settle
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(eventStore.listDeliveries('evt-arrived-while-stopped')).toHaveLength(1);
+		expect(eventStore.getById('evt-arrived-while-stopped')?.state).toBe('delivered');
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-stop-start-sweep');
+	});
+
 	test('requeues persisted pending deliveries during runtime rehydrate', async () => {
 		const workflow = createWorkflow();
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -765,6 +791,71 @@ describe('SpaceRuntime external event subscriptions', () => {
 		]);
 		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
 		expect(eventStore.getById(event.id)?.state).toBe('ignored');
+	});
+
+	test('terminalizes delivery for target node with no queueable execution in multi-node run', async () => {
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: `Workflow ${Math.random()}`,
+			description: '',
+			nodes: [
+				{
+					id: 'review',
+					name: 'Review',
+					agents: [
+						{
+							agentId: AGENT_ID,
+							name: 'reviewer',
+							eventInterests: [{ topic: 'github/*/*/pull_request.review_*' }],
+						},
+					],
+				},
+				{
+					id: 'code',
+					name: 'Code',
+					agents: [
+						{
+							agentId: AGENT_ID,
+							name: 'coder',
+							eventInterests: [{ topic: 'github/*/*/pull_request.review_*' }],
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'review',
+			rules: [],
+			tags: [],
+		});
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		// Make the review node execution in_progress (active)
+		const reviewExecution = nodeExecutionRepo.listByNode(run.id, 'review')[0]!;
+		nodeExecutionRepo.update(reviewExecution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-review-active',
+			startedAt: Date.now(),
+		});
+		// Create an idle execution for the code node (terminal for that target)
+		const codeExecution = nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: 'code',
+			agentName: 'coder',
+			status: 'idle',
+		});
+		nodeExecutionRepo.update(codeExecution.id, {
+			completedAt: Date.now(),
+		});
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		// The code node should be terminalized immediately (no queueable execution)
+		const deliveries = eventStore.listDeliveries(event.id);
+		expect(deliveries).toHaveLength(2);
+		const codeDelivery = deliveries.find((d) => d.nodeId === 'code')!;
+		expect(codeDelivery).toBeDefined();
+		expect(codeDelivery.state).toBe('failed');
+		expect(codeDelivery.failureReason).toBe('node_execution_not_active');
 	});
 
 	test('preserves queued deliveries while re-registering unchanged interests', async () => {
@@ -1231,8 +1322,8 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const deliveries = eventStore.listDeliveries(event.id);
 		expect(deliveries).toHaveLength(2);
 		expect(deliveries.some((delivery) => delivery.state === 'delivered')).toBe(true);
-		expect(deliveries.some((delivery) => delivery.state === 'pending')).toBe(true);
-		expect(eventStore.getById(event.id)?.state).toBe('published');
+		expect(deliveries.some((delivery) => delivery.state === 'failed')).toBe(true);
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
 	});
 
 	test('clears retry state when pending queue overflow drops a retry delivery', async () => {
