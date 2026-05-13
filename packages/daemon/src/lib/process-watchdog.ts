@@ -120,11 +120,24 @@ export async function cleanupSuspiciousProcesses(options?: {
 		if (!threshold) continue;
 
 		try {
+			// Signal the entire process group first (reaches tool-wrapper children).
+			if (
+				typeof snapshot.pgid === 'number' &&
+				Number.isFinite(snapshot.pgid) &&
+				snapshot.pgid > 0 &&
+				snapshot.pgid !== snapshot.pid
+			) {
+				try {
+					killer(-snapshot.pgid, 'SIGTERM');
+				} catch {
+					// Process group may have already exited — fall through to direct signal.
+				}
+			}
 			killer(snapshot.pid, 'SIGTERM');
 			killed++;
 			logger.warn(
 				`Killing suspicious daemon-owned long-running process pid=${snapshot.pid} ppid=${snapshot.ppid} ` +
-					`runtimeMs=${runtimeMs} thresholdMs=${threshold.thresholdMs} command=${snapshot.command}`
+					`pgid=${snapshot.pgid ?? 'n/a'} runtimeMs=${runtimeMs} thresholdMs=${threshold.thresholdMs} command=${snapshot.command}`
 			);
 		} catch (error) {
 			logger.warn(

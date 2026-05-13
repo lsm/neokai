@@ -1243,9 +1243,15 @@ export class AgentSession
 	trackAgentProcess(proc: TrackedAgentProcess): void {
 		const pid = proc.pid;
 		if (typeof pid !== 'number' || pid <= 0) {
-			this.processExitedPromise = new Promise<void>((resolve) => {
+			// Don't overwrite processExitedPromise — other tracked SDK roots may
+			// still be running and stop() relies on the aggregated promise.
+			const noPidExitPromise = new Promise<void>((resolve) => {
 				proc.once('exit', () => resolve());
 			});
+			const existing = this.processExitedPromise;
+			this.processExitedPromise = existing
+				? Promise.all([existing, noPidExitPromise]).then(() => {})
+				: noPidExitPromise;
 			return;
 		}
 
