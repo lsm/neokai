@@ -157,14 +157,13 @@ export class SpaceAgentNotificationService {
 						// Immediately clear the counter so concurrent events arriving
 						// while injectMessage is in-flight don't produce duplicates.
 						this.autoCompletedCounts.delete(event.taskId);
-						const message = formatAgentAutoCompleted(event, this.autonomyLevel, count);
-						void this.notify(message).then((sent) => {
-							if (!sent) {
-								// Restore counter on failure so the next auto-completion
-								// can retry the notification from the same count.
-								this.autoCompletedCounts.set(event.taskId, count);
-							}
-						});
+						void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel, count));
+						// Counter is cleared regardless of notification outcome. If the
+						// session is unavailable (injectMessage fails), subsequent
+						// notifications would also fail. The task starts a fresh threshold
+						// cycle on the next auto-completion. Avoids a race where restoring
+						// a stale counter after a terminal task transition would cause
+						// spurious early notifications on the next attempt.
 					}
 				},
 				{
@@ -249,20 +248,18 @@ export class SpaceAgentNotificationService {
 		};
 	}
 
-	private async notify(message: string): Promise<boolean> {
+	private async notify(message: string): Promise<void> {
 		try {
 			await this.sessionFactory.injectMessage(this.sessionId, message, {
 				deliveryMode: 'defer',
 				origin: 'system',
 			});
-			return true;
 		} catch (err) {
 			// Session not found or unavailable — log warning, do not propagate.
 			// The notification service must not fail the caller's event handler.
 			log.warn(
 				`[SpaceAgentNotificationService] Failed to inject notification into session ${this.sessionId}: ${err instanceof Error ? err.message : String(err)}`
 			);
-			return false;
 		}
 	}
 }
