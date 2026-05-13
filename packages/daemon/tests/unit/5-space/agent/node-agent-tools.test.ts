@@ -1590,7 +1590,7 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		});
 	});
 
-	test('onGateDataChanged fires after gate-write via send_message', async () => {
+	test('onGateDataChanged fires after successful gated delivery via send_message', async () => {
 		const gate: Gate = {
 			id: 'gate-callback',
 			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
@@ -1600,6 +1600,7 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		const calls: Array<{ runId: string; gateId: string }> = [];
 		const config = makeConfig(ctx, {
 			workflow,
+			channelResolver: makeResolver(workflow.channels ?? []),
 			onGateDataChanged: async (runId, gateId) => {
 				calls.push({ runId, gateId });
 			},
@@ -1612,6 +1613,102 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0].runId).toBe(ctx.workflowRunId);
 		expect(calls[0].gateId).toBe('gate-callback');
+	});
+
+	test('does not notify gate data changed before the current gated delivery finishes', async () => {
+		const gate: Gate = {
+			id: 'review-posted-gate',
+			fields: [
+				{ name: 'pr_url', type: 'string', writers: ['Review'], check: { op: 'exists' } },
+				{ name: 'review_url', type: 'string', writers: ['Review'], check: { op: 'exists' } },
+			],
+			resetOnCycle: true,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-review-posted-race',
+			spaceId: ctx.spaceId,
+			name: 'Review Posted Race Workflow',
+			description: '',
+			nodes: [
+				{
+					id: ctx.nodeId,
+					name: 'Review',
+					agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+				},
+				{
+					id: 'node-coding',
+					name: 'Coding',
+					agents: [{ agentId: 'agent-coder', name: 'coder' }],
+				},
+			],
+			startNodeId: ctx.nodeId,
+			rules: [],
+			tags: [],
+			channels: [{ id: 'ch-review-coding', from: 'Review', to: 'Coding', gateId: gate.id }],
+			gates: [gate],
+		};
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			'node-coding',
+			'coder',
+			'in_progress',
+			null,
+			ctx.coderSessionId
+		);
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const gateSnapshotsDuringDelivery: Array<Record<string, unknown> | undefined> = [];
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId: ctx.workflowRunId,
+			workflowChannels: workflow.channels ?? [],
+			nodeGroups: { Review: ['reviewer'], Coding: ['coder'] },
+			messageInjector: async () => {
+				gateSnapshotsDuringDelivery.push(gateDataRepo.get(ctx.workflowRunId, gate.id)?.data);
+			},
+		});
+		const notifications: string[] = [];
+		const config = makeConfig(ctx, {
+			workflow,
+			channelResolver: makeResolver(workflow.channels ?? []),
+			workflowNodeId: ctx.nodeId,
+			myAgentName: 'reviewer',
+			mySessionId: ctx.reviewerSessionId,
+			gateDataRepo,
+			agentMessageRouter,
+			onGateDataChanged: async (_runId, gateId) => {
+				notifications.push(gateId);
+				gateDataRepo.reset(ctx.workflowRunId, gateId, {});
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'Coding',
+			message: 'Changes requested',
+			data: {
+				pr_url: 'https://github.com/test/repo/pull/42',
+				review_url: 'https://github.com/test/repo/pull/42#pullrequestreview-1',
+			},
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed).toMatchObject({ success: true });
+		expect(gateSnapshotsDuringDelivery).toEqual([
+			{
+				pr_url: 'https://github.com/test/repo/pull/42',
+				review_url: 'https://github.com/test/repo/pull/42#pullrequestreview-1',
+				approvalSource: 'agent',
+			},
+			{
+				pr_url: 'https://github.com/test/repo/pull/42',
+				review_url: 'https://github.com/test/repo/pull/42#pullrequestreview-1',
+				approvalSource: 'agent',
+			},
+		]);
+		expect(notifications).toEqual(['review-posted-gate']);
+		expect(gateDataRepo.get(ctx.workflowRunId, gate.id)?.data).toEqual({});
 	});
 
 	test('internalEventBus publishes space.gateData.updated after gate-write via send_message', async () => {
