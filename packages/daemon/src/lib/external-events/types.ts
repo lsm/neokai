@@ -10,6 +10,9 @@
  * See docs/plans/design-external-event-bus-for-space-workflow-nodes.md.
  */
 
+import type { MessageHub } from '@neokai/shared/message-hub/message-hub.ts';
+import type { ExternalEventPublisher } from './external-event-service';
+
 /**
  * A normalized external event on the bus.
  *
@@ -137,4 +140,70 @@ export interface DeliveryFailure {
 	terminal: boolean;
 	/** Free-form failure reason for diagnostics (logged + persisted). */
 	reason: string;
+}
+
+export interface ExternalEventExtensionConfig {
+	source: string;
+	globallyEnabled: boolean;
+	capabilities: {
+		webhooks?: boolean;
+		polling?: boolean;
+		rpcConfig?: boolean;
+	};
+	secretsRef?: string;
+	settings?: Record<string, unknown>;
+}
+
+export interface SpaceExternalEventSourceConfig {
+	spaceId: string;
+	source: string;
+	enabled: boolean;
+	settings: Record<string, unknown>;
+}
+
+export interface ExternalEventExtensionContext {
+	/** Publish a normalized event into the shared external-event subsystem. */
+	publisher: ExternalEventPublisher;
+	/** Read global extension config, secrets references, and per-space config. */
+	config: ExternalEventExtensionConfigStore;
+	/** Notify core services that source configuration changed for a space. */
+	onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }): void;
+}
+
+export interface ExternalEventExtensionConfigStore {
+	getGlobalConfig(source: string): Promise<ExternalEventExtensionConfig>;
+	getSpaceConfig(spaceId: string, source: string): Promise<SpaceExternalEventSourceConfig | null>;
+	listEnabledSpaces(source: string): Promise<SpaceExternalEventSourceConfig[]>;
+	setGlobalConfig(source: string, config: ExternalEventExtensionConfig): Promise<void>;
+	setSpaceConfig(
+		spaceId: string,
+		source: string,
+		config: SpaceExternalEventSourceConfig
+	): Promise<void>;
+}
+
+/** Interface that event source extensions must implement. */
+export interface ExternalEventExtension {
+	/** Source identifier used in topic namespace: '{source}/...'. */
+	readonly sourceId: string;
+
+	/** Start the extension. Called once when the source is globally enabled. */
+	start(context: ExternalEventExtensionContext): Promise<void>;
+
+	/** Stop the extension. Called at daemon shutdown or when globally disabled. */
+	stop(): Promise<void>;
+}
+
+export interface Route {
+	readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+	readonly path: string;
+	handle(req: Request, context: ExternalEventExtensionContext): Promise<Response>;
+}
+
+export interface HttpExternalEventExtension extends ExternalEventExtension {
+	readonly routes: readonly Route[];
+}
+
+export interface RpcExternalEventExtension extends ExternalEventExtension {
+	registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void;
 }

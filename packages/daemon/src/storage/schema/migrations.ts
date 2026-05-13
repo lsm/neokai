@@ -615,8 +615,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// workflow identifiers (alternative to UUID). Unique per space.
 	runMigration127(db);
 
-	// Migration 128: Add per-space concurrent task execution limit.
+	// Migration 128: Add external-event extension configuration tables.
 	runMigration128(db);
+
+	// Migration 129: Add per-space concurrent task execution limit.
+	runMigration129(db);
 }
 
 /**
@@ -8736,13 +8739,6 @@ export function runMigration126(db: BunDatabase): void {
  * repeatedly: rows with a non-null handle are untouched (the SELECT filters
  * them out), so existing handles are always preserved across restarts.
  */
-export function runMigration128(db: BunDatabase): void {
-	if (!tableExists(db, 'spaces')) return;
-	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
-
-	db.exec(`ALTER TABLE spaces ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 1`);
-}
-
 export function runMigration127(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
 
@@ -8799,6 +8795,50 @@ export function runMigration127(db: BunDatabase): void {
 		handles.push(handle);
 		spaceHandles.set(row.space_id, handles);
 	}
+}
+
+/**
+ * Migration 128: Add external-event extension configuration tables.
+ *
+ * external_event_source_configs stores global source enablement, capabilities,
+ * secrets references, and source-level settings.
+ *
+ * space_external_event_source_configs stores per-space source enablement and
+ * settings, with a cascading FK to spaces so deleting a space removes its
+ * extension configuration.
+ */
+export function runMigration129(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
+
+	db.exec(`ALTER TABLE spaces ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 1`);
+}
+
+export function runMigration128(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS external_event_source_configs (
+			source TEXT PRIMARY KEY,
+			globally_enabled INTEGER NOT NULL DEFAULT 0,
+			capabilities_json TEXT NOT NULL,
+			secrets_ref TEXT,
+			settings_json TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			settings_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(space_id, source),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
 }
 
 /**
