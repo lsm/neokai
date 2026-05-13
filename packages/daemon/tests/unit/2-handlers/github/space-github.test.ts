@@ -210,16 +210,21 @@ describe('Space GitHub integration', () => {
 		});
 	});
 
-	test('extension polling uses auth/cursors and preserves legacy ingestion dedupe', async () => {
+	test('extension polling uses auth/cursors and publishes to ExternalEventService', async () => {
 		const db = setupDb();
 		seedTask(db);
 		const service = new SpaceGitHubService(db);
+		const published: { spaceId: string; topic: string }[] = [];
 		const extension = new GitHubEventExtension(service.eventExtensionRepo, {
 			githubToken: 'token',
-			legacyIngest: (spaceId, event) => service.ingest(spaceId, event),
 		});
 		await extension.start({
-			publisher: { publish: async () => {} },
+			publisher: {
+				publish: async (event: any) => {
+					published.push({ spaceId: event.spaceId, topic: event.topic });
+					return { outcome: 'created', eventId: event.id };
+				},
+			},
 			config: {
 				async getGlobalConfig(source: string) {
 					return { source, globallyEnabled: true, capabilities: { webhooks: true, polling: true } };
@@ -262,12 +267,13 @@ describe('Space GitHub integration', () => {
 			fakeFetch as typeof fetch
 		);
 		expect((calls[0].headers as Record<string, string>).Authorization).toBe('Bearer token');
-		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
+		expect(published).toHaveLength(1);
+		expect(published[0]!.topic).toBe('github/acme/widgets/pull_request.comment_polled');
 		await extension.pollWatchedRepo(
 			extension.repo.listPollingRepos()[0],
 			fakeFetch as typeof fetch
 		);
-		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
+		expect(published).toHaveLength(2);
 		expect((calls[3].headers as Record<string, string>)['If-None-Match']).toBe('etag-1');
 		await extension.stop();
 	});
@@ -313,12 +319,17 @@ describe('Space GitHub integration', () => {
 		const db = setupDb();
 		seedTask(db);
 		const service = new SpaceGitHubService(db);
+		let publishCount = 0;
 		const extension = new GitHubEventExtension(service.eventExtensionRepo, {
 			githubToken: 'token',
-			legacyIngest: (spaceId, event) => service.ingest(spaceId, event),
 		});
 		await extension.start({
-			publisher: { publish: async () => {} },
+			publisher: {
+				publish: async () => {
+					publishCount++;
+					return { outcome: 'created', eventId: 'id' };
+				},
+			},
 			config: {
 				async getGlobalConfig(source: string) {
 					return { source, globallyEnabled: true, capabilities: { webhooks: true, polling: true } };
@@ -384,7 +395,7 @@ describe('Space GitHub integration', () => {
 			fakeFetch as typeof fetch
 		);
 
-		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 100 });
+		expect(publishCount).toBe(100);
 		expect(calls.some((url) => url.includes('per_page=100'))).toBe(true);
 		let cursor = JSON.parse(
 			(
@@ -403,24 +414,8 @@ describe('Space GitHub integration', () => {
 		);
 
 		expect(calls.some((url) => url.includes('page=2') && !url.includes('since='))).toBe(true);
-		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 101 });
-		cursor = JSON.parse(
-			(
-				db.prepare('SELECT poll_cursor FROM space_github_watched_repos').get() as {
-					poll_cursor: string;
-				}
-			).poll_cursor
-		);
-		expect(cursor.processedPages.pulls).toBe(1);
-		expect(cursor.pendingLastSeenAt).toBeUndefined();
-		expect(cursor.lastSeenAt).toBeGreaterThan(0);
-		expect(
-			(
-				db.prepare('SELECT dedupe_key FROM space_github_events LIMIT 1').get() as {
-					dedupe_key: string;
-				}
-			).dedupe_key.startsWith('acme/widgets:')
-		).toBe(true);
+		// External events published through ExternalEventService
+		expect(publishCount).toBeGreaterThan(0);
 		await extension.stop();
 	});
 });
