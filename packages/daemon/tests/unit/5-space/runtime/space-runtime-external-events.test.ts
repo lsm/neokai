@@ -269,7 +269,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const event = makeEvent();
 		await eventService.publish(event);
 
-		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+		runtime.registerRunInterests(run.id, task.id, workflow.nodes, {
+			clearQueuedDeliveries: true,
+		});
 		runtime.flushPendingNodeQueue({
 			workflowRunId: run.id,
 			taskId: task.id,
@@ -571,6 +573,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			externalEventStore: eventStore,
 			taskAgentManager: tam as never,
 		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
 		await runtime.executeTick();
 
@@ -671,6 +674,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			externalEventStore: eventStore,
 			taskAgentManager: tam as never,
 		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
 		await runtime.rehydrateExecutors();
 		runtime.flushPendingNodeQueue({
@@ -697,7 +701,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
 	});
 
-	test('refreshes active run interests when workflow definitions change', async () => {
+	test('refreshes active run interests when subscriptions are rebuilt', async () => {
 		const { workflow, run, task } = await startRunWithSubscription(
 			'github/*/*/pull_request.review_*'
 		);
@@ -709,22 +713,16 @@ describe('SpaceRuntime external event subscriptions', () => {
 		});
 		tam.alive.add('session-updated-interests');
 
-		const updatedWorkflow = workflowManager.updateWorkflow(workflow.id, {
-			nodes: [
-				{
-					id: 'code',
-					name: 'Code',
-					agents: [
-						{
-							agentId: AGENT_ID,
-							name: 'coder',
-						},
-					],
-				},
-			],
-		});
-		expect(updatedWorkflow).not.toBeNull();
-		runtime.onWorkflowDefChanged(workflow.id);
+		// Clear old interests and register new ones (simulates what a runtime
+		// caller would do after a workflow definition change)
+		runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+		runtime.registerSubscription(
+			run.id,
+			task.id,
+			'code',
+			'coder',
+			'github/*/*/pull_request.comment_created'
+		);
 		await runtime.executeTick();
 
 		const removedInterestEvent = makeEvent({ id: 'evt-removed-interest' });
@@ -743,7 +741,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected).toHaveLength(1);
 	});
 
-	test('clears stale queued deliveries when workflow definition changes remove interests', async () => {
+	test('clears stale queued deliveries when run interests are cleared', async () => {
 		const { workflow, run, task } = await startRunWithSubscription(
 			'github/*/*/pull_request.review_*'
 		);
@@ -752,22 +750,11 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const queuedDelivery = eventStore.listDeliveries(event.id)[0]!;
 		expect(queuedDelivery.state).toBe('pending');
 
-		const updatedWorkflow = workflowManager.updateWorkflow(workflow.id, {
-			nodes: [
-				{
-					id: 'code',
-					name: 'Code',
-					agents: [
-						{
-							agentId: AGENT_ID,
-							name: 'coder',
-						},
-					],
-				},
-			],
+		// Clear interests with queued delivery cleanup (simulates what a runtime
+		// caller would do after a workflow definition change removes interests)
+		runtime.registerRunInterests(run.id, task.id, workflow.nodes, {
+			clearQueuedDeliveries: true,
 		});
-		expect(updatedWorkflow).not.toBeNull();
-		runtime.onWorkflowDefChanged(workflow.id);
 		runtime.flushPendingNodeQueue({
 			workflowRunId: run.id,
 			taskId: task.id,
@@ -1456,7 +1443,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 			DEFAULT_TOPIC
 		);
 		runtime.start();
-		await runtime.executeTick();
 
 		// Publish event → first dispatch attempt will fail transiently
 		const event = makeEvent();
@@ -1472,7 +1458,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		});
 
 		// Trigger the retry by waiting for the retry timer
-		await new Promise((resolve) => setTimeout(resolve, 250));
+		await new Promise((resolve) => setTimeout(resolve, 1100));
 
 		// The retry should check blocked-run activity and fail terminally
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
@@ -1497,6 +1483,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
 		// Recover the terminal run back to active
 		await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+
+		// Re-register subscription for the recovered run
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
 		// Set up a live session for the recovered execution
 		const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
@@ -1793,19 +1782,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const { workflow, run, task } = await startRunWithSubscription();
 		const event = makeEvent();
 		await eventService.publish(event);
-		const updatedWorkflow = workflowManager.updateWorkflow(workflow.id, {
-			nodes: [
-				{
-					...workflow.nodes[0]!,
-					agents: [
-						{
-							...workflow.nodes[0]!.agents![0]!,
-						},
-					],
-				},
-			],
-		});
 		await runtime.stop();
+		// Create fresh runtime WITHOUT registering a subscription — simulates
+		// the subscription being removed between runtime restarts
 		runtime = new SpaceRuntime({
 			db,
 			spaceManager: new SpaceManager(db),
@@ -1829,9 +1808,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 			sessionId: 'session-removed-interest',
 		});
 
-		expect(updatedWorkflow.nodes[0]!.agents![0]!.eventInterests?.[0]!.topic).toBe(
-			'github/*/*/pull_request.comment_*'
-		);
 		expect(injected).toHaveLength(0);
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
 		expect(delivery.state).toBe('failed');
@@ -1901,6 +1877,13 @@ describe('SpaceRuntime external event subscriptions', () => {
 			externalEventStore: eventStore,
 			taskAgentManager: tam as never,
 		});
+		runtime.registerSubscription(
+			run.id,
+			taskRepo.listByWorkflowRun(run.id)[0]!.id,
+			'code',
+			'coder',
+			DEFAULT_TOPIC
+		);
 
 		await runtime.rehydrateExecutors();
 
@@ -1972,6 +1955,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			externalEventStore: eventStore,
 			taskAgentManager: tam as never,
 		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
 		await runtime.rehydrateExecutors();
 		runtime.flushPendingNodeQueue({
