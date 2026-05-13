@@ -1274,12 +1274,6 @@ export interface WorkflowNodeAgent {
 	 * whatever rules the workflow provides.
 	 */
 	toolGuards?: DeclarativeToolGuard[];
-	/**
-	 * Events this node is interested in receiving. When matched, the event is
-	 * injected into the agent's session as a structured message.
-	 * Omit or empty array = no event subscriptions (default).
-	 */
-	eventInterests?: EventInterest[];
 }
 
 /**
