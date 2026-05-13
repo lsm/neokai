@@ -3558,6 +3558,7 @@ describe('ChannelRouter', () => {
 				db,
 				nodeExecutionRepo: new NodeExecutionRepository(db),
 				internalEventBus: bus,
+				subscribeToRunCompletion: true,
 			});
 
 			// Open gate, deliver to cache it

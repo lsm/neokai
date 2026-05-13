@@ -262,6 +262,20 @@ export interface ChannelRouterConfig {
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	/**
+	 * Opt-in: subscribe to `space.workflowRun.completed` to auto-evict gate-open
+	 * cache entries when runs become terminal.
+	 *
+	 * **Only set this on long-lived routers** (e.g. node-agent MCP sessions whose
+	 * lifetime spans an entire workflow run). Ephemeral routers created ad-hoc per
+	 * call must NOT set this — each subscription adds a handler to the event bus,
+	 * and ad-hoc instances are never `destroy()`ed, causing unbounded listener
+	 * accumulation.
+	 *
+	 * When `true`, `internalEventBus` must also be provided. Call `destroy()` when
+	 * the owning session is torn down to unsubscribe.
+	 */
+	subscribeToRunCompletion?: boolean;
+	/**
 	 * Called when a gate is actively waiting for human approval (gate data was
 	 * written, but the gate is still not open because `approved` has not been set).
 	 * Allows the caller to transition the canonical task to `review` status so the
@@ -330,9 +344,10 @@ export class ChannelRouter {
 		};
 
 		// Subscribe to run-completion events to evict gate-open cache entries for
-		// terminal runs. Without this, long-lived routers (e.g. node-agent MCP
-		// sessions) would retain entries for completed runs until GC'd.
-		if (config.internalEventBus) {
+		// terminal runs. Only active when `subscribeToRunCompletion` is explicitly
+		// set — ephemeral (ad-hoc) routers must NOT subscribe because they are
+		// never `destroy()`ed and would leak event bus handlers.
+		if (config.subscribeToRunCompletion && config.internalEventBus) {
 			this.unsubscribeCompleted = config.internalEventBus.subscribe(
 				'space.workflowRun.completed',
 				(event) => {
