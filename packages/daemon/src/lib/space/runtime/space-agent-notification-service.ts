@@ -154,12 +154,15 @@ export class SpaceAgentNotificationService {
 					this.autoCompletedCounts.set(event.taskId, count);
 
 					if (count >= this.notifyThreshold) {
-						// Only reset counter after successful delivery so transient
-						// injectMessage failures don't lose the accumulated count.
+						// Immediately clear the counter so concurrent events arriving
+						// while injectMessage is in-flight don't produce duplicates.
+						this.autoCompletedCounts.delete(event.taskId);
 						const message = formatAgentAutoCompleted(event, this.autonomyLevel, count);
 						void this.notify(message).then((sent) => {
-							if (sent) {
-								this.autoCompletedCounts.delete(event.taskId);
+							if (!sent) {
+								// Restore counter on failure so the next auto-completion
+								// can retry the notification from the same count.
+								this.autoCompletedCounts.set(event.taskId, count);
 							}
 						});
 					}

@@ -769,53 +769,118 @@ describe('SpaceAgentNotificationService', () => {
 		});
 
 		it('preserves counter when injectMessage fails on threshold notification', async () => {
-			// Use an injectError factory so notify() returns false
-			const { factory, bus } = makeService(
-				{ injectError: new Error('Session not found') },
-				{ notifyThreshold: 2 }
-			);
+			// Use a factory that fails on the first call then succeeds on the second.
+			let callCount = 0;
+			const calls: InjectedCall[] = [];
+			const factory: SessionFactory & { calls: InjectedCall[] } = {
+				calls,
+				injectMessage: async (sessionId, message, injectOpts) => {
+					callCount++;
+					if (callCount === 1) throw new Error('Session not found');
+					calls.push({ sessionId, message, opts: injectOpts });
+				},
+			};
 
-			// Two auto-completions → threshold reached, but notification fails
-			await bus.publish('space.agent.autoCompleted', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				taskId: 'task-stuck',
-				elapsedMs: 300000,
-				timestamp: TIMESTAMP,
-			});
-			await bus.publish('space.agent.autoCompleted', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				taskId: 'task-stuck',
-				elapsedMs: 300000,
-				timestamp: TIMESTAMP,
-			});
-
-			// Notification failed — counter should NOT have been reset.
-			// Verify on a fresh service instance that the counter behavior works correctly
-			// after a failed notification (the counter stays, so next auto-complete at
-			// count=3 on the ORIGINAL service would retry the notification).
-			// Here we just verify the new service starts clean with count=1.
-			const workingFactory = makeMockSessionFactory();
-			const bus2 = new InternalEventBus<DaemonInternalEventMap>();
-			const service2 = new SpaceAgentNotificationService({
-				internalEventBus: bus2,
-				sessionFactory: workingFactory,
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const service = new SpaceAgentNotificationService({
+				internalEventBus: bus,
+				sessionFactory: factory,
 				sessionId: SESSION_ID,
 				spaceId: SPACE_ID,
 				notifyThreshold: 2,
 			});
-			service2.subscribe();
+			service.subscribe();
 
-			// First auto-completion on new service → count=1, below threshold
-			await bus2.publish('space.agent.autoCompleted', {
+			// Two auto-completions → threshold reached, but first notification fails
+			await bus.publish('space.agent.autoCompleted', {
 				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-stuck',
 				elapsedMs: 300000,
 				timestamp: TIMESTAMP,
 			});
-			expect(workingFactory.calls).toHaveLength(0);
+			await bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+			// Counter was restored on failure, so next auto-completion (count=3 ≥ threshold)
+			// retries the notification — this time injectMessage succeeds.
+			await bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+			// Only the 3rd attempt (where injectMessage succeeded) produced a notification
+			expect(calls).toHaveLength(1);
+			const json = extractJson(calls[0].message);
+			expect(json.consecutiveCount).toBe(3);
+		});
+
+		it('does not emit duplicate notifications while injectMessage is pending', async () => {
+			// Use a factory with a delayed injectMessage to simulate a slow send.
+			let resolveSend: () => void;
+			const calls: InjectedCall[] = [];
+			const factory: SessionFactory & { calls: InjectedCall[] } = {
+				calls,
+				injectMessage: async (sessionId, message, injectOpts) => {
+					await new Promise<void>((r) => {
+						resolveSend = r;
+					});
+					calls.push({ sessionId, message, opts: injectOpts });
+				},
+			};
+
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const service = new SpaceAgentNotificationService({
+				internalEventBus: bus,
+				sessionFactory: factory,
+				sessionId: SESSION_ID,
+				spaceId: SPACE_ID,
+				notifyThreshold: 2,
+			});
+			service.subscribe();
+
+			// First auto-completion (count=1, below threshold)
+			await bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+
+			// Second auto-completion (count=2, at threshold) — injectMessage starts but is pending
+			const publishPromise = bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+
+			// Third auto-completion arrives while injectMessage is still pending.
+			// Counter was already deleted, so this starts fresh (count=1, below threshold).
+			await bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+
+			// Resolve the pending injectMessage
+			resolveSend!();
+			await publishPromise;
+
+			// Only one notification was produced (from the 2nd auto-completion)
+			expect(calls).toHaveLength(1);
+			const json = extractJson(calls[0].message);
+			expect(json.consecutiveCount).toBe(2);
 		});
 
 		it('clears stale counters when re-subscribing the same instance', async () => {
