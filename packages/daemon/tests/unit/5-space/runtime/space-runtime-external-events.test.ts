@@ -786,6 +786,16 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected).toHaveLength(1);
 		expect(injected[0]!.sessionId).toBe('session-retry-restart');
 		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: taskRepo.listByWorkflowRun(run.id)[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-retry-restart',
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(1);
 	});
 
 	test('fails delivery terminally when injection command handler is missing', async () => {
@@ -903,6 +913,73 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(delivery.state).toBe('failed');
 		expect(delivery.failureReason).toBe('subscription_no_longer_active');
 		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('schedules persisted pending retries for active sessions on rehydrate', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-persisted-retry',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-persisted-retry');
+		await runtime.stop();
+		const failingCommandBus = createInternalCommandBus();
+		failingCommandBus.register('agent.message.inject', async () => ({
+			ok: false,
+			error: 'persisted transient failure',
+		}));
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: failingCommandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerRunInterests(run.id, taskRepo.listByWorkflowRun(run.id)[0]!.id, workflow.nodes);
+		const event = makeEvent();
+		await eventService.publish(event);
+		expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+		await runtime.stop();
+
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+
+		await runtime.rehydrateExecutors();
+
+		expect(injected).toHaveLength(0);
+		await new Promise((resolve) => setTimeout(resolve, 1100));
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-persisted-retry');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 
 	test('preserves deferred delivery mode when rebuilding pending queue', async () => {

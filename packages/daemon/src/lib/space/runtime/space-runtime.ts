@@ -854,6 +854,7 @@ export class SpaceRuntime {
 				throw new Error(formatCommandError(result?.error ?? 'agent.message.inject unavailable'));
 			}
 			this.clearExternalEventRetry(deliveryKey);
+			this.clearQueuedDelivery(target, deliveryKey);
 			store.markDeliveryDelivered(event.eventId, deliveryKey);
 			store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
 			store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
@@ -890,10 +891,12 @@ export class SpaceRuntime {
 		event: ExternalEventPublishedPayload,
 		deliveryKey: string,
 		deliveryMode: 'immediate' | 'defer',
-		failureReason: string
+		failureReason: string,
+		options: { preserveAttemptCount?: boolean } = {}
 	): void {
 		if (!target.sessionId || this.externalEventRetryTimers.has(deliveryKey)) return;
-		const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
+		const currentAttempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
+		const attempts = options.preserveAttemptCount ? currentAttempts : currentAttempts + 1;
 		this.externalEventRetryCounts.set(deliveryKey, attempts);
 		if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
 			this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
@@ -929,7 +932,8 @@ export class SpaceRuntime {
 					item.event,
 					item.deliveryKey,
 					item.deliveryMode,
-					`deliveryMode:${item.deliveryMode}; retry rescheduled after runtime restart`
+					`deliveryMode:${item.deliveryMode}; retry rescheduled after runtime restart`,
+					{ preserveAttemptCount: true }
 				);
 			}
 		}
@@ -1761,6 +1765,7 @@ export class SpaceRuntime {
 			clearTimeout(timer);
 		}
 		this.externalEventRetryTimers.clear();
+		this.externalEventRetryCounts.clear();
 		this.acceptingExternalEvents = false;
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
@@ -2344,12 +2349,19 @@ export class SpaceRuntime {
 			const mode = delivery.failureReason?.startsWith('deliveryMode:defer;')
 				? 'defer'
 				: 'immediate';
-			this.queueForPendingNode(
-				target,
-				this.externalEventPayloadFromRecord(eventRecord.event),
-				delivery.deliveryKey,
-				mode
-			);
+			const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+			this.queueForPendingNode(target, eventPayload, delivery.deliveryKey, mode);
+			const resolved = this.resolveSubscriptionTarget(target);
+			if (resolved.sessionId) {
+				this.scheduleExternalEventRetry(
+					resolved,
+					eventPayload,
+					delivery.deliveryKey,
+					mode,
+					delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after runtime rehydrate`,
+					{ preserveAttemptCount: true }
+				);
+			}
 		}
 	}
 
