@@ -35,3 +35,4 @@ export {
 	type PublishOutcome,
 	type ExternalEventPublishedPayload,
 } from './external-event-service';
+export { TopicTrie, isReceivingStatus } from './topic-trie';

@@ -33,7 +33,7 @@ const EVENT_A: ExternalEvent = {
 	id: 'evt-a',
 	spaceId: SPACE_ID,
 	source: 'github',
-	topic: 'github/lsm/neokai/pull_request.review_submitted',
+	topic: 'github/lsm/neokai/pull_request/42.review_submitted',
 	occurredAt: 1_700_000_000_000,
 	ingestedAt: 1_700_000_001_000,
 	dedupeKey: 'github:pr:42:review_submitted:12345',
@@ -51,7 +51,7 @@ const EVENT_B: ExternalEvent = {
 	id: 'evt-b',
 	spaceId: SPACE_ID,
 	source: 'github',
-	topic: 'github/lsm/neokai/pull_request.opened',
+	topic: 'github/lsm/neokai/pull_request/99.opened',
 	occurredAt: 1_700_000_100_000,
 	ingestedAt: 1_700_000_101_000,
 	dedupeKey: 'github:pr:99:opened',
@@ -190,8 +190,8 @@ describe('store — validation', () => {
 		);
 	});
 
-	test('rejects topic with wrong segment count', () => {
-		expect(() => store.store({ ...EVENT_A, topic: 'github/owner/repo' })).toThrow(
+	test('rejects topic with only one segment', () => {
+		expect(() => store.store({ ...EVENT_A, topic: 'github' })).toThrow(
 			ExternalEventValidationError
 		);
 	});
@@ -203,13 +203,13 @@ describe('store — validation', () => {
 	});
 
 	test('rejects wildcard topic on store', () => {
-		expect(() => store.store({ ...EVENT_A, topic: 'github/*/*/pull_request.opened' })).toThrow(
+		expect(() => store.store({ ...EVENT_A, topic: 'github/*/*/pull_request/*.opened' })).toThrow(
 			'no wildcards'
 		);
 	});
 
 	test('rejects dotted wildcard topic on store', () => {
-		expect(() => store.store({ ...EVENT_A, topic: 'github/lsm/neokai/pull_request.*' })).toThrow(
+		expect(() => store.store({ ...EVENT_A, topic: 'github/lsm/neokai/pull_request/*.*' })).toThrow(
 			'no wildcards'
 		);
 	});
