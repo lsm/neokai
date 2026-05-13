@@ -363,6 +363,7 @@ export class ChannelRouter {
 		// Auto-reopen from terminal run statuses. The status machine permits
 		// done → in_progress and cancelled → in_progress.
 		if (run.status === 'done' || run.status === 'cancelled') {
+			this.evictRunCache(runId);
 			await this.reopenRun(
 				run.id,
 				run.status,
@@ -939,13 +940,14 @@ export class ChannelRouter {
 		channelIsCyclic: boolean,
 		workflow: SpaceWorkflow
 	): boolean {
-		if (!channelIsCyclic) return false;
+		// Check gate existence BEFORE the cyclic-channel shortcut — if the gate
+		// definition was removed from the workflow (e.g. by a workflow edit),
+		// force re-evaluation so the gate evaluator fails closed with
+		// "Gate not found" instead of silently allowing delivery based on a
+		// stale cache entry. This must apply to ALL channels, not just cyclic ones.
 		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
-		// If the gate definition is missing from the workflow (e.g. due to
-		// a workflow edit that removed it), force re-evaluation so the gate
-		// evaluator can fail closed with "Gate not found" instead of silently
-		// allowing delivery based on a stale cache entry.
 		if (!gateDef) return true;
+		if (!channelIsCyclic) return false;
 		return gateDef.resetOnCycle === true;
 	}
 
