@@ -1615,6 +1615,53 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(calls[0].gateId).toBe('gate-callback');
 	});
 
+	test('onGateDataChanged fires after queued-only gated delivery via send_message', async () => {
+		const gate: Gate = {
+			id: 'gate-queued-callback',
+			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId: ctx.workflowRunId,
+			workflowChannels: workflow.channels ?? [],
+			messageInjector: async () => {
+				throw new Error('Should not be called — reviewer has no live session');
+			},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+		});
+		const calls: Array<{ runId: string; gateId: string }> = [];
+		const config = makeConfig(ctx, {
+			workflow,
+			channelResolver: makeResolver(workflow.channels ?? []),
+			agentMessageRouter,
+			onGateDataChanged: async (runId, gateId) => {
+				calls.push({ runId, gateId });
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const reviewerExecution = ctx.nodeExecutionRepo
+			.listByWorkflowRun(ctx.workflowRunId)
+			.find((execution) => execution.agentName === 'reviewer')!;
+		ctx.nodeExecutionRepo.update(reviewerExecution.id, { agentSessionId: null });
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'queued but gate data changed',
+			data: { ready: true },
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.queued).toHaveLength(1);
+		expect(calls).toEqual([{ runId: ctx.workflowRunId, gateId: 'gate-queued-callback' }]);
+		expect(pendingMessageRepo.listPendingForTarget(ctx.workflowRunId, 'reviewer')).toHaveLength(1);
+	});
+
 	test('does not notify gate data changed before the current gated delivery finishes', async () => {
 		const gate: Gate = {
 			id: 'review-posted-gate',
