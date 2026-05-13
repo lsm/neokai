@@ -702,9 +702,7 @@ export class SpaceRuntime {
 		if (isReservedWorkflowAgentName(params.agentName)) {
 			throw new Error(`Agent name "${params.agentName}" is reserved for a built-in agent`);
 		}
-		const execution = this.config.nodeExecutionRepo.createOrIgnore(params);
-		this.refreshRunInterests(params.workflowRunId);
-		return execution;
+		return this.config.nodeExecutionRepo.createOrIgnore(params);
 	}
 
 	registerRunInterests(
@@ -717,20 +715,8 @@ export class SpaceRuntime {
 		if (options.clearQueuedDeliveries) {
 			this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
 		}
-		const deliverableAgents = new Set(
-			this.config.nodeExecutionRepo
-				.listByWorkflowRun(workflowRunId)
-				.filter(
-					(execution) =>
-						execution.status === 'pending' ||
-						execution.status === 'in_progress' ||
-						execution.status === 'waiting_rebind'
-				)
-				.map((execution) => `${execution.workflowNodeId}\0${execution.agentName}`)
-		);
 		for (const node of nodes) {
 			for (const agent of resolveNodeAgents(node)) {
-				if (!deliverableAgents.has(`${node.id}\0${agent.name}`)) continue;
 				const interests = agent.eventInterests ?? [];
 				for (const interest of interests) {
 					const topic = interest.topic?.trim();
@@ -790,12 +776,6 @@ export class SpaceRuntime {
 		}
 	}
 
-	private refreshRunInterests(workflowRunId: string): void {
-		const run = this.config.workflowRunRepo.getRun(workflowRunId);
-		if (!run || !isExternallyDeliverableRun(run.status)) return;
-		this.registerInterestsForRun(run);
-	}
-
 	private registerInterestsForRun(run: SpaceWorkflowRun): void {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
 		if (!workflow) return;
@@ -848,6 +828,8 @@ export class SpaceRuntime {
 				} else if (target.sessionId) {
 					await this.deliverToSession(target, payload, deliveryKey, 'defer');
 				} else if (this.isPending(target)) {
+					this.queueForPendingNode(target, payload, deliveryKey);
+				} else if (this.hasActiveExecutionForRun(target.workflowRunId)) {
 					this.queueForPendingNode(target, payload, deliveryKey);
 				} else {
 					store.markDeliveryFailed(payload.eventId, deliveryKey, {
@@ -1085,6 +1067,17 @@ export class SpaceRuntime {
 	private isPending(target: SubscriptionTarget): boolean {
 		const current = this.getCurrentQueueableOrActiveExecution(target);
 		return current?.status === 'pending' || current?.status === 'waiting_rebind';
+	}
+
+	private hasActiveExecutionForRun(workflowRunId: string): boolean {
+		return this.config.nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.some(
+				(execution) =>
+					execution.status === 'pending' ||
+					execution.status === 'in_progress' ||
+					execution.status === 'waiting_rebind'
+			);
 	}
 
 	private getCurrentQueueableOrActiveExecution(

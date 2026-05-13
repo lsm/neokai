@@ -912,7 +912,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 
-	test('does not register downstream interests before node execution exists', async () => {
+	test('queues downstream events that arrive before subscribed node execution exists', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Workflow ${Math.random()}`,
@@ -947,8 +947,10 @@ describe('SpaceRuntime external event subscriptions', () => {
 		await runtime.executeTick();
 		const earlyEvent = makeEvent({ id: 'evt-downstream-before-activation' });
 		await eventService.publish(earlyEvent);
-		expect(eventStore.getById(earlyEvent.id)?.state).toBe('ignored');
-		expect(eventStore.listDeliveries(earlyEvent.id)).toHaveLength(0);
+		expect(eventStore.getById(earlyEvent.id)?.state).toBe('published');
+		const earlyDelivery = eventStore.listDeliveries(earlyEvent.id)[0]!;
+		expect(earlyDelivery.state).toBe('pending');
+		expect(earlyDelivery.nodeId).toBe('review');
 
 		nodeExecutionRepo.create({
 			workflowRunId: run.id,
@@ -958,12 +960,18 @@ describe('SpaceRuntime external event subscriptions', () => {
 			status: 'pending',
 		});
 		runtime.registerRunInterests(run.id, task.id, workflow.nodes);
-		const activatedEvent = makeEvent({ id: 'evt-downstream-after-activation' });
-		await eventService.publish(activatedEvent);
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: task.id,
+			nodeId: 'review',
+			agentName: 'reviewer',
+			sessionId: 'session-downstream-activated',
+		});
 
-		const delivery = eventStore.listDeliveries(activatedEvent.id)[0]!;
-		expect(delivery.state).toBe('pending');
-		expect(delivery.nodeId).toBe('review');
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(eventStore.getById(earlyEvent.id)?.state).toBe('delivered');
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-downstream-activated');
 	});
 
 	test('registers all matching deliveries before successful delivery terminalizes source event', async () => {
@@ -1019,9 +1027,11 @@ describe('SpaceRuntime external event subscriptions', () => {
 		tam.alive.add('session-multi-success');
 		runtime.registerRunInterests(run.id, task.id, workflow.nodes);
 		nodeExecutionRepo.update(reviewExecution.id, {
-			status: 'cancelled',
+			status: 'idle',
+			agentSessionId: 'session-review-idle',
 			completedAt: Date.now(),
 		});
+		workflowRunRepo.updateRun(run.id, { status: 'blocked' });
 
 		const event = makeEvent();
 		await eventService.publish(event);
@@ -1029,8 +1039,8 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const deliveries = eventStore.listDeliveries(event.id);
 		expect(deliveries).toHaveLength(2);
 		expect(deliveries.some((delivery) => delivery.state === 'delivered')).toBe(true);
-		expect(deliveries.some((delivery) => delivery.state === 'failed')).toBe(true);
-		expect(eventStore.getById(event.id)?.state).toBe('failed');
+		expect(deliveries.some((delivery) => delivery.state === 'pending')).toBe(true);
+		expect(eventStore.getById(event.id)?.state).toBe('published');
 	});
 
 	test('clears retry state when pending queue overflow drops a retry delivery', async () => {
