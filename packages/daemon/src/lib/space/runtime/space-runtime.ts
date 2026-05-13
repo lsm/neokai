@@ -656,6 +656,7 @@ export class SpaceRuntime {
 	private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
 	private readonly externalEventRetryTimers = new Map<string, Timer>();
 	private readonly externalEventRetryCounts = new Map<string, number>();
+	private readonly externalEventDeliveriesInFlight = new Set<string>();
 	private unsubscribeExternalEventPublished?: () => void;
 	private acceptingExternalEvents = false;
 
@@ -803,7 +804,12 @@ export class SpaceRuntime {
 				const target = this.resolveSubscriptionTarget(match);
 				const deliveryKey = this.buildDeliveryKey(target, payload);
 				store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
-				if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) continue;
+				if (
+					store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
+					this.externalEventDeliveriesInFlight.has(deliveryKey)
+				) {
+					continue;
+				}
 
 				if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
 					await this.deliverToSession(target, payload, deliveryKey, 'immediate');
@@ -835,8 +841,12 @@ export class SpaceRuntime {
 	): Promise<void> {
 		const store = this.config.externalEventStore;
 		if (!store || !target.sessionId) return;
+		this.externalEventDeliveriesInFlight.add(deliveryKey);
 		try {
-			const result = await this.config.commandBus?.dispatch('agent.message.inject', {
+			if (!this.config.commandBus) {
+				throw new MissingCommandHandlerError('agent.message.inject');
+			}
+			const result = await this.config.commandBus.dispatch('agent.message.inject', {
 				sessionId: target.sessionId,
 				message: this.formatExternalEventMessage(event),
 				deliveryMode,
@@ -868,10 +878,13 @@ export class SpaceRuntime {
 			});
 			if (terminal) {
 				this.clearExternalEventRetry(deliveryKey);
+				this.clearQueuedDelivery(target, deliveryKey);
 				store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
 				return;
 			}
 			this.queueForRetry(target, event, deliveryKey, deliveryMode, failureReason);
+		} finally {
+			this.externalEventDeliveriesInFlight.delete(deliveryKey);
 		}
 	}
 
