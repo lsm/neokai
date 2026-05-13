@@ -518,7 +518,10 @@ export class ChannelRouter {
 
 		// ── Gate condition evaluation ────────────────────────────────────────
 		// Cache optimization: skip re-evaluation when the gate was previously
-		// opened, unless cyclic with `resetOnCycle`.
+		// opened (by a prior deliverMessage or onGateDataChanged), unless cyclic
+		// with `resetOnCycle`. canDeliver does NOT write to the cache — it is a
+		// non-mutating probe and must remain side-effect free so that a UI
+		// readiness check cannot permanently cache a gate as open.
 		if (channel.gateId) {
 			const skipEval =
 				this.isGateCachedOpen(runId, channel.gateId) &&
@@ -529,9 +532,6 @@ export class ChannelRouter {
 			}
 
 			const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
-			if (gateResult.open) {
-				this.cacheGateOpened(runId, channel.gateId);
-			}
 			return { allowed: gateResult.open, reason: gateResult.reason };
 		}
 
@@ -605,6 +605,7 @@ export class ChannelRouter {
 		// closure (which would falsely suggest the work could resume once the
 		// gate opens).
 		if (this.isParentTaskArchived(runId)) {
+			this.evictRunCache(runId);
 			throw new ActivationError(ARCHIVED_TASK_ERROR_MESSAGE);
 		}
 
@@ -770,7 +771,10 @@ export class ChannelRouter {
 
 		// Archive is the only tombstone. Done / cancelled runs are reopened
 		// below when the gate re-evaluation opens a channel requiring activation.
-		if (this.isParentTaskArchived(runId)) return [];
+		if (this.isParentTaskArchived(runId)) {
+			this.evictRunCache(runId);
+			return [];
+		}
 
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) return [];
@@ -937,7 +941,27 @@ export class ChannelRouter {
 	): boolean {
 		if (!channelIsCyclic) return false;
 		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
-		return gateDef?.resetOnCycle === true;
+		// If the gate definition is missing from the workflow (e.g. due to
+		// a workflow edit that removed it), force re-evaluation so the gate
+		// evaluator can fail closed with "Gate not found" instead of silently
+		// allowing delivery based on a stale cache entry.
+		if (!gateDef) return true;
+		return gateDef.resetOnCycle === true;
+	}
+
+	/**
+	 * Evict all cached gate-open entries for a completed run.
+	 *
+	 * Called by the runtime when a run reaches a terminal status (done, cancelled)
+	 * or when the parent task is archived. Without this, the in-memory `openedGates`
+	 * set grows unboundedly in long-lived daemons that process many runs.
+	 */
+	evictRunCache(runId: string): void {
+		for (const key of this.openedGates) {
+			if (key.startsWith(`${runId}:`)) {
+				this.openedGates.delete(key);
+			}
+		}
 	}
 
 	// -------------------------------------------------------------------------
