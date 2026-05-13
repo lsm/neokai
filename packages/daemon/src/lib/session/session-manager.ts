@@ -88,11 +88,15 @@ export class SessionManager {
 	 * `getTrackedAgentRootPidsSplit()`. We snapshot them here so the process
 	 * watchdog retains ownership attribution.
 	 *
-	 * Live PIDs are tracked separately so `collectDescendantPids()` treats them
-	 * as live roots (not exited), avoiding false PID-reuse skips while the
-	 * process is still running.
+	 * Live PIDs are tracked separately with their eviction timestamp so:
+	 * 1. `collectDescendantPids()` treats them as live roots while the
+	 *    process is still running (avoids false PID-reuse skips).
+	 * 2. When the process exits, they are promoted to exited for the
+	 *    PGID-based orphan discovery window.
+	 * 3. If a live root outlives the retention window it is removed,
+	 *    preventing PID-reuse misattribution for long-lived reused PIDs.
 	 */
-	private evictedLiveRootPids = new Set<number>();
+	private evictedLiveRootPids = new Map<number, number>();
 	private evictedExitedRootPids = new Map<number, number>();
 
 	// Extracted modules
@@ -445,7 +449,7 @@ export class SessionManager {
 			exited.push(...split.exited);
 		}
 		// Merge session-manager-level live PIDs that survived cache eviction.
-		for (const pid of this.evictedLiveRootPids) {
+		for (const pid of this.evictedLiveRootPids.keys()) {
 			if (!live.includes(pid)) {
 				live.push(pid);
 			}
@@ -620,7 +624,7 @@ export class SessionManager {
 		// Preserve live PIDs as live so the watchdog can track them
 		// as live roots (not exited) while the process is still running.
 		for (const pid of split.live) {
-			this.evictedLiveRootPids.add(pid);
+			if (!this.evictedLiveRootPids.has(pid)) this.evictedLiveRootPids.set(pid, now);
 		}
 		// Preserve exited PIDs with their actual exit timestamp.
 		for (const pid of split.exited) {
@@ -631,6 +635,30 @@ export class SessionManager {
 	}
 
 	private expireEvictedRoots(now = Date.now()): void {
+		// Promote evicted live roots that have exited since last check.
+		// Uses kill(pid, 0) (signal 0) which is a cheap existence probe —
+		// it does not affect the process but throws ESRCH if the PID is gone.
+		for (const [pid, evictedAt] of this.evictedLiveRootPids) {
+			// Expire live roots that outlived the retention window.
+			// This prevents PID-reuse misattribution: if the OS recycles
+			// an old daemon root PID, the watchdog would incorrectly
+			// traverse from the unrelated process and kill its children.
+			if (now - evictedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
+				this.evictedLiveRootPids.delete(pid);
+				continue;
+			}
+			try {
+				process.kill(pid, 0);
+			} catch {
+				// PID no longer exists — promote to exited for the PGID-based
+				// orphan discovery window.
+				this.evictedLiveRootPids.delete(pid);
+				if (!this.evictedExitedRootPids.has(pid)) {
+					this.evictedExitedRootPids.set(pid, now);
+				}
+			}
+		}
+		// Expire old exited roots past the retention window.
 		for (const [pid, exitedAt] of this.evictedExitedRootPids) {
 			if (now - exitedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
 				this.evictedExitedRootPids.delete(pid);

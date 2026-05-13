@@ -354,10 +354,21 @@ describe('SessionManager', () => {
 			sessionManager.registerSession(fakeAgentSession);
 			sessionManager.unregisterSession('room:1:task:2:abc');
 
-			// PIDs should survive eviction — live as live, exited as exited.
-			const split = sessionManager.getTrackedAgentRootPidsSplit();
-			expect(split.live).toContain(7000);
-			expect(split.exited).toContain(7001);
+			// Mock process.kill to report PID 7000 as alive (signal 0 probe succeeds).
+			const originalKill = process.kill;
+			// @ts-expect-error — overriding for test
+			process.kill = mock((pid: number, signal: number) => {
+				if (pid === 7000 && signal === 0) return;
+				return originalKill(pid, signal);
+			});
+			try {
+				// PIDs should survive eviction — live as live, exited as exited.
+				const split = sessionManager.getTrackedAgentRootPidsSplit();
+				expect(split.live).toContain(7000);
+				expect(split.exited).toContain(7001);
+			} finally {
+				process.kill = originalKill;
+			}
 		});
 	});
 
@@ -534,12 +545,133 @@ describe('SessionManager', () => {
 			sessionManager.registerSession(fakeAgentSession);
 			await sessionManager.interruptInMemorySession('session-evicted-live');
 
-			// The live root PID must appear as live (not exited) so
-			// collectDescendantPids doesn't skip it as a reused PID.
-			const split = sessionManager.getTrackedAgentRootPidsSplit();
-			expect(split.live).toContain(8000);
-			expect(split.exited).not.toContain(8000);
+			// Mock process.kill to report PID 8000 as alive.
+			const originalKill = process.kill;
+			// @ts-expect-error — overriding for test
+			process.kill = mock((pid: number, signal: number) => {
+				if (pid === 8000 && signal === 0) return;
+				return originalKill(pid, signal);
+			});
+			try {
+				// The live root PID must appear as live (not exited) so
+				// collectDescendantPids doesn't skip it as a reused PID.
+				const split = sessionManager.getTrackedAgentRootPidsSplit();
+				expect(split.live).toContain(8000);
+				expect(split.exited).not.toContain(8000);
+			} finally {
+				process.kill = originalKill;
+			}
 		});
+	});
+
+	it('promotes evicted live root to exited when the process leaves the process table', async () => {
+		const mockSession: Session = {
+			id: 'session-promote-live',
+			title: 'Promote Live',
+			workspacePath: '/test',
+			status: 'active',
+			config: {},
+			metadata: {},
+		};
+
+		// Simulate a live root that survives cleanup
+		const getSplit = mock(() => ({
+			live: [9001],
+			exited: [],
+		}));
+		const fakeAgentSession = {
+			getSessionData: mock(() => mockSession),
+			cleanup: mock(async () => {
+				getSplit.mockImplementation(() => ({
+					live: [9001],
+					exited: [],
+				}));
+			}),
+			getTrackedAgentRootPidsSplit: getSplit,
+		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+		sessionManager.registerSession(fakeAgentSession);
+		await sessionManager.interruptInMemorySession('session-promote-live');
+
+		// Mock process.kill to report PID 9001 as alive initially.
+		const originalKill = process.kill;
+		// @ts-expect-error — overriding for test
+		process.kill = mock((pid: number, signal: number) => {
+			if (pid === 9001 && signal === 0) return;
+			return originalKill(pid, signal);
+		});
+
+		try {
+			// Initially the PID is tracked as live
+			const before = sessionManager.getTrackedAgentRootPidsSplit();
+			expect(before.live).toContain(9001);
+			expect(before.exited).not.toContain(9001);
+
+			// Now simulate the process exiting: mock process.kill(pid, 0) to throw
+			// @ts-expect-error — overriding for test
+			process.kill = mock((_pid: number, _signal: number) => {
+				throw new Error('ESRCH');
+			});
+
+			const after = sessionManager.getTrackedAgentRootPidsSplit();
+			// PID should be promoted from live to exited
+			expect(after.live).not.toContain(9001);
+			expect(after.exited).toContain(9001);
+		} finally {
+			process.kill = originalKill;
+		}
+	});
+
+	it('removes evicted live root past retention window (PID reuse safety)', async () => {
+		const mockSession: Session = {
+			id: 'session-reuse-safety',
+			title: 'Reuse Safety',
+			workspacePath: '/test',
+			status: 'active',
+			config: {},
+			metadata: {},
+		};
+
+		const getSplit = mock(() => ({
+			live: [9999],
+			exited: [],
+		}));
+		const fakeAgentSession = {
+			getSessionData: mock(() => mockSession),
+			cleanup: mock(async () => {
+				getSplit.mockImplementation(() => ({
+					live: [9999],
+					exited: [],
+				}));
+			}),
+			getTrackedAgentRootPidsSplit: getSplit,
+		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+		sessionManager.registerSession(fakeAgentSession);
+		await sessionManager.interruptInMemorySession('session-reuse-safety');
+
+		// Mock process.kill to report PID 9999 as alive (even though it's past retention).
+		const originalKill = process.kill;
+		// @ts-expect-error — overriding for test
+		process.kill = mock((_pid: number, _signal: number) => {});
+
+		const RETENTION_MS = 15 * 60 * 1000;
+		const futureNow = Date.now() + RETENTION_MS + 1000;
+
+		try {
+			// Call the internal method with a future timestamp.
+			// Access via type cast since expireEvictedRoots is private.
+			(sessionManager as any).expireEvictedRoots(futureNow);
+
+			const after = sessionManager.getTrackedAgentRootPidsSplit();
+			// PID should be completely removed — not live, not exited.
+			// Even though process.kill(9999, 0) succeeds (PID reused by
+			// an unrelated process), the eviction timestamp is too old.
+			expect(after.live).not.toContain(9999);
+			expect(after.exited).not.toContain(9999);
+		} finally {
+			process.kill = originalKill;
+		}
 	});
 
 	describe('getActiveSessions', () => {
