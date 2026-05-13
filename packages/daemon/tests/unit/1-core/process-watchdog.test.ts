@@ -28,6 +28,7 @@ describe('process-watchdog', () => {
 				{
 					pid: 123,
 					ppid: 100,
+					pgid: 123,
 					elapsedSeconds: 16 * 60,
 					command: 'bun test tests/unit/leaky.test.ts',
 				},
@@ -230,5 +231,95 @@ describe('process-watchdog', () => {
 
 		expect(cleanupCalls).toBeGreaterThan(0);
 		expect(cleanupCalls).toBe(callsAfterStop);
+	});
+
+	test('signals process group when pgid is not a live root', async () => {
+		const killProcess = mock(() => {});
+
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 200,
+					ppid: 100,
+					pgid: 150, // group leader (150) is NOT a live root
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Should signal the process group first, then the individual process.
+		expect(killProcess).toHaveBeenCalledWith(-150, 'SIGTERM');
+		expect(killProcess).toHaveBeenCalledWith(200, 'SIGTERM');
+	});
+
+	test('does not signal process group when pgid is a live root', async () => {
+		const killProcess = mock(() => {});
+
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 200,
+					ppid: 100,
+					pgid: 100, // same group as live root — must NOT signal group
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Only direct signal — group signal skipped because PGID is a live root.
+		expect(killProcess).toHaveBeenCalledWith(200, 'SIGTERM');
+		expect(killProcess).not.toHaveBeenCalledWith(-100, 'SIGTERM');
+	});
+
+	test('does not signal process group when pgid equals pid', async () => {
+		const killProcess = mock(() => {});
+
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 200,
+					ppid: 100,
+					pgid: 200, // own group — no group signal needed
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Only direct signal, no group signal.
+		expect(killProcess).toHaveBeenCalledWith(200, 'SIGTERM');
+		expect(killProcess).not.toHaveBeenCalledWith(-200, 'SIGTERM');
 	});
 });

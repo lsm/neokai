@@ -331,6 +331,37 @@ describe('SessionManager', () => {
 			const result = await sessionManager.getSessionAsync('room:1:task:2:xyz');
 			expect(result).toBeNull();
 		});
+
+		it('unregisterSession preserves exited PIDs at manager level', () => {
+			const mockSession: Session = {
+				id: 'room:1:task:2:pids',
+				title: 'PID Session',
+				workspacePath: '/test',
+				status: 'active',
+				config: {},
+				metadata: {},
+			};
+			const fakeAgentSession = {
+				getSessionData: mock(() => mockSession),
+				cleanup: mock(async () => {}),
+				getTrackedAgentRootPidsSplit: mock(() => ({
+					live: [],
+					exited: [500, 600],
+				})),
+			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+			sessionManager.registerSession(fakeAgentSession);
+
+			// Before unregister: exited PIDs come from the session
+			let split = sessionManager.getTrackedAgentRootPidsSplit();
+			expect(split.exited).toEqual([500, 600]);
+
+			sessionManager.unregisterSession('room:1:task:2:pids');
+
+			// After unregister: exited PIDs survive at manager level
+			split = sessionManager.getTrackedAgentRootPidsSplit();
+			expect(split.exited).toEqual([500, 600]);
+		});
 	});
 
 	describe('listSessions', () => {

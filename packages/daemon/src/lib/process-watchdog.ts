@@ -120,11 +120,27 @@ export async function cleanupSuspiciousProcesses(options?: {
 		if (!threshold) continue;
 
 		try {
+			// Signal the entire process group first (reaches tool-wrapper children),
+			// but only if the group leader is not a live root — otherwise we'd kill
+			// an active SDK session that happens to have a suspicious descendant.
+			if (
+				typeof snapshot.pgid === 'number' &&
+				Number.isFinite(snapshot.pgid) &&
+				snapshot.pgid > 0 &&
+				snapshot.pgid !== snapshot.pid &&
+				!liveRoots.has(snapshot.pgid)
+			) {
+				try {
+					killer(-snapshot.pgid, 'SIGTERM');
+				} catch {
+					// Process group may have already exited — fall through to direct signal.
+				}
+			}
 			killer(snapshot.pid, 'SIGTERM');
 			killed++;
 			logger.warn(
 				`Killing suspicious daemon-owned long-running process pid=${snapshot.pid} ppid=${snapshot.ppid} ` +
-					`runtimeMs=${runtimeMs} thresholdMs=${threshold.thresholdMs} command=${snapshot.command}`
+					`pgid=${snapshot.pgid ?? 'n/a'} runtimeMs=${runtimeMs} thresholdMs=${threshold.thresholdMs} command=${snapshot.command}`
 			);
 		} catch (error) {
 			logger.warn(

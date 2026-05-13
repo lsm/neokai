@@ -27,6 +27,9 @@ import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
+
+/** Retain recently-exited PID roots for 15 minutes after session eviction. */
+const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
@@ -75,6 +78,17 @@ export class SessionManager {
 	// Cleanup state machine - prevents race conditions during shutdown
 	private cleanupState: CleanupState = CleanupState.IDLE;
 	private hardResetInFlight = new Map<string, Promise<{ success: boolean; error?: string }>>();
+
+	/**
+	 * Exited PID roots retained at the SessionManager level so the watchdog
+	 * keeps ownership attribution even after AgentSessions are evicted from
+	 * the sessionCache (e.g. via interruptInMemorySession).
+	 *
+	 * Keyed by PID → exit timestamp, same semantics as
+	 * AgentSession.recentlyExitedAgentRootPids. Expired by the
+	 * RECENTLY_EXITED_ROOT_PID_RETENTION_MS constant (15 min).
+	 */
+	private recentlyExitedRootPids = new Map<number, number>();
 
 	// Extracted modules
 	private sessionCache: SessionCache;
@@ -423,7 +437,20 @@ export class SessionManager {
 			live.push(...split.live);
 			exited.push(...split.exited);
 		}
+		// Merge manager-level retained exited PIDs (survive cache eviction).
+		this.expireRecentlyExitedRootPids();
+		for (const pid of this.recentlyExitedRootPids.keys()) {
+			exited.push(pid);
+		}
 		return { live, exited };
+	}
+
+	private expireRecentlyExitedRootPids(now = Date.now()): void {
+		for (const [pid, exitedAt] of this.recentlyExitedRootPids) {
+			if (now - exitedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
+				this.recentlyExitedRootPids.delete(pid);
+			}
+		}
 	}
 
 	/**
@@ -440,6 +467,19 @@ export class SessionManager {
 	 * Space runtime callers will be added as that subsystem is wired up.
 	 */
 	unregisterSession(sessionId: string): void {
+		// Use has() to avoid triggering a DB lazy-load via get().
+		if (this.sessionCache.has(sessionId)) {
+			const agentSession = this.sessionCache.get(sessionId);
+			if (agentSession && typeof agentSession.getTrackedAgentRootPidsSplit === 'function') {
+				// Capture exited PIDs before eviction so the watchdog retains ownership.
+				const split = agentSession.getTrackedAgentRootPidsSplit();
+				for (const pid of split.exited) {
+					if (!this.recentlyExitedRootPids.has(pid)) {
+						this.recentlyExitedRootPids.set(pid, Date.now());
+					}
+				}
+			}
+		}
 		this.sessionCache.remove(sessionId);
 	}
 
@@ -549,6 +589,13 @@ export class SessionManager {
 					error
 				);
 			}
+			// Capture exited PIDs before eviction so the watchdog retains ownership.
+			const split = agentSession.getTrackedAgentRootPidsSplit();
+			for (const pid of split.exited) {
+				if (!this.recentlyExitedRootPids.has(pid)) {
+					this.recentlyExitedRootPids.set(pid, Date.now());
+				}
+			}
 		}
 		this.sessionCache.remove(sessionId);
 	}
@@ -635,6 +682,7 @@ export class SessionManager {
 			// Clear session cache
 			this.sessionCache.clear();
 			this.hardResetInFlight.clear();
+			this.recentlyExitedRootPids.clear();
 
 			// Transition to CLEANED state
 			this.cleanupState = CleanupState.CLEANED;
