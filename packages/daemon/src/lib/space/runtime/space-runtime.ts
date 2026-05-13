@@ -907,7 +907,13 @@ export class SpaceRuntime {
 			// Re-check run deliverability before queueing a retry — the run may
 			// have transitioned to terminal while the dispatch was in flight.
 			const currentRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
-			if (!currentRun || !isExternallyDeliverableRun(currentRun.status)) {
+			const blockedWithoutActiveExec =
+				currentRun?.status === 'blocked' && !this.hasActiveExecutionForRun(currentRun.id);
+			if (
+				!currentRun ||
+				!isExternallyDeliverableRun(currentRun.status) ||
+				blockedWithoutActiveExec
+			) {
 				store.markDeliveryFailed(event.eventId, deliveryKey, {
 					terminal: true,
 					reason: 'run_not_externally_deliverable',

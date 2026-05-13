@@ -1377,6 +1377,60 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected).toHaveLength(0);
 	});
 
+	test('terminalizes delivery when run becomes blocked without active execution during transient retry', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-blocked-retry-check',
+			startedAt: Date.now(),
+		});
+		await runtime.stop();
+		const commandBus = createInternalCommandBus();
+		let injectAttempts = 0;
+		commandBus.register('agent.message.inject', async () => {
+			injectAttempts++;
+			return { ok: false, error: 'simulated transient failure' };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.start();
+		await runtime.executeTick();
+
+		// Publish event → first dispatch attempt will fail transiently
+		const event = makeEvent();
+		await eventService.publish(event);
+		expect(injectAttempts).toBe(1);
+
+		// Now transition the run to blocked with no active execution
+		workflowRunRepo.updateRun(run.id, { status: 'blocked' });
+		nodeExecutionRepo.update(execution.id, {
+			status: 'idle',
+			startedAt: null,
+			result: 'blocked for test',
+		});
+
+		// Trigger the retry by waiting for the retry timer
+		await new Promise((resolve) => setTimeout(resolve, 250));
+
+		// The retry should check blocked-run activity and fail terminally
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+	});
+
 	test('clears retry state when pending queue overflow drops a retry delivery', async () => {
 		const workflow = createWorkflow();
 		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
