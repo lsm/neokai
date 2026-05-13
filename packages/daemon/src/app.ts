@@ -375,16 +375,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const fileIndex = new FileIndex(config.workspaceRoot);
 	void fileIndex.init();
 
-	let taskAgentManagerForGithub: TaskAgentManager | null = null;
 	const spaceGitHubService = new SpaceGitHubService(
 		db.getDatabase(),
 		internalEventBus,
-		(taskId, message) => {
-			if (!taskAgentManagerForGithub) {
-				throw new Error('TaskAgentManager is not ready for Space GitHub notification delivery');
-			}
-			return taskAgentManagerForGithub.injectTaskAgentMessage(taskId, message, true);
-		},
 		process.env.GITHUB_TOKEN,
 		() => reactiveDb.notifyChange('space_github_events')
 	);
@@ -402,9 +395,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		githubToken: process.env.GITHUB_TOKEN,
 		pollIntervalMs: githubEventPollingEnabled ? config.githubPollingInterval! * 1000 : undefined,
 		onWatchedReposChanged: () => reactiveDb.notifyChange('space_github_watched_repos'),
-		legacyIngest: async (spaceId, event) => {
-			await spaceGitHubService.ingest(spaceId, event);
-		},
 	});
 	const externalEventExtensionContext = {
 		publisher: externalEventService,
@@ -442,7 +432,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		neoAgentManager,
 		mcpImportService,
 	});
-	taskAgentManagerForGithub = taskAgentManager;
 	await githubEventExtension.start(externalEventExtensionContext);
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
