@@ -1662,6 +1662,45 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(pendingMessageRepo.listPendingForTarget(ctx.workflowRunId, 'reviewer')).toHaveLength(1);
 	});
 
+	test('onGateDataChanged fires after failed gated delivery via send_message', async () => {
+		const gate: Gate = {
+			id: 'gate-failed-callback',
+			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId: ctx.workflowRunId,
+			workflowChannels: workflow.channels ?? [],
+			messageInjector: async () => {
+				throw new Error('transport unavailable');
+			},
+		});
+		const calls: Array<{ runId: string; gateId: string }> = [];
+		const config = makeConfig(ctx, {
+			workflow,
+			channelResolver: makeResolver(workflow.channels ?? []),
+			agentMessageRouter,
+			onGateDataChanged: async (runId, gateId) => {
+				calls.push({ runId, gateId });
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'fails but gate data changed',
+			data: { ready: true },
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.failed).toHaveLength(1);
+		expect(parsed.queued).toBeUndefined();
+		expect(calls).toEqual([{ runId: ctx.workflowRunId, gateId: 'gate-failed-callback' }]);
+	});
+
 	test('does not notify gate data changed before the current gated delivery finishes', async () => {
 		const gate: Gate = {
 			id: 'review-posted-gate',
