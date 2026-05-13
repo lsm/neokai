@@ -799,7 +799,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				data,
 			});
 
-			if (gateIdToNotify && result.success) {
+			if (gateIdToNotify && (result.success || result.queued?.length)) {
 				try {
 					await notifyGateDataChanged(gateIdToNotify);
 				} catch (err) {
