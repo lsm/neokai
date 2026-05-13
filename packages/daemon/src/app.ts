@@ -53,7 +53,6 @@ import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from 
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
 import { NeoAgentManager } from './lib/neo/neo-agent-manager';
-import { ExternalEventStore } from './lib/external-events/external-event-store';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -386,7 +385,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const fileIndex = new FileIndex(config.workspaceRoot);
 	void fileIndex.init();
 
-	const externalEventStore = new ExternalEventStore(db.getDatabase());
 	let taskAgentManagerForGithub: TaskAgentManager | null = null;
 	const spaceGitHubService = new SpaceGitHubService(
 		db.getDatabase(),
