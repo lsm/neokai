@@ -1574,7 +1574,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			? [
 					tool(
 						'archive_task',
-						"Archive a task. Archived tasks are excluded from most queries and cannot be reactivated. Valid from any status that allows the 'archived' transition (e.g. draft, open, done, cancelled).",
+						"Archive a task. Archived tasks are excluded from most queries and cannot be reactivated. Valid from any status that allows the 'archived' transition (e.g. draft, done, cancelled, blocked, review, approved).",
 						ArchiveTaskSchema.shape,
 						(args) => handlers.archive_task(args)
 					),

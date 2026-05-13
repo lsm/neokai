@@ -3977,6 +3977,60 @@ describe('node-agent-tools \u2014 publish_task', () => {
 		expect(data.success).toBe(false);
 		expect(data.error).toContain("'open'");
 	});
+	test('callback emits space.task.updated event after publishing', async () => {
+		const draftTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Draft task',
+			description: 'Event emission test',
+			status: 'draft',
+		});
+
+		const publishedEvents: Array<{
+			event: string;
+			data: { sessionId: string; spaceId: string; taskId: string };
+		}> = [];
+		const mockEventBus = {
+			publish: async (
+				event: string,
+				data: { sessionId: string; spaceId: string; taskId: string }
+			) => {
+				publishedEvents.push({ event, data });
+				return { delivered: 1, failures: [] };
+			},
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+		// This callback mirrors the wiring in task-agent-manager.ts
+		const onPublishTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await ctx.taskManager.publishTask(args.task_id);
+				mockEventBus
+					?.publish('space.task.updated', {
+						sessionId: 'global',
+						spaceId: ctx.spaceId,
+						taskId: updated.id,
+						task: updated,
+					})
+					.catch(() => {});
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const config = makeConfig(ctx, { onPublishTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.publish_task({ task_id: draftTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('open');
+		expect(publishedEvents).toHaveLength(1);
+		expect(publishedEvents[0].event).toBe('space.task.updated');
+		expect(publishedEvents[0].data.taskId).toBe(draftTask.id);
+		expect(publishedEvents[0].data.spaceId).toBe(ctx.spaceId);
+		expect(publishedEvents[0].data.sessionId).toBe('global');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -4073,5 +4127,59 @@ describe('node-agent-tools \u2014 archive_task', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('archived');
+	});
+	test('callback emits space.task.updated event after archiving', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Draft task',
+			description: 'Event emission test',
+			status: 'draft',
+		});
+
+		const publishedEvents: Array<{
+			event: string;
+			data: { sessionId: string; spaceId: string; taskId: string };
+		}> = [];
+		const mockEventBus = {
+			publish: async (
+				event: string,
+				data: { sessionId: string; spaceId: string; taskId: string }
+			) => {
+				publishedEvents.push({ event, data });
+				return { delivered: 1, failures: [] };
+			},
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+		// This callback mirrors the wiring in task-agent-manager.ts
+		const onArchiveTask = async (args: { task_id: string }) => {
+			try {
+				const updated = await ctx.taskManager.archiveTask(args.task_id);
+				mockEventBus
+					?.publish('space.task.updated', {
+						sessionId: 'global',
+						spaceId: ctx.spaceId,
+						taskId: updated.id,
+						task: updated,
+					})
+					.catch(() => {});
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
+		const config = makeConfig(ctx, { onArchiveTask });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.archive_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.status).toBe('archived');
+		expect(publishedEvents).toHaveLength(1);
+		expect(publishedEvents[0].event).toBe('space.task.updated');
+		expect(publishedEvents[0].data.taskId).toBe(task.id);
+		expect(publishedEvents[0].data.spaceId).toBe(ctx.spaceId);
+		expect(publishedEvents[0].data.sessionId).toBe('global');
 	});
 });
