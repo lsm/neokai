@@ -190,8 +190,8 @@ describe('store — validation', () => {
 		);
 	});
 
-	test('rejects topic with wrong segment count', () => {
-		expect(() => store.store({ ...EVENT_A, topic: 'github/owner/repo' })).toThrow(
+	test('rejects topic with only one segment', () => {
+		expect(() => store.store({ ...EVENT_A, topic: 'github' })).toThrow(
 			ExternalEventValidationError
 		);
 	});
