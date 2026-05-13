@@ -21,6 +21,11 @@ import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
 import { SpaceGitHubService } from './lib/github/space-github';
+import { ExternalEventService, ExternalEventStore } from './lib/external-events';
+import {
+	GitHubEventExtension,
+	StaticExternalEventExtensionConfigStore,
+} from './lib/external-events/github';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
@@ -80,8 +85,10 @@ export interface DaemonAppContext {
 	 * GitHub service instance (null if not configured)
 	 */
 	gitHubService: GitHubService | null;
-	/** Space-level GitHub PR activity ingestion service */
+	/** Legacy Space-level GitHub PR activity ingestion service */
 	spaceGitHubService: SpaceGitHubService;
+	/** GitHub external-event source extension */
+	githubEventExtension: GitHubEventExtension;
 	/** Phase 2: Reactive database wrapper for change event emission */
 	reactiveDb: ReturnType<typeof createReactiveDatabase>;
 	/** Phase 2: Live query engine for reactive SQL queries */
@@ -381,6 +388,32 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		process.env.GITHUB_TOKEN,
 		() => reactiveDb.notifyChange('space_github_events')
 	);
+	const externalEventStore = new ExternalEventStore(db.getDatabase());
+	const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
+	const githubEventPollingEnabled = !!(
+		config.githubPollingInterval && config.githubPollingInterval > 0
+	);
+	const githubEventConfig = new StaticExternalEventExtensionConfigStore({
+		globallyEnabled: true,
+		webhooks: true,
+		polling: githubEventPollingEnabled,
+	});
+	const githubEventExtension = new GitHubEventExtension(spaceGitHubService.eventExtensionRepo, {
+		githubToken: process.env.GITHUB_TOKEN,
+		pollIntervalMs: githubEventPollingEnabled ? config.githubPollingInterval! * 1000 : undefined,
+		onWatchedReposChanged: () => reactiveDb.notifyChange('space_github_watched_repos'),
+		legacyIngest: async (spaceId, event) => {
+			await spaceGitHubService.ingest(spaceId, event);
+		},
+	});
+	const externalEventExtensionContext = {
+		publisher: externalEventService,
+		config: githubEventConfig,
+		onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
+			if (change.source === 'github') reactiveDb.notifyChange('space_github_watched_repos');
+		},
+	};
+	githubEventExtension.registerRpcHandlers(messageHub, externalEventExtensionContext);
 
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const {
@@ -410,6 +443,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		mcpImportService,
 	});
 	taskAgentManagerForGithub = taskAgentManager;
+	await githubEventExtension.start(externalEventExtensionContext);
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
 	// bind the WebSocket/HTTP server. `start()` inside `setupRPCHandlers` kicks
@@ -479,8 +513,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			}
 
 			// Space-level public-safe GitHub webhook endpoint.
-			if (url.pathname === '/webhook/github/space' && req.method === 'POST') {
-				return spaceGitHubService.handleWebhook(req);
+			const githubExtensionRoute = githubEventExtension.routes.find(
+				(route) => route.path === url.pathname && route.method === req.method
+			);
+			if (githubExtensionRoute) {
+				return githubExtensionRoute.handle(req, externalEventExtensionContext);
 			}
 
 			// Legacy room GitHub webhook endpoint (kept as a compatibility alias only).
@@ -785,6 +822,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				gitHubService.stop();
 				logInfo('[Daemon] GitHub service stopped');
 			}
+			await githubEventExtension.stop();
+			logInfo('[Daemon] GitHub event extension stopped');
 
 			// Stop all Task Agent sessions before sessionManager.cleanup() so that
 			// Task Agent sessions are interrupted cleanly before the session pool drains.
@@ -834,6 +873,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		queryBus,
 		gitHubService,
 		spaceGitHubService,
+		githubEventExtension,
 		reactiveDb,
 		liveQueries,
 		spaceAgentManager,

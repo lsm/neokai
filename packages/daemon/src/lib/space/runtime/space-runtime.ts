@@ -26,12 +26,19 @@ import type {
 	Space,
 	SpaceApprovalSource,
 	SpaceTask,
+	SpaceTaskPriority,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	UpdateSpaceTaskParams,
 	WorkflowChannel,
 } from '@neokai/shared';
-import { computeGateDefaults, isChannelCyclic, resolveNodeAgents } from '@neokai/shared';
+import {
+	computeGateDefaults,
+	isChannelCyclic,
+	MAX_SPACE_CONCURRENT_TASKS,
+	MIN_SPACE_CONCURRENT_TASKS,
+	resolveNodeAgents,
+} from '@neokai/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -80,6 +87,12 @@ import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
 const log = new Logger('space-runtime');
+const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
+	urgent: 0,
+	high: 1,
+	normal: 2,
+	low: 3,
+};
 
 // ---------------------------------------------------------------------------
 // Config
@@ -2657,6 +2670,11 @@ export class SpaceRuntime {
 			}
 		}
 
+		// Workflow runs created directly via RPC stay pending until a per-space slot is
+		// available. Existing in-progress canonical tasks continue even if the limit is
+		// later lowered below the current running count.
+		if (canonicalTask.status === 'open' && this.getAvailableTaskSlots(space) <= 0) return;
+
 		// ─── Task Agent integration ───────────────────────────────────────────────
 		// When a TaskAgentManager is configured, Task Agents drive the workflow.
 		// SpaceRuntime's role here is lifecycle management only: spawn for pending
@@ -3745,6 +3763,10 @@ export class SpaceRuntime {
 		const blockedReason = blockedExecutions[0].result ?? 'Unknown blocked reason';
 
 		if (retryCount < MAX_BLOCKED_RUN_RETRIES) {
+			// Enforce slot cap — don't promote if concurrency limit is reached.
+			const space = await this.config.spaceManager.getSpace(meta.spaceId);
+			if (this.getAvailableTaskSlots(space) <= 0) return;
+
 			// Tier 1: Reset blocked executions and resume the run.
 			for (const execution of blockedExecutions) {
 				this.config.nodeExecutionRepo.update(execution.id, {
@@ -4097,6 +4119,40 @@ export class SpaceRuntime {
 	 * Selection work runs in parallel across tasks so a slow LLM call on one
 	 * task does not delay the rest of the tick.
 	 */
+	private normalizeConcurrentTaskLimit(limit: number | undefined): number {
+		if (limit === undefined || !Number.isFinite(limit)) return MIN_SPACE_CONCURRENT_TASKS;
+		return Math.min(
+			MAX_SPACE_CONCURRENT_TASKS,
+			Math.max(MIN_SPACE_CONCURRENT_TASKS, Math.trunc(limit))
+		);
+	}
+
+	private getConcurrentTaskLimit(space: Space): number {
+		return this.normalizeConcurrentTaskLimit(
+			space.maxConcurrentTasks ?? space.config?.maxConcurrentTasks
+		);
+	}
+
+	private getRunningTaskCount(spaceId: string): number {
+		return this.config.taskRepo
+			.listBySpace(spaceId, false)
+			.filter((task) => task.status === 'in_progress' || task.status === 'approved').length;
+	}
+
+	private getAvailableTaskSlots(space: Space | null): number {
+		if (!space) return 0;
+		return Math.max(0, this.getConcurrentTaskLimit(space) - this.getRunningTaskCount(space.id));
+	}
+
+	private sortTasksByPriority(tasks: SpaceTask[]): SpaceTask[] {
+		return [...tasks].sort((a, b) => {
+			const priorityDelta = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
+			if (priorityDelta !== 0) return priorityDelta;
+			if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+			return a.id.localeCompare(b.id);
+		});
+	}
+
 	private async attachStandaloneTasksToWorkflows(): Promise<void> {
 		const spaces = await this.listActiveSpaces();
 
@@ -4106,39 +4162,39 @@ export class SpaceRuntime {
 				.filter((w) => !w.disabled);
 			if (workflows.length === 0) continue;
 
-			const standaloneOpenTasks = this.config.taskRepo
-				.listStandaloneBySpace(space.id, false)
-				.filter((task) => task.status === 'open');
+			let availableSlots = this.getAvailableTaskSlots(space);
+			if (availableSlots <= 0) continue;
+
+			const standaloneOpenTasks = this.sortTasksByPriority(
+				this.config.taskRepo
+					.listStandaloneBySpace(space.id, false)
+					.filter((task) => task.status === 'open')
+			);
 
 			const taskManager = this.getOrCreateTaskManager(space.id);
 
-			// Phase 1 — pick a workflow for every eligible task in parallel. LLM
-			// calls dominate the cost, so running them concurrently keeps the
-			// tick responsive when a space has many standalone tasks queued.
-			const candidates = await Promise.all(
-				standaloneOpenTasks.map(async (task) => {
-					const fresh = this.config.taskRepo.getTask(task.id);
-					if (!fresh || fresh.workflowRunId) return null;
-					if (fresh.status !== 'open') return null;
-					if (!(await taskManager.areDependenciesMet(fresh))) return null;
+			// Evaluate the full priority-ordered queue so ineligible high-priority
+			// tasks (for example, unmet dependencies) do not strand ready lower-priority
+			// work while slots are available.
+			for (const task of standaloneOpenTasks) {
+				if (availableSlots <= 0) break;
+				const fresh = this.config.taskRepo.getTask(task.id);
+				if (!fresh || fresh.workflowRunId) continue;
+				if (fresh.status !== 'open') continue;
+				if (!(await taskManager.areDependenciesMet(fresh))) continue;
 
-					const selected = await this.selectWorkflowForStandaloneTask(fresh, workflows);
-					if (!selected) return null;
-					return { fresh, selected };
-				})
-			);
-
-			// Phase 2 — apply the attachments sequentially so repo writes and
-			// event emission stay in a predictable order per space.
-			for (const candidate of candidates) {
-				if (!candidate) continue;
-				const { fresh, selected } = candidate;
+				const selected = await this.selectWorkflowForStandaloneTask(fresh, workflows);
+				if (!selected) continue;
 
 				// Re-read once more to defend against concurrent updates between
-				// phase 1 and phase 2 (e.g. another actor attached the task).
+				// eligibility checks and attachment (e.g. another actor attached the task).
 				const current = this.config.taskRepo.getTask(fresh.id);
 				if (!current || current.workflowRunId) continue;
 				if (current.status !== 'open') continue;
+				if (this.getAvailableTaskSlots(space) <= 0) {
+					availableSlots = 0;
+					break;
+				}
 
 				try {
 					const { run } = await this.startWorkflowRun(
@@ -4155,6 +4211,7 @@ export class SpaceRuntime {
 						startedAt: current.startedAt ?? Date.now(),
 						completedAt: null,
 					});
+					availableSlots--;
 				} catch (err) {
 					log.warn(
 						`SpaceRuntime: failed to attach standalone task ${current.id} to workflow ${selected.id}:`,

@@ -34,6 +34,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			stopped INTEGER NOT NULL DEFAULT 0,
 			autonomy_level INTEGER NOT NULL DEFAULT 1
 				CHECK(autonomy_level BETWEEN 1 AND 5),
+			max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
 			config TEXT,
 			task_agent_config TEXT DEFAULT NULL,
 			setting_sources TEXT DEFAULT NULL,
@@ -371,6 +372,31 @@ export function createSpaceTables(db: BunDatabase): void {
 			`ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
 			`WHERE idempotency_key IS NOT NULL`
 	);
+
+	// External Event Bus extension configuration tables.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS external_event_source_configs (
+			source TEXT PRIMARY KEY,
+			globally_enabled INTEGER NOT NULL DEFAULT 0,
+			capabilities_json TEXT NOT NULL,
+			secrets_ref TEXT,
+			settings_json TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			settings_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(space_id, source),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
 
 	// External Event Bus tables (migration 124 — simplified schema)
 	db.exec(`

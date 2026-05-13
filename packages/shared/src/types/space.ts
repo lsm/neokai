@@ -30,6 +30,9 @@ export type SpaceStatus = 'active' | 'archived';
  */
 export type SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5;
 
+export const MIN_SPACE_CONCURRENT_TASKS = 1;
+export const MAX_SPACE_CONCURRENT_TASKS = 10;
+
 /**
  * Who approved a task or gate — used for audit trail tracking.
  *
@@ -43,7 +46,10 @@ export type SpaceApprovalSource = 'human' | 'auto_policy' | 'agent';
  * Typed runtime configuration for a Space.
  */
 export interface SpaceConfig {
-	/** Maximum number of tasks that may run concurrently in this Space */
+	/**
+	 * @deprecated Use Space.maxConcurrentTasks instead. Retained for backward-compatible
+	 * imports of older Space configuration payloads.
+	 */
 	maxConcurrentTasks?: number;
 	/** Timeout for a single task in milliseconds */
 	taskTimeoutMs?: number;
@@ -107,7 +113,9 @@ export interface Space {
 	stopped: boolean;
 	/** Autonomy level — controls how much the Space Agent can act without human approval */
 	autonomyLevel?: SpaceAutonomyLevel;
-	/** Runtime configuration (maxConcurrentTasks, taskTimeoutMs, etc.) */
+	/** Maximum number of Space tasks that may run concurrently */
+	maxConcurrentTasks: number;
+	/** Runtime configuration (taskTimeoutMs, legacy maxConcurrentTasks, etc.) */
 	config?: SpaceConfig;
 	/** Per-space overrides for the built-in Task Agent (model and custom prompt). */
 	taskAgentConfig?: TaskAgentConfig;
@@ -156,6 +164,8 @@ export interface CreateSpaceParams {
 	allowedModels?: string[];
 	/** Autonomy level for the Space Agent */
 	autonomyLevel?: SpaceAutonomyLevel;
+	/** Maximum number of Space tasks that may run concurrently (1–10, default 1) */
+	maxConcurrentTasks?: number;
 	/** Runtime configuration */
 	config?: SpaceConfig;
 	/** Per-space overrides for the built-in Task Agent */
@@ -178,6 +188,8 @@ export interface UpdateSpaceParams {
 	defaultModel?: string | null;
 	allowedModels?: string[];
 	autonomyLevel?: SpaceAutonomyLevel;
+	/** Maximum number of Space tasks that may run concurrently (1–10) */
+	maxConcurrentTasks?: number;
 	config?: SpaceConfig;
 	/** Per-space overrides for the built-in Task Agent. Pass null to clear. */
 	taskAgentConfig?: TaskAgentConfig | null;
@@ -1195,6 +1207,23 @@ export interface DeclarativeToolGuard {
 	decision: 'deny';
 	/** Human-readable reason shown to the agent when the decision is applied */
 	reason: string;
+}
+
+export interface EventInterest {
+	/**
+	 * Glob pattern matching event topics.
+	 * Examples: 'github/owner/repo/pull_request.*', 'github/owner/repo/pull_request.review_*'
+	 *
+	 * The topic pattern IS the filter — the 4-segment format encodes source
+	 * identity and scope (e.g. owner/repo for GitHub).
+	 */
+	topic: string;
+
+	/**
+	 * Optional label for diagnostics. Not used in matching logic.
+	 * Example: 'PR review comments', 'CI failures'
+	 */
+	label?: string;
 }
 
 /**

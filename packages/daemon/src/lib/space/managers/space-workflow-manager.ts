@@ -480,24 +480,21 @@ export class SpaceWorkflowManager {
 		const seenNames = new Set<string>();
 		for (let j = 0; j < node.agents.length; j++) {
 			const entry = node.agents[j];
+			const loc = `node[${index}].agents[${j}]`;
 			if (!entry.agentId || !entry.agentId.trim()) {
-				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
-				);
+				throw new WorkflowValidationError(`${loc}: agentId must be a non-empty SpaceAgent UUID`);
 			}
 			if (!entry.name || !entry.name.trim()) {
-				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: name must be a non-empty string`
-				);
+				throw new WorkflowValidationError(`${loc}: name must be a non-empty string`);
 			}
 			if (isReservedWorkflowAgentName(entry.name)) {
 				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: name "${entry.name}" is reserved for a built-in agent`
+					`${loc}: name "${entry.name}" is reserved for a built-in agent`
 				);
 			}
 			if (seenNames.has(entry.name)) {
 				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: duplicate name "${entry.name}" — each agent slot must have a unique name within the node`
+					`${loc}: duplicate name "${entry.name}" — each agent slot must have a unique name within the node`
 				);
 			}
 			seenNames.add(entry.name);

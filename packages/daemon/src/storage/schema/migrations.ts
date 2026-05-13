@@ -614,6 +614,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 127: Add `handle` column to `space_workflows` for human-readable
 	// workflow identifiers (alternative to UUID). Unique per space.
 	runMigration127(db);
+
+	// Migration 128: Add external-event extension configuration tables.
+	runMigration128(db);
+
+	// Migration 129: Add per-space concurrent task execution limit.
+	runMigration129(db);
 }
 
 /**
@@ -8789,6 +8795,64 @@ export function runMigration127(db: BunDatabase): void {
 		handles.push(handle);
 		spaceHandles.set(row.space_id, handles);
 	}
+}
+
+/**
+ * Migration 128: Add external-event extension configuration tables.
+ *
+ * external_event_source_configs stores global source enablement, capabilities,
+ * secrets references, and source-level settings.
+ *
+ * space_external_event_source_configs stores per-space source enablement and
+ * settings, with a cascading FK to spaces so deleting a space removes its
+ * extension configuration.
+ */
+export function runMigration128(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS external_event_source_configs (
+			source TEXT PRIMARY KEY,
+			globally_enabled INTEGER NOT NULL DEFAULT 0,
+			capabilities_json TEXT NOT NULL,
+			secrets_ref TEXT,
+			settings_json TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			settings_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(space_id, source),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+}
+
+/**
+ * Migration 129: Add per-space concurrent task execution limit.
+ *
+ * Backfills from legacy config.maxConcurrentTasks when present and valid, otherwise
+ * defaults to 1. This preserves legacy SpaceConfig-based limits during upgrade.
+ */
+export function runMigration129(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
+
+	db.exec(`ALTER TABLE spaces ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 1`);
+	db.exec(`
+		UPDATE spaces
+		SET max_concurrent_tasks = CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER)
+		WHERE config IS NOT NULL
+		  AND json_valid(config)
+		  AND json_type(config, '$.maxConcurrentTasks') = 'integer'
+		  AND CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER) BETWEEN 1 AND 10
+	`);
 }
 
 /**

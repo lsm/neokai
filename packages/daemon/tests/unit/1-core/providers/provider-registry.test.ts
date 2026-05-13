@@ -320,7 +320,7 @@ describe('ProviderRegistry', () => {
 	describe('initializeProviders — all built-in providers registered', () => {
 		// Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-		it('should register exactly ten built-in providers', () => {
+		it('should register exactly nine built-in providers', () => {
 			const reg = initializeProviders();
 
 			const ids = reg
@@ -333,7 +333,6 @@ describe('ProviderRegistry', () => {
 					'anthropic-codex',
 					'anthropic-copilot',
 					'glm',
-					'google-gemini-oauth',
 					'kimi',
 					'minimax',
 					'ollama',
@@ -384,23 +383,18 @@ describe('ProviderRegistry', () => {
 			expect(reg.has('anthropic-copilot')).toBe(true);
 		});
 
-		it('should include google-gemini-oauth provider', () => {
-			const reg = initializeProviders();
-			expect(reg.has('google-gemini-oauth')).toBe(true);
-		});
-
 		it('should return the same singleton registry on repeated calls without reset', () => {
 			const reg1 = initializeProviders();
 			const reg2 = initializeProviders();
 			// The global singleton must be the same reference — not a new instance
 			expect(reg1).toBe(reg2);
-			expect(reg2.size).toBe(10);
+			expect(reg2.size).toBe(9);
 		});
 
 		it('should use the global registry singleton', () => {
 			initializeProviders();
 			const globalReg = getProviderRegistry();
-			expect(globalReg.size).toBe(10);
+			expect(globalReg.size).toBe(9);
 		});
 	});
 
@@ -568,7 +562,6 @@ describe('inferProviderForModel', () => {
 	});
 
 	it('defaults claude- models to anthropic', () => {
-		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('anthropic');
 		expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
 		expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');
 	});
@@ -578,8 +571,9 @@ describe('inferProviderForModel', () => {
 		expect(inferProviderForModel('unknown-model')).toBe('anthropic');
 	});
 
-	it('routes gemini- models to google-gemini-oauth', () => {
-		expect(inferProviderForModel('gemini-2.5-pro')).toBe('google-gemini-oauth');
-		expect(inferProviderForModel('gemini-2.5-flash')).toBe('google-gemini-oauth');
+	it('defaults gemini- models to anthropic (no Google provider registered)', () => {
+		expect(inferProviderForModel('gemini-2.5-pro')).toBe('anthropic');
+		expect(inferProviderForModel('gemini-2.5-flash')).toBe('anthropic');
+		expect(inferProviderForModel('gemini-3.1-pro-preview')).toBe('anthropic');
 	});
 });

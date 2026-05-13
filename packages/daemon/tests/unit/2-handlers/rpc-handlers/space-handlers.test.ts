@@ -49,6 +49,7 @@ const mockSpace: Space = {
 	paused: false,
 	stopped: false,
 	autonomyLevel: 1,
+	maxConcurrentTasks: 1,
 	createdAt: NOW,
 	updatedAt: NOW,
 };
@@ -592,6 +593,67 @@ describe('space-handlers', () => {
 
 			const [, params] = (spaceManager.updateSpace as ReturnType<typeof mock>).mock.calls[0];
 			expect(params.autonomyLevel).toBeUndefined();
+		});
+	});
+
+	// ─── space.setConcurrentLimit ────────────────────────────────────────────────
+
+	describe('space.setConcurrentLimit', () => {
+		beforeEach(() => setup());
+
+		it('updates maxConcurrentTasks and publishes space.updated', async () => {
+			const updated = { ...mockSpace, maxConcurrentTasks: 4 };
+			(spaceManager.updateSpace as ReturnType<typeof mock>).mockResolvedValue(updated);
+
+			const result = await call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 4 });
+
+			expect(result).toEqual(updated);
+			expect(spaceManager.updateSpace).toHaveBeenCalledWith('space-1', { maxConcurrentTasks: 4 });
+			expect(internalEventBus.publish).toHaveBeenCalledWith('space.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				space: updated,
+			});
+		});
+
+		it('accepts id as a backwards-compatible alias for spaceId', async () => {
+			await call('space.setConcurrentLimit', { id: 'space-1', limit: 2 });
+
+			expect(spaceManager.updateSpace).toHaveBeenCalledWith('space-1', { maxConcurrentTasks: 2 });
+		});
+
+		it('throws when spaceId is missing', async () => {
+			await expect(call('space.setConcurrentLimit', { limit: 2 })).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('throws when limit is below 1', async () => {
+			await expect(
+				call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 0 })
+			).rejects.toThrow('Invalid concurrent task limit');
+		});
+
+		it('throws when limit is above 10', async () => {
+			await expect(
+				call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 11 })
+			).rejects.toThrow('Invalid concurrent task limit');
+		});
+
+		it('throws when limit is non-integer', async () => {
+			await expect(
+				call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 1.5 })
+			).rejects.toThrow('Invalid concurrent task limit');
+		});
+
+		it('propagates not-found errors from SpaceManager', async () => {
+			(spaceManager.updateSpace as ReturnType<typeof mock>).mockRejectedValue(
+				new Error('Space not found: missing')
+			);
+
+			await expect(
+				call('space.setConcurrentLimit', { spaceId: 'missing', limit: 2 })
+			).rejects.toThrow('Space not found');
 		});
 	});
 

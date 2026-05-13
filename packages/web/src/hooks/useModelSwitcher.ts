@@ -51,7 +51,6 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
 	minimax: '🔥',
 	openrouter: '🧭',
 	gpt: '🔮',
-	gemini: '✨',
 	// Default icon for unknown families
 	__default__: '💎',
 };
@@ -84,7 +83,6 @@ export const FAMILY_ORDER: Record<string, number> = {
 	minimax: 5,
 	openrouter: 6,
 	gpt: 7,
-	gemini: 8,
 };
 
 /** Raw model shape returned by the `models.list` RPC */
@@ -123,8 +121,6 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			family = 'openrouter';
 		} else if (mid.startsWith('gpt-') || mid.includes('/gpt')) {
 			family = 'gpt';
-		} else if (mid.startsWith('gemini-') || mid.includes('/gemini')) {
-			family = 'gemini';
 		} else if (mid.includes('/')) {
 			family = 'openrouter';
 		}
@@ -301,15 +297,6 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
 			loadModelInfo();
 		}
 	}, [loadModelInfo, isConnected]);
-
-	// Reload models when provider accounts change (e.g., Gemini OAuth add/remove)
-	useEffect(() => {
-		const handleAccountsChanged = () => {
-			loadModelInfo();
-		};
-		window.addEventListener('gemini-accounts-changed', handleAccountsChanged);
-		return () => window.removeEventListener('gemini-accounts-changed', handleAccountsChanged);
-	}, [loadModelInfo]);
 
 	const switchModel = useCallback(
 		async (model: ModelInfo) => {
