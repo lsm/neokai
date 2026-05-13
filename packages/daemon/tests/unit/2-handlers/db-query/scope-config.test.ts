@@ -298,6 +298,14 @@ describe('scope-config', () => {
 			expect(excluded).toContain('github_filter_configs');
 		});
 
+		it('includes external event bus tables', () => {
+			const excluded = getExcludedTableNames();
+			expect(excluded).toContain('external_event_source_configs');
+			expect(excluded).toContain('space_external_event_source_configs');
+			expect(excluded).toContain('space_external_events');
+			expect(excluded).toContain('space_external_event_deliveries');
+		});
+
 		it('returns a non-empty array', () => {
 			expect(getExcludedTableNames().length).toBeGreaterThan(0);
 		});
