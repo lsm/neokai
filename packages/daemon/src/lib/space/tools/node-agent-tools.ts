@@ -175,7 +175,10 @@ export interface NodeAgentToolsConfig {
 	 * Callback invoked after a gate data write to trigger re-evaluation and
 	 * potential lazy node activation for any channels referencing the changed gate.
 	 *
-	 * Called by `write_gate` after every successful data merge (fire-and-forget).
+	 * Called by `send_message` after a successful gated message delivery. The
+	 * handler awaits and serializes notifications per gate so cyclic reset-on-
+	 * delivery cannot race ahead of the in-flight send and make the same call
+	 * validate against freshly reset data.
 	 * When provided, blocked target nodes are auto-activated the moment their gate
 	 * condition is satisfied — enabling vote-counting and push-on-write semantics.
 	 * When absent, nodes are activated at the next `deliverMessage` call instead.
@@ -279,7 +282,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		agentMessageRouter,
 		workflow,
 		gateDataRepo,
-		onGateDataChanged,
 		scriptExecutor,
 		scriptContext,
 		getSpaceAutonomyLevel,
@@ -312,6 +314,33 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			.map((value) => normalizeAgentNameToken(value))
 			.filter((value) => value.length > 0)
 	);
+
+	const pendingGateChangeNotifications = new Map<string, Promise<unknown>>();
+
+	async function notifyGateDataChanged(gateId: string): Promise<void> {
+		if (!config.onGateDataChanged) return;
+
+		const previous = pendingGateChangeNotifications.get(gateId);
+		const current = (async () => {
+			if (previous) {
+				try {
+					await previous;
+				} catch {
+					// Prior notification failures are already logged by their owner.
+				}
+			}
+			return config.onGateDataChanged!(workflowRunId, gateId);
+		})();
+
+		pendingGateChangeNotifications.set(gateId, current);
+		try {
+			await current;
+		} finally {
+			if (pendingGateChangeNotifications.get(gateId) === current) {
+				pendingGateChangeNotifications.delete(gateId);
+			}
+		}
+	}
 
 	/** Helper to log MCP write operations to the audit log. */
 	function logAudit(
@@ -731,15 +760,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 									}
 								}
 
-								if (onGateDataChanged) {
-									void onGateDataChanged(workflowRunId, gateId).catch((err) => {
-										log.warn(
-											`onGateDataChanged failed for gate "${gateId}" in run "${workflowRunId}":`,
-											err instanceof Error ? err.message : String(err)
-										);
-									});
-								}
-
 								if (internalEventBus) {
 									void internalEventBus
 										.publish('space.gateData.updated', {
@@ -759,6 +779,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				}
 			}
 
+			const gateIdToNotify = gateWriteResult?.gateId;
+
 			// Audit log: gate data writes via send_message
 			if (gateWriteResult) {
 				logAudit('send_message', {
@@ -776,6 +798,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				message,
 				data,
 			});
+
+			if (gateIdToNotify && result.success) {
+				try {
+					await notifyGateDataChanged(gateIdToNotify);
+				} catch (err) {
+					log.warn(
+						`onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
+						err instanceof Error ? err.message : String(err)
+					);
+				}
+			}
 
 			if (!result.success) {
 				return jsonResult({
