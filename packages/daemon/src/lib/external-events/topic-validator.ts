@@ -130,7 +130,7 @@ export function validateSubscriptionPattern(pattern: string): ValidationResult {
 	}
 
 	// Source-specific validation for registered sources
-	const source = pattern.split('/')[0];
+	const source = pattern.split('/')[0].toLowerCase();
 	if (source === 'github') {
 		return validateGitHubSubscriptionPattern(pattern);
 	}
@@ -140,42 +140,77 @@ export function validateSubscriptionPattern(pattern: string): ValidationResult {
 
 /**
  * Validate GitHub literal topic structure.
- * GitHub topics must be 5 segments: {source}/{owner}/{repo}/{resource}/{entityId.action}
+ * GitHub topics use either 4 segments (legacy) or 5 segments (current):
+ * - Legacy: {source}/{owner}/{repo}/{resource.action}
+ * - Current: {source}/{owner}/{repo}/{resource}/{entityId.action}
+ *
+ * Both formats are accepted during the migration period.
  */
 function validateGitHubLiteralTopic(topic: string): ValidationResult {
 	const segments = topic.split('/');
 
-	if (segments.length !== 5) {
+	// Accept both 4-segment (legacy) and 5-segment (current) formats
+	if (segments.length !== 4 && segments.length !== 5) {
 		return {
 			valid: false,
 			reason:
-				`GitHub topic must have exactly 5 segments ` +
-				`(source/owner/repo/resource/entityId.action); got ${segments.length}. ` +
-				`Example: 'github/lsm/neokai/pull_request/5.review_submitted'`,
+				`GitHub topic must have 4 or 5 segments ` +
+				`(source/owner/repo/resource.action or source/owner/repo/resource/entityId.action); got ${segments.length}. ` +
+				`Examples: 'github/lsm/neokai/pull_request.review_submitted' or ` +
+				`'github/lsm/neokai/pull_request/5.review_submitted'`,
 		};
 	}
 
-	const entityIdAction = segments[4];
-	const dotIndex = entityIdAction.indexOf('.');
-	if (dotIndex <= 0 || dotIndex === entityIdAction.length - 1) {
-		return {
-			valid: false,
-			reason:
-				`GitHub topic fifth segment must be entityId.action; got "${entityIdAction}". ` +
-				`Example: '5.review_submitted'`,
-		};
+	// For 5-segment format, validate entityId.action structure
+	if (segments.length === 5) {
+		const entityIdAction = segments[4];
+		const dotIndex = entityIdAction.indexOf('.');
+		if (dotIndex <= 0 || dotIndex === entityIdAction.length - 1) {
+			return {
+				valid: false,
+				reason:
+					`GitHub topic fifth segment must be entityId.action; got "${entityIdAction}". ` +
+					`Example: '5.review_submitted'`,
+			};
+		}
+
+		// Enforce exactly one dot in the 5th segment (entityId.action pair).
+		const dotCount = (entityIdAction.match(/\./g) || []).length;
+		if (dotCount !== 1) {
+			return {
+				valid: false,
+				reason:
+					`GitHub topic fifth segment must contain exactly one dot ` +
+					`(entityId.action), got ${dotCount} dots in "${entityIdAction}". ` +
+					`Example: '5.review_submitted'`,
+			};
+		}
 	}
 
-	// Enforce exactly one dot in the 5th segment (entityId.action pair).
-	const dotCount = (entityIdAction.match(/\./g) || []).length;
-	if (dotCount !== 1) {
-		return {
-			valid: false,
-			reason:
-				`GitHub topic fifth segment must contain exactly one dot ` +
-				`(entityId.action), got ${dotCount} dots in "${entityIdAction}". ` +
-				`Example: '5.review_submitted'`,
-		};
+	// For 4-segment format, validate resource.action structure
+	if (segments.length === 4) {
+		const resourceAction = segments[3];
+		const dotIndex = resourceAction.indexOf('.');
+		if (dotIndex <= 0 || dotIndex === resourceAction.length - 1) {
+			return {
+				valid: false,
+				reason:
+					`GitHub topic fourth segment must be resource.action; got "${resourceAction}". ` +
+					`Example: 'pull_request.review_submitted'`,
+			};
+		}
+
+		// Enforce exactly one dot in the 4th segment (resource.action pair).
+		const dotCount = (resourceAction.match(/\./g) || []).length;
+		if (dotCount !== 1) {
+			return {
+				valid: false,
+				reason:
+					`GitHub topic fourth segment must contain exactly one dot ` +
+					`(resource.action), got ${dotCount} dots in "${resourceAction}". ` +
+					`Example: 'pull_request.review_submitted'`,
+			};
+		}
 	}
 
 	return { valid: true };
@@ -183,28 +218,28 @@ function validateGitHubLiteralTopic(topic: string): ValidationResult {
 
 /**
  * Validate GitHub subscription pattern structure.
- * GitHub patterns must have exactly 5 segments to match real GitHub topics.
+ * GitHub patterns use either 4 segments (legacy) or 5 segments (current):
+ * - Legacy: {source}/{scope1}/{scope2}/{resource.action}
+ * - Current: {source}/{scope1}/{scope2}/{resource}/{entityId.action}
+ *
+ * Both formats are accepted during the migration period.
  */
 function validateGitHubSubscriptionPattern(pattern: string): ValidationResult {
 	const segments = pattern.split('/');
 
-	if (segments.length !== 5) {
+	// Accept both 4-segment (legacy) and 5-segment (current) formats
+	if (segments.length !== 4 && segments.length !== 5) {
 		return {
 			valid: false,
 			reason:
-				`GitHub subscription pattern must have exactly 5 segments ` +
-				`(source/owner/repo/resource/entityId.action); got ${segments.length}. ` +
-				`Example: 'github/*/*/pull_request/*.*' or 'github/lsm/neokai/pull_request/5.*'`,
+				`GitHub subscription pattern must have 4 or 5 segments ` +
+				`(source/scope1/scope2/resource.action or source/scope1/scope2/resource/entityId.action); got ${segments.length}. ` +
+				`Examples: 'github/*/*/pull_request.*' or 'github/*/*/pull_request/*.*'`,
 		};
 	}
 
-	// Final segment pattern must be compatible with entityId.action format:
-	// - `*` (matches whole segment)
-	// - `*.*` (matches any entity.action)
-	// - `*.action` or `entity.*` (matches specific entity or action)
-	// - `*.prefix_*` (matches actions with prefix)
-	// Basically: either `*` or contains exactly one dot with non-empty sides
-	const finalSegment = segments[4];
+	// Validate the final segment based on format
+	const finalSegment = segments[segments.length - 1];
 	if (finalSegment !== '*') {
 		const dotCount = (finalSegment.match(/\./g) || []).length;
 		if (dotCount !== 1) {
@@ -212,8 +247,8 @@ function validateGitHubSubscriptionPattern(pattern: string): ValidationResult {
 				valid: false,
 				reason:
 					`GitHub subscription pattern final segment must contain exactly one dot ` +
-					`to match entityId.action; got ${dotCount} dots in "${finalSegment}". ` +
-					`Examples: '*.*', '*.review_submitted', '5.*', '5.review_*'`,
+					`to match the action format; got ${dotCount} dots in "${finalSegment}". ` +
+					`Examples: 'pull_request.*', '*.review_submitted', '5.*', '5.review_*'`,
 			};
 		}
 
@@ -223,8 +258,8 @@ function validateGitHubSubscriptionPattern(pattern: string): ValidationResult {
 				valid: false,
 				reason:
 					`GitHub subscription pattern final segment must have non-empty sides ` +
-					`around the dot (entityId.action); got "${finalSegment}". ` +
-					`Examples: '*.*', '*.review_submitted', '5.*', '5.review_*'`,
+					`around the dot; got "${finalSegment}". ` +
+					`Examples: 'pull_request.*', '*.review_submitted', '5.*', '5.review_*'`,
 			};
 		}
 	}

@@ -85,6 +85,11 @@ describe('validateLiteralTopic', () => {
 		expect(r.valid).toBe(true);
 	});
 
+	test('accepts literal 4-segment GitHub topic (legacy format)', () => {
+		const r = validateLiteralTopic('github/lsm/neokai/pull_request.review_submitted');
+		expect(r.valid).toBe(true);
+	});
+
 	test('accepts literal 3-segment non-GitHub topic', () => {
 		const r = validateLiteralTopic('slack/workspace/channel/message_created');
 		expect(r.valid).toBe(true);
@@ -93,31 +98,37 @@ describe('validateLiteralTopic', () => {
 	test('rejects GitHub topic with wrong segment count', () => {
 		const r = validateLiteralTopic('github/owner/repo');
 		expect(r.valid).toBe(false);
-		expect(r.reason).toMatch(/exactly 5 segments/);
+		expect(r.reason).toMatch(/4 or 5 segments/);
 	});
 
-	test('rejects GitHub topic without entityId.action delimiter', () => {
+	test('rejects GitHub 5-segment topic without entityId.action delimiter', () => {
 		const r = validateLiteralTopic('github/lsm/neokai/pull_request/review_submitted');
 		expect(r.valid).toBe(false);
-		expect(r.reason).toMatch(/entityId\.action/);
+		expect(r.reason).toMatch(/fifth segment must be entityId\.action/);
 	});
 
-	test('rejects GitHub topic with empty entityId', () => {
+	test('rejects GitHub 5-segment topic with empty entityId', () => {
 		const r = validateLiteralTopic('github/lsm/neokai/pull_request/.review_submitted');
 		expect(r.valid).toBe(false);
-		expect(r.reason).toMatch(/entityId\.action/);
+		expect(r.reason).toMatch(/fifth segment must be entityId\.action/);
 	});
 
-	test('rejects GitHub topic with empty action', () => {
+	test('rejects GitHub 5-segment topic with empty action', () => {
 		const r = validateLiteralTopic('github/lsm/neokai/pull_request/5.');
 		expect(r.valid).toBe(false);
-		expect(r.reason).toMatch(/entityId\.action/);
+		expect(r.reason).toMatch(/fifth segment must be entityId\.action/);
 	});
 
-	test('rejects GitHub topic with multiple dots in final segment', () => {
+	test('rejects GitHub 5-segment topic with multiple dots in final segment', () => {
 		const r = validateLiteralTopic('github/lsm/neokai/pull_request/5.review.submitted');
 		expect(r.valid).toBe(false);
 		expect(r.reason).toMatch(/exactly one dot/);
+	});
+
+	test('rejects GitHub 4-segment topic without resource.action delimiter', () => {
+		const r = validateLiteralTopic('github/lsm/neokai/pull_request_review_submitted');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/fourth segment must be resource\.action/);
 	});
 
 	test('rejects segment wildcard', () => {
@@ -181,8 +192,18 @@ describe('validateSubscriptionPattern', () => {
 		expect(r.valid).toBe(true);
 	});
 
-	test('accepts GitHub pattern with specific owner/repo', () => {
+	test('accepts valid 4-segment GitHub pattern with wildcards (legacy format)', () => {
+		const r = validateSubscriptionPattern('github/*/*/pull_request.*');
+		expect(r.valid).toBe(true);
+	});
+
+	test('accepts GitHub pattern with specific owner/repo (5-segment)', () => {
 		const r = validateSubscriptionPattern('github/lsm/neokai/pull_request/5.*');
+		expect(r.valid).toBe(true);
+	});
+
+	test('accepts GitHub pattern with specific owner/repo (4-segment legacy)', () => {
+		const r = validateSubscriptionPattern('github/lsm/neokai/pull_request.review_submitted');
 		expect(r.valid).toBe(true);
 	});
 
@@ -206,16 +227,21 @@ describe('validateSubscriptionPattern', () => {
 		expect(r.valid).toBe(true);
 	});
 
+	test('normalizes source to lowercase before validation', () => {
+		const r = validateSubscriptionPattern('GitHub/lsm/neokai/pull_request.review_submitted');
+		expect(r.valid).toBe(true);
+	});
+
 	test('rejects GitHub pattern with wrong segment count', () => {
 		const r = validateSubscriptionPattern('github/owner/repo');
 		expect(r.valid).toBe(false);
-		expect(r.reason).toMatch(/exactly 5 segments/);
+		expect(r.reason).toMatch(/4 or 5 segments/);
 	});
 
 	test('rejects GitHub pattern with too many segments', () => {
 		const r = validateSubscriptionPattern('github/owner/repo/pull_request/5/review_submitted');
 		expect(r.valid).toBe(false);
-		expect(r.reason).toMatch(/exactly 5 segments/);
+		expect(r.reason).toMatch(/4 or 5 segments/);
 	});
 
 	test('rejects GitHub pattern with malformed final segment (no dot)', () => {
