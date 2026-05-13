@@ -336,7 +336,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
 		expect(delivery.state).toBe('failed');
-		expect(delivery.failureReason).toBe('run_terminal_cleanup');
+		expect(delivery.failureReason).toBe('run_not_externally_deliverable');
 		expect(eventStore.getById(event.id)?.state).toBe('failed');
 	});
 
@@ -640,7 +640,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected).toHaveLength(0);
 		expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 		expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
-			'temporary injection failure'
+			'deliveryMode:immediate; temporary injection failure'
 		);
 
 		runtime.flushPendingNodeQueue({
@@ -683,6 +683,251 @@ describe('SpaceRuntime external event subscriptions', () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(injected).toHaveLength(1);
 		expect(injected[0]!.sessionId).toBe('session-waiting-rebind');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
+	test('drains transient retry queue for an in-progress session without respawn', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-retry-drain',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-retry-drain');
+		await runtime.stop();
+		let failNext = true;
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			if (failNext) {
+				failNext = false;
+				return { ok: false, error: 'temporary retry drain failure' };
+			}
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerRunInterests(run.id, taskRepo.listByWorkflowRun(run.id)[0]!.id, workflow.nodes);
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(0);
+		await new Promise((resolve) => setTimeout(resolve, 1100));
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-retry-drain');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
+	test('fails delivery terminally when injection command handler is missing', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-no-handler',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-no-handler');
+		await runtime.stop();
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: createInternalCommandBus(),
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerRunInterests(run.id, taskRepo.listByWorkflowRun(run.id)[0]!.id, workflow.nodes);
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toContain('No handler registered');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('terminalizes persisted pending deliveries for non-deliverable runs on rehydrate', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+		await eventService.publish(event);
+		workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+		await runtime.stop();
+
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: createInternalCommandBus(),
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+
+		await runtime.rehydrateExecutors();
+
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('does not requeue persisted pending deliveries for removed subscriptions', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+		await eventService.publish(event);
+		const updatedWorkflow = workflowManager.updateWorkflow(workflow.id, {
+			nodes: [
+				{
+					...workflow.nodes[0]!,
+					agents: [
+						{
+							...workflow.nodes[0]!.agents![0]!,
+							eventInterests: [{ topic: 'github/*/*/pull_request.comment_*' }],
+						},
+					],
+				},
+			],
+		});
+		await runtime.stop();
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: createInternalCommandBus(),
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+
+		await runtime.rehydrateExecutors();
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-removed-interest',
+		});
+
+		expect(updatedWorkflow.nodes[0]!.agents![0]!.eventInterests?.[0]!.topic).toBe(
+			'github/*/*/pull_request.comment_*'
+		);
+		expect(injected).toHaveLength(0);
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('subscription_no_longer_active');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('preserves deferred delivery mode when rebuilding pending queue', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-defer-rehydrate',
+			startedAt: Date.now(),
+		});
+		await runtime.stop();
+		let failNext = true;
+		const failingCommandBus = createInternalCommandBus();
+		failingCommandBus.register('agent.message.inject', async () => {
+			if (failNext) {
+				failNext = false;
+				return { ok: false, error: 'defer failure' };
+			}
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: failingCommandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerRunInterests(run.id, tasks[0]!.id, workflow.nodes);
+		const event = makeEvent();
+		await eventService.publish(event);
+		expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+			'deliveryMode:defer; defer failure'
+		);
+		await runtime.stop();
+
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+
+		await runtime.rehydrateExecutors();
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-defer-rehydrate',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.deliveryMode).toBe('defer');
 		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 });

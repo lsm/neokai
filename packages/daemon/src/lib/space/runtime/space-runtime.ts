@@ -79,7 +79,11 @@ import type {
 	DaemonInternalEventMap,
 	InternalEventPayload,
 } from '../../internal-event-bus';
-import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
+import {
+	MissingCommandHandlerError,
+	type DaemonCommandMap,
+	type InternalCommandBus,
+} from '../../internal-command-bus';
 import {
 	type PostApprovalRouteContext,
 	type PostApprovalRouteResult,
@@ -250,6 +254,9 @@ interface PendingExternalEvent {
 	deliveryKey: string;
 	deliveryMode: 'immediate' | 'defer';
 }
+
+const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
+const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
 
 // ---------------------------------------------------------------------------
 // Internal notification event shape
@@ -647,6 +654,8 @@ export class SpaceRuntime {
 	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
 	private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
 	private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
+	private readonly externalEventRetryTimers = new Map<string, Timer>();
+	private readonly externalEventRetryCounts = new Map<string, number>();
 	private unsubscribeExternalEventPublished?: () => void;
 	private acceptingExternalEvents = false;
 
@@ -761,6 +770,7 @@ export class SpaceRuntime {
 		if (!queued) return;
 		this.pendingExternalEventQueue.delete(key);
 		for (const item of queued) {
+			this.clearExternalEventRetry(item.deliveryKey);
 			void this.deliverToSession(target, item.event, item.deliveryKey, item.deliveryMode);
 		}
 	}
@@ -843,15 +853,24 @@ export class SpaceRuntime {
 			if (!result?.ok) {
 				throw new Error(formatCommandError(result?.error ?? 'agent.message.inject unavailable'));
 			}
+			this.clearExternalEventRetry(deliveryKey);
 			store.markDeliveryDelivered(event.eventId, deliveryKey);
 			store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
 			store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
 		} catch (err) {
+			const rawFailureReason = err instanceof Error ? err.message : String(err);
+			const failureReason = `deliveryMode:${deliveryMode}; ${rawFailureReason}`;
+			const terminal = err instanceof MissingCommandHandlerError;
 			store.markDeliveryFailed(event.eventId, deliveryKey, {
-				terminal: false,
-				reason: err instanceof Error ? err.message : String(err),
+				terminal,
+				reason: failureReason,
 			});
-			this.queueForRetry(target, event, deliveryKey, deliveryMode);
+			if (terminal) {
+				this.clearExternalEventRetry(deliveryKey);
+				store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+				return;
+			}
+			this.queueForRetry(target, event, deliveryKey, deliveryMode, failureReason);
 		}
 	}
 
@@ -859,9 +878,62 @@ export class SpaceRuntime {
 		target: SubscriptionTarget,
 		event: ExternalEventPublishedPayload,
 		deliveryKey: string,
-		deliveryMode: 'immediate' | 'defer'
+		deliveryMode: 'immediate' | 'defer',
+		failureReason: string
 	): void {
 		this.queueForPendingNode(target, event, deliveryKey, deliveryMode);
+		this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason);
+	}
+
+	private scheduleExternalEventRetry(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer',
+		failureReason: string
+	): void {
+		if (!target.sessionId || this.externalEventRetryTimers.has(deliveryKey)) return;
+		const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
+		this.externalEventRetryCounts.set(deliveryKey, attempts);
+		if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+			this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+				terminal: true,
+				reason: failureReason,
+			});
+			this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+			this.clearQueuedDelivery(target, deliveryKey);
+			this.clearExternalEventRetry(deliveryKey);
+			return;
+		}
+
+		const timer = setTimeout(() => {
+			this.externalEventRetryTimers.delete(deliveryKey);
+			if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
+				this.clearExternalEventRetry(deliveryKey);
+				return;
+			}
+			void this.deliverToSession(target, event, deliveryKey, deliveryMode);
+		}, EXTERNAL_EVENT_RETRY_DELAY_MS);
+		this.externalEventRetryTimers.set(deliveryKey, timer);
+	}
+
+	private clearExternalEventRetry(deliveryKey: string): void {
+		const timer = this.externalEventRetryTimers.get(deliveryKey);
+		if (timer) clearTimeout(timer);
+		this.externalEventRetryTimers.delete(deliveryKey);
+		this.externalEventRetryCounts.delete(deliveryKey);
+	}
+
+	private clearQueuedDelivery(target: SubscriptionTarget, deliveryKey: string): void {
+		const key = this.buildQueueKey(target);
+		const queue = this.pendingExternalEventQueue.get(key);
+		if (!queue) return;
+		const remaining = queue.filter((item) => item.deliveryKey !== deliveryKey);
+		if (remaining.length === 0) {
+			this.pendingExternalEventQueue.delete(key);
+		} else {
+			this.pendingExternalEventQueue.set(key, remaining);
+		}
 	}
 
 	private queueForPendingNode(
@@ -904,6 +976,9 @@ export class SpaceRuntime {
 		const queued = this.pendingExternalEventQueue.get(key);
 		if (!queued) return;
 		this.failQueuedDeliveries(queued, reason);
+		for (const item of queued) {
+			this.clearExternalEventRetry(item.deliveryKey);
+		}
 		this.pendingExternalEventQueue.delete(key);
 	}
 
@@ -912,6 +987,9 @@ export class SpaceRuntime {
 			const parsed = parseSubscriptionQueueKey(queueKey);
 			if (!parsed || parsed.workflowRunId !== workflowRunId) continue;
 			this.failQueuedDeliveries(queued, reason);
+			for (const item of queued) {
+				this.clearExternalEventRetry(item.deliveryKey);
+			}
 			this.pendingExternalEventQueue.delete(queueKey);
 		}
 	}
@@ -1660,6 +1738,10 @@ export class SpaceRuntime {
 		this.pollManager?.stopAll();
 		this.unsubscribeExternalEventPublished?.();
 		this.unsubscribeExternalEventPublished = undefined;
+		for (const timer of this.externalEventRetryTimers.values()) {
+			clearTimeout(timer);
+		}
+		this.externalEventRetryTimers.clear();
 		this.acceptingExternalEvents = false;
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
@@ -2214,21 +2296,57 @@ export class SpaceRuntime {
 
 		for (const delivery of store.listPendingDeliveries()) {
 			const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
-			if (!run || !isExternallyDeliverableRun(run.status)) continue;
 			const eventRecord = store.getById(delivery.eventId);
 			if (!eventRecord || eventRecord.state !== 'published') continue;
+			if (!run || !isExternallyDeliverableRun(run.status)) {
+				store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+					terminal: true,
+					reason: 'run_not_externally_deliverable',
+				});
+				store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+				continue;
+			}
 
+			const target = {
+				workflowRunId: delivery.workflowRunId,
+				taskId: delivery.taskId,
+				nodeId: delivery.nodeId,
+				agentName: delivery.agentName,
+			};
+			if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+				store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+					terminal: true,
+					reason: 'subscription_no_longer_active',
+				});
+				store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+				continue;
+			}
+
+			const mode = delivery.failureReason?.startsWith('deliveryMode:defer;')
+				? 'defer'
+				: 'immediate';
 			this.queueForPendingNode(
-				{
-					workflowRunId: delivery.workflowRunId,
-					taskId: delivery.taskId,
-					nodeId: delivery.nodeId,
-					agentName: delivery.agentName,
-				},
+				target,
 				this.externalEventPayloadFromRecord(eventRecord.event),
-				delivery.deliveryKey
+				delivery.deliveryKey,
+				mode
 			);
 		}
+	}
+
+	private isTargetStillSubscribed(
+		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
+		topic: string
+	): boolean {
+		return this.topicTrie
+			.lookup(topic)
+			.some(
+				(match) =>
+					match.workflowRunId === target.workflowRunId &&
+					match.taskId === target.taskId &&
+					match.nodeId === target.nodeId &&
+					match.agentName === target.agentName
+			);
 	}
 
 	private externalEventPayloadFromRecord(event: ExternalEvent): ExternalEventPublishedPayload {
