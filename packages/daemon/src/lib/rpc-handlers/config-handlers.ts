@@ -9,7 +9,7 @@
  * ARCHITECTURE: Follows the 3-layer communication pattern:
  * - RPC handlers do minimal work and return fast (<100ms for config reads)
  * - Heavy operations (restart) are explicit via restartQuery parameter
- * - State updates are broadcast via DaemonHub events
+ * - State updates are broadcast via InternalEventBus<DaemonInternalEventMap> events
  */
 
 import type { MessageHub, Session } from '@neokai/shared';
@@ -39,7 +39,7 @@ import type {
 	GetAllConfigRequest,
 	UpdateBulkConfigRequest,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import type { SessionManager } from '../session-manager';
 import {
@@ -62,7 +62,7 @@ const log = new Logger('config-handlers');
 export function setupConfigHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	_daemonHub: DaemonHub
+	_internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): void {
 	// ============================================================================
 	// Model Settings

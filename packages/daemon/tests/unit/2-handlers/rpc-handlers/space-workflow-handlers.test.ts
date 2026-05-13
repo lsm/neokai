@@ -33,7 +33,10 @@ import type { SpaceWorkflowSummary } from '@neokai/shared';
 import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash';
 import { getBuiltInWorkflows } from '../../../../src/lib/space/workflows/built-in-workflows';
 
@@ -105,13 +108,13 @@ function createMockMessageHub(): {
 	return { hub, handlers };
 }
 
-function createMockDaemonHub(): DaemonHub {
+function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
 	return {
-		emit: mock(async () => {}),
-		on: mock(() => () => {}),
+		publish: mock(async () => ({ delivered: 0, failures: [] })),
+		subscribe: mock(() => () => {}),
 		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
+		clear: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
 }
 
 function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
@@ -172,7 +175,7 @@ function createMockWorkflowRunRepo(): SpaceWorkflowRunRepository {
 describe('space-workflow-handlers', () => {
 	let hub: MessageHub;
 	let handlers: Map<string, RequestHandler>;
-	let daemonHub: DaemonHub;
+	let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	let spaceManager: SpaceManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceAgentManager: SpaceAgentManager;
@@ -186,7 +189,7 @@ describe('space-workflow-handlers', () => {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
-		daemonHub = createMockDaemonHub();
+		internalEventBus = createMockInternalEventBus<DaemonInternalEventMap>();
 		spaceManager = createMockSpaceManager(space);
 		workflowManager = createMockWorkflowManager(workflow);
 		spaceAgentManager = createMockSpaceAgentManager(agents);
@@ -195,7 +198,7 @@ describe('space-workflow-handlers', () => {
 			hub,
 			spaceManager,
 			workflowManager,
-			daemonHub,
+			internalEventBus,
 			spaceAgentManager,
 			workflowRunRepo
 		);
@@ -221,7 +224,7 @@ describe('space-workflow-handlers', () => {
 
 			expect(result.workflow).toEqual(mockWorkflow);
 			expect(workflowManager.createWorkflow).toHaveBeenCalledTimes(1);
-			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.created', {
+			expect(internalEventBus.publish).toHaveBeenCalledWith('spaceWorkflow.created', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				workflow: mockWorkflow,
@@ -476,7 +479,7 @@ describe('space-workflow-handlers', () => {
 
 			expect(result.workflow.name).toBe('Updated');
 			expect(workflowManager.updateWorkflow).toHaveBeenCalledWith('wf-1', { name: 'Updated' });
-			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.updated', {
+			expect(internalEventBus.publish).toHaveBeenCalledWith('spaceWorkflow.updated', {
 				sessionId: 'global',
 				spaceId: updated.spaceId,
 				workflow: updated,
@@ -508,7 +511,7 @@ describe('space-workflow-handlers', () => {
 			await expect(call('spaceWorkflow.update', { id: 'ghost', name: 'X' })).rejects.toThrow(
 				'Workflow not found: ghost'
 			);
-			expect(daemonHub.emit).not.toHaveBeenCalled();
+			expect(internalEventBus.publish).not.toHaveBeenCalled();
 		});
 
 		it('propagates WorkflowValidationError from manager (e.g. duplicate name)', async () => {
@@ -547,7 +550,7 @@ describe('space-workflow-handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(workflowManager.deleteWorkflow).toHaveBeenCalledWith('wf-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.deleted', {
+			expect(internalEventBus.publish).toHaveBeenCalledWith('spaceWorkflow.deleted', {
 				sessionId: 'global',
 				spaceId: mockWorkflow.spaceId,
 				workflowId: 'wf-1',
@@ -561,7 +564,7 @@ describe('space-workflow-handlers', () => {
 			).rejects.toThrow('Space not found: deleted-space');
 			expect(workflowManager.getWorkflow).not.toHaveBeenCalled();
 			expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
-			expect(daemonHub.emit).not.toHaveBeenCalled();
+			expect(internalEventBus.publish).not.toHaveBeenCalled();
 		});
 
 		it('rejects when optional spaceId does not match workflow owner', async () => {
@@ -569,7 +572,7 @@ describe('space-workflow-handlers', () => {
 				call('spaceWorkflow.delete', { id: 'wf-1', spaceId: 'space-other' })
 			).rejects.toThrow('Workflow not found: wf-1');
 			expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
-			expect(daemonHub.emit).not.toHaveBeenCalled();
+			expect(internalEventBus.publish).not.toHaveBeenCalled();
 		});
 
 		it('throws when id is missing', async () => {
@@ -582,7 +585,7 @@ describe('space-workflow-handlers', () => {
 				'Workflow not found: ghost'
 			);
 			expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
-			expect(daemonHub.emit).not.toHaveBeenCalled();
+			expect(internalEventBus.publish).not.toHaveBeenCalled();
 		});
 
 		it('throws when deleteWorkflow returns false', async () => {
@@ -773,7 +776,7 @@ describe('space-workflow-handlers', () => {
 			expect(calledNodes.map((node) => node.id)).toContain('step-1');
 			expect(calledNodes.find((node) => node.id === 'step-1')?.name).toBe(template.nodes[0].name);
 			expect(calledParams.startNodeId).toBe('step-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith(
+			expect(internalEventBus.publish).toHaveBeenCalledWith(
 				'spaceWorkflow.updated',
 				expect.objectContaining({
 					sessionId: 'global',
@@ -1199,12 +1202,12 @@ describe('space-workflow-handlers', () => {
 			expect(calledParams.startNodeId).toBe('step-1');
 
 			// Emitted spaceWorkflow.deleted for the older row and spaceWorkflow.updated for the kept row.
-			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.deleted', {
+			expect(internalEventBus.publish).toHaveBeenCalledWith('spaceWorkflow.deleted', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				workflowId: 'wf-older',
 			});
-			expect(daemonHub.emit).toHaveBeenCalledWith(
+			expect(internalEventBus.publish).toHaveBeenCalledWith(
 				'spaceWorkflow.updated',
 				expect.objectContaining({
 					sessionId: 'global',

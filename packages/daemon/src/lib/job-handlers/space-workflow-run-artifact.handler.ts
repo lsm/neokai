@@ -13,7 +13,7 @@
  * frontend can render the failure instead of spinning forever.
  *
  * Once the cache is written, the handler emits a `space.artifactCache.updated`
- * event on the DaemonHub so the TaskArtifactsPanel can refetch from the cache.
+ * event on the InternalEventBus<DaemonInternalEventMap> so the TaskArtifactsPanel can refetch from the cache.
  */
 
 import type { Job } from '../../storage/repositories/job-queue-repository';
@@ -72,11 +72,14 @@ function emitCacheUpdated(
 		status: 'ok' | 'syncing' | 'error';
 	}
 ): void {
-	internalEventBus.publishAsync('space.artifactCache.updated', {
-		namespaceId: 'global',
-		sessionId: 'global',
-		...params,
-	});
+	internalEventBus
+		.publish('space.artifactCache.updated', {
+			sessionId: 'global',
+			...params,
+		})
+		.catch((err) => {
+			log.warn('space.artifactCache.updated emit failed:', err);
+		});
 }
 
 async function resolveWorktreeForJob(

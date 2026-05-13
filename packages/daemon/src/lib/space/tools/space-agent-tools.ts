@@ -46,8 +46,11 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
+import { Logger } from '../../logger';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { canTransition } from '../runtime/workflow-run-status-machine';
+const log = new Logger('space-agent-tools');
+
 function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
 }
@@ -111,7 +114,7 @@ export interface SpaceAgentToolsConfig {
 	taskAgentManager?: TaskAgentManager;
 	/** Gate data repository for approve_gate tool. */
 	gateDataRepo?: GateDataRepository;
-	/** InternalEventBus for emitting client-visible space events. */
+	/** InternalEventBus<DaemonInternalEventMap> for emitting gate/task events. */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	/** Callback to trigger channel re-evaluation after gate data changes. */
 	onGateChanged?: (runId: string, gateId: string) => void;
@@ -220,6 +223,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 	const outboundSenderLevel = outboundSenderName === 'task-agent' ? 'task-agent' : 'space-agent';
 	const outboundSenderDisplayName =
 		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
+
+	function emitTaskUpdated(task: SpaceTask): void {
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('space.task.updated', {
+				sessionId: 'global',
+				spaceId,
+				taskId: task.id,
+				task,
+			})
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			});
+	}
 
 	/** Helper to log MCP write operations to the audit log. */
 	function logAudit(
@@ -664,16 +683,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						dependsOn: args.depends_on,
 					},
 					{
-						onCascadedTasks: async (cascaded) => {
-							for (const t of cascaded) {
-								internalEventBus?.publishAsync('space.task.updated', {
-									namespaceId: 'global',
-									sessionId: 'global',
-									spaceId,
-									taskId: t.id,
-									task: t,
-								});
-							}
+						onCascadedTasks: async (cascadedTasks) => {
+							for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 						},
 					}
 				);
@@ -689,13 +700,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					args.task_id
 				);
 
-				internalEventBus?.publishAsync('space.task.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId,
-					taskId: args.task_id,
-					task: updated,
-				});
+				emitTaskUpdated(updated);
 
 				return jsonResult({ success: true, task: updated });
 			} catch (err) {
@@ -1147,21 +1152,25 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
 				}
 
-				internalEventBus?.publishAsync('space.workflowRun.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId: run.spaceId,
-					runId: run.id,
-					run: currentRun,
-				});
-				internalEventBus?.publishAsync('space.gateData.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId: run.spaceId,
-					runId: args.run_id,
-					gateId: args.gate_id,
-					data: gateData.data,
-				});
+				if (internalEventBus) {
+					void internalEventBus
+						.publish('space.workflowRun.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: run.id,
+							run: currentRun,
+						})
+						.catch(() => {});
+					void internalEventBus
+						.publish('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: args.run_id,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
 				onGateChanged?.(args.run_id, args.gate_id);
 
 				return jsonResult({
@@ -1204,21 +1213,25 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					});
 				}
 
-				internalEventBus?.publishAsync('space.workflowRun.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId: run.spaceId,
-					runId: run.id,
-					run: updatedRun,
-				});
-				internalEventBus?.publishAsync('space.gateData.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId: run.spaceId,
-					runId: args.run_id,
-					gateId: args.gate_id,
-					data: gateData.data,
-				});
+				if (internalEventBus) {
+					void internalEventBus
+						.publish('space.workflowRun.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: run.id,
+							run: updatedRun,
+						})
+						.catch(() => {});
+					void internalEventBus
+						.publish('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: args.run_id,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
 
 				return jsonResult({
 					success: true,
@@ -1278,16 +1291,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					result: task.result ?? undefined,
 					approvalSource: 'agent',
 					approvalReason: args.reason,
-					onCascadedTasks: async (cascaded) => {
-						for (const t of cascaded) {
-							internalEventBus?.publishAsync('space.task.updated', {
-								namespaceId: 'global',
-								sessionId: 'global',
-								spaceId,
-								taskId: t.id,
-								task: t,
-							});
-						}
+					onCascadedTasks: async (cascadedTasks) => {
+						for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 					},
 				});
 
@@ -1300,13 +1305,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					args.task_id
 				);
 
-				internalEventBus?.publishAsync('space.task.updated', {
-					namespaceId: 'global',
-					sessionId: 'global',
-					spaceId,
-					taskId: args.task_id,
-					task: updated,
-				});
+				emitTaskUpdated(updated);
 
 				return jsonResult({ success: true, task: updated });
 			} catch (err) {

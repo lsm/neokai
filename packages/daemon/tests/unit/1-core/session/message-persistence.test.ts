@@ -5,7 +5,6 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@neokai/shared';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
 	MAX_IMAGE_BASE64_SIZE,
@@ -29,7 +28,7 @@ describe('MessagePersistence', () => {
 
 	let saveUserMessageSpy: ReturnType<typeof mock>;
 	let messageHubEventSpy: ReturnType<typeof mock>;
-	let daemonHubEmitSpy: ReturnType<typeof mock>;
+	let internalEventBusPublishSpy: ReturnType<typeof mock>;
 	let processingStateSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
@@ -81,9 +80,9 @@ describe('MessagePersistence', () => {
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		daemonHubEmitSpy = mock(async () => {});
+		internalEventBusPublishSpy = mock(async () => {});
 		mockInternalEventBus = {
-			publish: daemonHubEmitSpy,
+			publish: internalEventBusPublishSpy,
 			publishAsync: mock(() => {}),
 			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
 		} as unknown as InternalEventBus<any>;
@@ -111,13 +110,12 @@ describe('MessagePersistence', () => {
 		);
 		expect(messageHubEventSpy).not.toHaveBeenCalled();
 		expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-1', 'hello idle');
-		expect(daemonHubEmitSpy).toHaveBeenCalledWith('messages.statusChanged', {
-			namespaceId: 'test-session-id',
+		expect(internalEventBusPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
 			sessionId: 'test-session-id',
 			messageIds: ['db-msg-1'],
 			status: 'enqueued',
 		});
-		expect(daemonHubEmitSpy).toHaveBeenCalledWith(
+		expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				sessionId: 'test-session-id',
@@ -146,7 +144,7 @@ describe('MessagePersistence', () => {
 		);
 		expect(messageHubEventSpy).not.toHaveBeenCalled();
 		expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-2', 'hello busy');
-		expect(daemonHubEmitSpy).toHaveBeenCalledWith(
+		expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				messageId: 'msg-2',
@@ -173,7 +171,7 @@ describe('MessagePersistence', () => {
 			'deferred',
 			undefined
 		);
-		expect(daemonHubEmitSpy).not.toHaveBeenCalledWith(
+		expect(internalEventBusPublishSpy).not.toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({ messageId: 'msg-3' })
 		);
@@ -200,7 +198,7 @@ describe('MessagePersistence', () => {
 			'msg-4',
 			'next turn while idle'
 		);
-		expect(daemonHubEmitSpy).toHaveBeenCalledWith(
+		expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				messageId: 'msg-4',

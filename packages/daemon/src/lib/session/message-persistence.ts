@@ -143,7 +143,7 @@ export class MessagePersistence {
 	/**
 	 * Handle message persistence
 	 *
-	 * ARCHITECTURE: DaemonHub-centric - SessionManager owns message persistence logic
+	 * ARCHITECTURE: InternalEventBus<DaemonInternalEventMap>-centric - SessionManager owns message persistence logic
 	 *
 	 * Responsibilities:
 	 * 1. Validate image sizes
@@ -253,7 +253,6 @@ export class MessagePersistence {
 
 			// Broadcast status update for queue-aware UI
 			await this.internalEventBus.publish('messages.statusChanged', {
-				namespaceId: sessionId,
 				sessionId,
 				messageIds: [dbMessageId],
 				status: sendStatus,
@@ -271,7 +270,6 @@ export class MessagePersistence {
 			// generation, draft clearing, and legacy subscribers.
 			if (shouldDispatchToQuery) {
 				await this.internalEventBus.publish('message.persisted', {
-					namespaceId: sessionId,
 					sessionId,
 					messageId,
 					messageContent,

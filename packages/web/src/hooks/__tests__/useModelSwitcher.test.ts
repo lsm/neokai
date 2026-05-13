@@ -133,11 +133,6 @@ describe('useModelSwitcher', () => {
 			expect(typeof MODEL_FAMILY_ICONS.gpt).toBe('string');
 		});
 
-		it('should have gemini icon for Gemini models', () => {
-			expect(MODEL_FAMILY_ICONS.gemini).toBeDefined();
-			expect(typeof MODEL_FAMILY_ICONS.gemini).toBe('string');
-		});
-
 		it('should have openrouter icon for OpenRouter automatic routing', () => {
 			expect(MODEL_FAMILY_ICONS.openrouter).toBeDefined();
 			expect(typeof MODEL_FAMILY_ICONS.openrouter).toBe('string');
@@ -158,7 +153,6 @@ describe('useModelSwitcher', () => {
 			expect(getModelFamilyIcon('kimi')).toBe(MODEL_FAMILY_ICONS.kimi);
 			expect(getModelFamilyIcon('openrouter')).toBe(MODEL_FAMILY_ICONS.openrouter);
 			expect(getModelFamilyIcon('gpt')).toBe(MODEL_FAMILY_ICONS.gpt);
-			expect(getModelFamilyIcon('gemini')).toBe(MODEL_FAMILY_ICONS.gemini);
 		});
 
 		it('should return default icon for unknown families', () => {
@@ -357,40 +351,6 @@ describe('useModelSwitcher', () => {
 			expect(gptModel?.family).toBe('gpt');
 		});
 
-		it('should detect gemini family and anthropic-copilot provider for Copilot Gemini models', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValueOnce({
-						currentModel: 'gemini-3-pro-preview',
-						modelInfo: null,
-					})
-					.mockResolvedValueOnce({
-						models: [
-							{
-								id: 'gemini-3-pro-preview',
-								display_name: 'Gemini 3.1 Pro (Copilot)',
-								description: '',
-								provider: 'anthropic-copilot',
-							},
-						],
-					}),
-			};
-			mockGetHubIfConnected.mockReturnValue(mockHub);
-
-			const { result } = renderHook(() => useModelSwitcher('session-1'));
-
-			await waitFor(() => {
-				expect(result.current.loading).toBe(false);
-			});
-
-			const geminiModel = result.current.availableModels.find(
-				(m) => m.id === 'gemini-3-pro-preview'
-			);
-			expect(geminiModel?.provider).toBe('anthropic-copilot');
-			expect(geminiModel?.family).toBe('gemini');
-		});
-
 		it('should detect claude family via copilot provider', async () => {
 			const mockHub = {
 				request: vi
@@ -478,7 +438,7 @@ describe('useModelSwitcher', () => {
 			expect(auto?.provider).toBe('openrouter');
 			expect(auto?.family).toBe('openrouter');
 			expect(gpt?.family).toBe('gpt');
-			expect(gemini?.family).toBe('gemini');
+			expect(gemini?.family).toBe('openrouter');
 			expect(deepseek?.family).toBe('openrouter');
 		});
 
@@ -923,57 +883,6 @@ describe('useModelSwitcher', () => {
 
 			expect(result.current.currentModel).toBe('claude-opus-4-5-20251101');
 		});
-
-		it('should reload model info when gemini-accounts-changed event fires', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					// First load (mount)
-					.mockResolvedValueOnce({
-						currentModel: 'claude-sonnet-4-20250514',
-						modelInfo: null,
-					})
-					.mockResolvedValueOnce({ models: [] })
-					// Second load (event-triggered)
-					.mockResolvedValueOnce({
-						currentModel: 'gemini-3-pro',
-						modelInfo: {
-							id: 'gemini-3-pro',
-							name: 'Gemini 3 Pro',
-							provider: 'google-gemini-oauth',
-						},
-					})
-					.mockResolvedValueOnce({
-						models: [
-							{
-								id: 'gemini-3-pro',
-								display_name: 'Gemini 3 Pro',
-								description: '',
-								provider: 'google-gemini-oauth',
-							},
-						],
-					}),
-			};
-			mockGetHubIfConnected.mockReturnValue(mockHub);
-
-			const { result } = renderHook(() => useModelSwitcher('session-1'));
-
-			await waitFor(() => {
-				expect(result.current.loading).toBe(false);
-			});
-
-			expect(result.current.currentModel).toBe('claude-sonnet-4-20250514');
-
-			act(() => {
-				window.dispatchEvent(new CustomEvent('gemini-accounts-changed'));
-			});
-
-			await waitFor(() => {
-				expect(result.current.currentModel).toBe('gemini-3-pro');
-			});
-
-			expect(mockHub.request).toHaveBeenCalledWith('models.list', { useCache: true });
-		});
 	});
 
 	describe('sessionId changes', () => {
@@ -1171,13 +1080,6 @@ describe('mapRawModelsToModelInfos', () => {
 		expect(result[0].family).toBe('gpt');
 	});
 
-	it('detects gemini family', () => {
-		const result = mapRawModelsToModelInfos([
-			{ id: 'gemini-1-5-pro', display_name: 'Gemini', description: '' },
-		]);
-		expect(result[0].family).toBe('gemini');
-	});
-
 	it('defaults provider to anthropic when not provided', () => {
 		const result = mapRawModelsToModelInfos([
 			{ id: 'claude-sonnet-4-6', display_name: 'Sonnet', description: '' },
@@ -1232,17 +1134,6 @@ describe('mapRawModelsToModelInfos', () => {
 		expect(result[0].family).toBe('opus');
 		expect(result[1].family).toBe('sonnet');
 		expect(result[2].family).toBe('haiku');
-	});
-
-	it('sorts Kimi, OpenRouter, GPT, and Gemini families without order collisions', () => {
-		const result = mapRawModelsToModelInfos([
-			{ id: 'gemini-3-pro', display_name: 'Gemini', description: '', provider: 'anthropic' },
-			{ id: 'gpt-5.4', display_name: 'GPT', description: '', provider: 'anthropic' },
-			{ id: 'openrouter/auto', display_name: 'OpenRouter', description: '', provider: 'anthropic' },
-			{ id: 'kimi-for-coding', display_name: 'Kimi', description: '', provider: 'anthropic' },
-		]);
-
-		expect(result.map((model) => model.family)).toEqual(['kimi', 'openrouter', 'gpt', 'gemini']);
 	});
 });
 

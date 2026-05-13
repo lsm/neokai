@@ -187,6 +187,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 		taskAgentManager = createMockTaskAgentManager(liveSession, ensuredTask);
 		db = createMockDatabase(task);
 		internalEventBus = {
+			publish: mock(async () => ({ delivered: 0, failures: [] })),
 			publishAsync: mock(() => {}),
 		} as unknown as InternalEventBus<DaemonInternalEventMap>;
 		setupSpaceTaskMessageHandlers(hub, taskAgentManager, db, internalEventBus);
@@ -249,7 +250,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				sessionId: 'space:space-1:task:task-1',
 			});
 			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-1');
-			expect((internalEventBus.publishAsync as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
+			expect((internalEventBus.publish as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
 				'space.task.updated'
 			);
 		});
@@ -377,7 +378,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				false,
 				undefined
 			);
-			expect((internalEventBus.publishAsync as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
+			expect((internalEventBus.publish as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
 				'space.task.updated'
 			);
 		});
@@ -474,7 +475,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				message: 'Hello',
 			});
 
-			const publishCalls = (internalEventBus.publishAsync as ReturnType<typeof mock>).mock.calls;
+			const publishCalls = (internalEventBus.publish as ReturnType<typeof mock>).mock.calls;
 			expect(publishCalls.length).toBe(1);
 			expect(publishCalls[0]?.[0]).toBe('space.task.updated');
 			expect(publishCalls[0]?.[1]).toMatchObject({
@@ -544,6 +545,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				};
 				db = createMockDatabase(mockTaskWithWorkflowRun);
 				internalEventBus = {
+					publish: mock(async () => ({ delivered: 0, failures: [] })),
 					publishAsync: mock(() => {}),
 				} as unknown as InternalEventBus<DaemonInternalEventMap>;
 				const nodeExecutionRepo = makeNodeExecutionRepo([
@@ -587,6 +589,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				};
 				db = createMockDatabase(mockTaskWithWorkflowRun);
 				internalEventBus = {
+					publish: mock(async () => ({ delivered: 0, failures: [] })),
 					publishAsync: mock(() => {}),
 				} as unknown as InternalEventBus<DaemonInternalEventMap>;
 				const nodeExecutionRepo = makeNodeExecutionRepo([
@@ -636,6 +639,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				};
 				db = createMockDatabase(mockTaskWithWorkflowRun);
 				internalEventBus = {
+					publish: mock(async () => ({ delivered: 0, failures: [] })),
 					publishAsync: mock(() => {}),
 				} as unknown as InternalEventBus<DaemonInternalEventMap>;
 				// Reviewer has no agentSessionId → not spawned yet
@@ -857,6 +861,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			};
 			db = createMockDatabase(task);
 			internalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 			const nodeExecutionRepo = makeNodeExecutionRepo(nodeExecAgents);
@@ -1173,6 +1178,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			};
 			db = createMockDatabase(mockTaskWithWorkflowRun);
 			internalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 			const nodeExecutionRepo = makeNodeExecutionRepo([
@@ -1223,6 +1229,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			};
 			db = createMockDatabase(mockTaskWithRun);
 			internalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
@@ -1424,6 +1431,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			};
 			db = createMockDatabase(mockTaskWithRun);
 			internalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
@@ -1556,6 +1564,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			};
 			db = createMockDatabase(mockTaskWithRun);
 			internalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
@@ -1606,6 +1615,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			taskAgentManager = createMockTaskAgentManager(null, mockTaskWithRun);
 			db = createMockDatabase(mockTaskWithRun);
 			internalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
@@ -1635,6 +1645,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			};
 			db = createMockDatabase(mockTaskWithRun);
 			internalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
@@ -1682,6 +1693,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			};
 			const localDb = createMockDatabase(task);
 			const localInternalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 			const resetter: ChannelCycleResetter = {
@@ -1726,8 +1738,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
 			expect(resetter.resetAllForRun).toHaveBeenCalledWith('run-cyc-1');
 
-			// internalEventBus.publishAsync should have been called with 'space.workflowRun.cyclesReset'
-			const publishCalls = (dh.publishAsync as ReturnType<typeof mock>).mock.calls;
+			// internalEventBus.publish should have been called with 'space.workflowRun.cyclesReset'
+			const publishCalls = (dh.publish as ReturnType<typeof mock>).mock.calls;
 			const cyclesResetCall = publishCalls.find((c) => c[0] === 'space.workflowRun.cyclesReset') as
 				| [string, Record<string, unknown>]
 				| undefined;
@@ -1759,7 +1771,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
 			expect(resetter.resetAllForRun).toHaveBeenCalledWith('run-cyc-1');
 
-			const publishCalls = (dh.publishAsync as ReturnType<typeof mock>).mock.calls;
+			const publishCalls = (dh.publish as ReturnType<typeof mock>).mock.calls;
 			expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(true);
 		});
 
@@ -1782,7 +1794,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			// The reset statement still runs (it's cheap and idempotent)...
 			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
 			// ...but no event is published because nothing actually changed.
-			const publishCalls = (dh.publishAsync as ReturnType<typeof mock>).mock.calls;
+			const publishCalls = (dh.publish as ReturnType<typeof mock>).mock.calls;
 			expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
 		});
 
@@ -1796,7 +1808,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			});
 
 			expect(resetter.resetAllForRun).not.toHaveBeenCalled();
-			const publishCalls = (dh.publishAsync as ReturnType<typeof mock>).mock.calls;
+			const publishCalls = (dh.publish as ReturnType<typeof mock>).mock.calls;
 			expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
 		});
 
@@ -1889,6 +1901,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			});
 			const localDb = createMockDatabase({ ...mockTaskWithSession, workflowRunId: 'run-cyc-1' });
 			const localInternalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 			setupSpaceTaskMessageHandlers(
@@ -1970,6 +1983,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			const taskAgent = createMockTaskAgentManager(null, mockTaskWithRun);
 			const localDb = createMockDatabase(mockTaskWithRun);
 			const localInternalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 			setupSpaceTaskMessageHandlers(mh.hub, taskAgent, localDb, localInternalEventBus);
@@ -1982,8 +1996,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 			expect(result).toEqual({ ok: true });
 			// Without a resetter, no cyclesReset event should be published.
-			const publishCalls = (localInternalEventBus.publishAsync as ReturnType<typeof mock>).mock
-				.calls;
+			const publishCalls = (localInternalEventBus.publish as ReturnType<typeof mock>).mock.calls;
 			expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
 		});
 	});
@@ -2043,6 +2056,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				opts.task === null ? null : (opts.task ?? mockTaskWithRun)
 			);
 			const localInternalEventBus = {
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
 

@@ -11,7 +11,6 @@
 
 import type { MessageContent, Session } from '@neokai/shared';
 import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
-import type { DaemonHub } from '../daemon-hub';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
@@ -24,7 +23,6 @@ import type { MessageQueue } from './message-queue';
 export interface QueryModeHandlerContext {
 	readonly session: Session;
 	readonly db: Database;
-	readonly daemonHub: DaemonHub;
 	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly messageQueue: MessageQueue;
 	readonly logger: Logger;
@@ -65,7 +63,6 @@ export class QueryModeHandler {
 
 			// Emit status change event
 			await internalEventBus.publish('messages.statusChanged', {
-				namespaceId: session.id,
 				sessionId: session.id,
 				messageIds: dbIds,
 				status: 'enqueued',

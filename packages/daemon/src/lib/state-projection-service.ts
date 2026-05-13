@@ -1,23 +1,23 @@
 /**
- * StateProjectionService - Pure state projection and read-model service
+ * StateProjectionService - Server-side state projection and read-model service
  *
  * Maintains authoritative state caches from internal events and serves
- * state snapshots via public read methods. All client delivery, RPC
- * handlers, and event forwarding are handled by ClientEventBridge.
+ * state snapshots via RPC handlers. All client delivery, side effects,
+ * and event forwarding are handled by separate subscribers on the
+ * InternalEventBus or by ClientEventBridge.
  *
  * ARCHITECTURE: Event-sourced state projection
  * - StateProjectionService maintains its own state from InternalEventBus events
  * - Publishers include their data in events (no fetching from sources)
  * - This ensures full decoupling between components via the event bus
- * - Broadcasts/RPC handlers are in ClientEventBridge
+ * - Broadcasts are triggered by separate subscribers, not by this service
  *
- * MIGRATION NOTE: Broadcast methods and RPC handler registrations were moved
- * to ClientEventBridge. channelVersions are exposed via a public interface
- * so ClientEventBridge can manage versioned state broadcasts.
- * See docs/plans/internal-event-command-query-architecture.md (M4, M5).
+ * MIGRATION NOTE: This class was formerly `StateManager`. In M5 it was
+ * split into a pure projection service (this file) plus bridge/gateway
+ * services. See docs/plans/internal-event-command-query-architecture.md.
  */
 
-import type { AgentProcessingState } from '@neokai/shared';
+import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@neokai/shared';
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
@@ -32,9 +32,10 @@ import type {
 	SessionStateSnapshot,
 	SessionState,
 	SDKMessagesState,
+	SDKMessagesUpdate,
 } from '@neokai/shared';
 import type { Session } from '@neokai/shared';
-import { STATE_CHANNELS } from '@neokai/shared';
+import { ClientEventGateway, STATE_CHANNELS } from '@neokai/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 
@@ -42,20 +43,25 @@ const VERSION = '0.1.1';
 const CLAUDE_SDK_VERSION = '0.1.37';
 const startTime = Date.now();
 
-/**
- * Interface for version management, exposed so ClientEventBridge can
- * increment channel versions for its broadcasts.
- */
-export interface ChannelVersionSource {
-	incrementVersion(channel: string): number;
-	getVersion(channel: string): number;
-	deleteVersion(channel: string): void;
-}
-
-export class StateProjectionService implements ChannelVersionSource {
-	// Per-channel versioning — shared with ClientEventBridge for versioned broadcasts
+export class StateProjectionService {
+	// FIX: Per-channel versioning instead of global version
 	private channelVersions = new Map<string, number>();
 	private logger = new Logger('StateProjectionService');
+
+	/**
+	 * Client-facing event gateway.
+	 *
+	 * Wraps `messageHub.event(...)` so daemon code can publish via a typed
+	 * `EventChannel` instead of inline `{ channel: 'global' }` literals. Only a
+	 * minimal slice of forwarding currently flows through the gateway —
+	 * `session.created`, `session.deleted`, and `context.updated` — as a
+	 * proof-of-pattern. Versioned state broadcasts continue to call
+	 * `messageHub.event(...)` directly until per-channel versioning moves
+	 * onto the gateway in a follow-up PR.
+	 *
+	 * See `docs/plans/internal-event-command-query-architecture.md`.
+	 */
+	private clientEvents: IClientEventGateway;
 
 	// Track API connection state (updated via broadcasts from ErrorManager)
 	private apiConnectionState: import('@neokai/shared').ApiConnectionState = {
@@ -74,43 +80,30 @@ export class StateProjectionService implements ChannelVersionSource {
 	>();
 
 	constructor(
+		private messageHub: MessageHub,
 		private sessionManager: SessionManager,
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
 		private config: Config,
 		private db?: Database,
-		private internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+		private internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
+		clientEvents?: IClientEventGateway
 	) {
+		this.clientEvents = clientEvents ?? new ClientEventGateway({ hub: messageHub });
+		this.setupHandlers();
 		this.setupEventBusSubscriptions();
 	}
 
-	// ========================================
-	// ChannelVersionSource interface
-	// ========================================
-
 	/**
-	 * Increment and return the version for a specific channel.
-	 * Used by ClientEventBridge for versioned state broadcasts.
+	 * Expose the client event gateway so ClientEventBridge can share it.
+	 *
+	 * This is a temporary seam while forwarding migrates out of
+	 * StateProjectionService. Once all forwarding lives in the bridge, the
+	 * gateway can be constructed in DaemonApp and injected into both
+	 * StateProjectionService and ClientEventBridge.
 	 */
-	incrementVersion(channel: string): number {
-		const current = this.channelVersions.get(channel) || 0;
-		const next = current + 1;
-		this.channelVersions.set(channel, next);
-		return next;
-	}
-
-	/**
-	 * Get current version for a channel (without incrementing).
-	 */
-	getVersion(channel: string): number {
-		return this.channelVersions.get(channel) || 0;
-	}
-
-	/**
-	 * Delete version tracking for a channel (used during session cleanup).
-	 */
-	deleteVersion(channel: string): void {
-		this.channelVersions.delete(channel);
+	getClientEventGateway(): IClientEventGateway {
+		return this.clientEvents;
 	}
 
 	/**
@@ -119,7 +112,11 @@ export class StateProjectionService implements ChannelVersionSource {
 	 * ARCHITECTURE: Event-sourced state projection
 	 * - Publishers include their data in events
 	 * - StateProjectionService caches this data (no fetching from sources)
-	 * - Broadcasts are handled by ClientEventBridge, not this service
+	 * - Broadcasts are triggered by separate subscribers, not this service
+	 *
+	 * All InternalEventBus<DaemonInternalEventMap> listeners for state-cache concerns have been migrated to
+	 * InternalEventBus subscriptions. Client delivery is fully handled by
+	 * ClientEventBridge.
 	 */
 	private setupEventBusSubscriptions(): void {
 		if (!this.internalEventBus) {
@@ -152,26 +149,31 @@ export class StateProjectionService implements ChannelVersionSource {
 		// Session updated - update cache from event data
 		this.internalEventBus.subscribe(
 			'session.updated',
-			(data) => {
-				const { namespaceId, session, processingState } = data as unknown as {
-					namespaceId: string;
+			async (data) => {
+				const { sessionId, session, processingState } = data as unknown as {
+					sessionId: string;
 					session?: Partial<Session>;
 					processingState?: AgentProcessingState;
 				};
 
 				// Update caches from event data (decoupled - no fetching)
-				// Only merge into existing cache entries, don't create new entries from partial data
+				// FIX: Only merge into existing cache entries, don't create new entries from partial data
 				// This prevents sidebar cost display from resetting to $0.00 when clicking sessions.
 				// Initial full session data comes from getSessionsState() which reads from DB.
 				if (session) {
-					const existing = this.sessionCache.get(namespaceId);
+					const existing = this.sessionCache.get(sessionId);
 					if (existing) {
-						this.sessionCache.set(namespaceId, { ...existing, ...session });
+						this.sessionCache.set(sessionId, { ...existing, ...session });
 					}
+					// Skip storing partial session data if no existing entry - broadcastSessionUpdateFromCache
+					// will handle this case by skipping the broadcast
 				}
 				if (processingState) {
-					this.processingStateCache.set(namespaceId, processingState);
+					this.processingStateCache.set(sessionId, processingState);
 				}
+
+				// Trigger broadcast via separate subscriber path
+				await this.broadcastSessionUpdateFromCache(sessionId);
 			},
 			{ subscriberName: 'StateProjectionService.sessionUpdated' }
 		);
@@ -180,28 +182,27 @@ export class StateProjectionService implements ChannelVersionSource {
 		this.internalEventBus.subscribe(
 			'session.deleted',
 			(data) => {
-				const { namespaceId } = data as unknown as { namespaceId: string };
+				const { sessionId } = data as unknown as { sessionId: string };
 
 				// Clear caches
-				this.sessionCache.delete(namespaceId);
-				this.processingStateCache.delete(namespaceId);
-				this.commandsCache.delete(namespaceId);
-				this.errorCache.delete(namespaceId);
+				this.sessionCache.delete(sessionId);
+				this.processingStateCache.delete(sessionId);
+				this.commandsCache.delete(sessionId);
+				this.errorCache.delete(sessionId);
 
-				// Clean up channelVersions for deleted session
-				this.channelVersions.delete(`${STATE_CHANNELS.SESSION}:${namespaceId}`);
-				this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${namespaceId}`);
-				this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${namespaceId}`);
+				// FIX: Clean up channelVersions for deleted session
+				this.channelVersions.delete(`${STATE_CHANNELS.SESSION}:${sessionId}`);
+				this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`);
+				this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`);
 			},
 			{ subscriberName: 'StateProjectionService.sessionDeleted' }
 		);
 
-		// Settings updated - cache only (broadcast handled by ClientEventBridge)
+		// Settings events
 		this.internalEventBus.subscribe(
 			'settings.updated',
-			() => {
-				// No cache to update for settings — settings are read from SettingsManager
-				// The broadcast is handled by ClientEventBridge
+			async () => {
+				await this.broadcastSettingsChange();
 			},
 			{ subscriberName: 'StateProjectionService.settingsUpdated' }
 		);
@@ -210,11 +211,11 @@ export class StateProjectionService implements ChannelVersionSource {
 		this.internalEventBus.subscribe(
 			'commands.updated',
 			(data) => {
-				const { namespaceId, commands } = data as unknown as {
-					namespaceId: string;
+				const { sessionId, commands } = data as unknown as {
+					sessionId: string;
 					commands: string[];
 				};
-				this.commandsCache.set(namespaceId, commands);
+				this.commandsCache.set(sessionId, commands);
 			},
 			{ subscriberName: 'StateProjectionService.commandsUpdated' }
 		);
@@ -223,12 +224,12 @@ export class StateProjectionService implements ChannelVersionSource {
 		this.internalEventBus.subscribe(
 			'session.error',
 			(data) => {
-				const { namespaceId, error, details } = data as unknown as {
-					namespaceId: string;
+				const { sessionId, error, details } = data as unknown as {
+					sessionId: string;
 					error: string;
 					details?: unknown;
 				};
-				this.errorCache.set(namespaceId, {
+				this.errorCache.set(sessionId, {
 					message: error,
 					details,
 					occurredAt: Date.now(),
@@ -241,32 +242,88 @@ export class StateProjectionService implements ChannelVersionSource {
 		this.internalEventBus.subscribe(
 			'session.errorClear',
 			(data) => {
-				const { namespaceId } = data as unknown as { namespaceId: string };
-				this.errorCache.set(namespaceId, null);
+				const { sessionId } = data as unknown as { sessionId: string };
+				this.errorCache.set(sessionId, null);
 			},
 			{ subscriberName: 'StateProjectionService.sessionErrorClear' }
 		);
 	}
 
 	/**
-	 * Get a minimal session state from caches only, without fetching from AgentSession.
-	 * Used as a fallback by ClientEventBridge when the full getSessionState() fails
-	 * (e.g., during teardown races or deleted sessions).
-	 * Returns null if no cached data is available.
+	 * Broadcast session update from cached state (event-sourced)
+	 *
+	 * ARCHITECTURE: No debouncing, no fetching from AgentSession
+	 * - Uses cached state from InternalEventBus events
+	 * - Broadcasts immediately (LLM processing is slow enough)
+	 * - Full decoupling via InternalEventBus
 	 */
-	getCachedSessionState(sessionId: string): import('@neokai/shared').SessionState | null {
-		const cachedProcessingState = this.processingStateCache.get(sessionId);
-		const cachedSession = this.sessionCache.get(sessionId);
-		if (cachedProcessingState && cachedSession) {
-			return {
-				sessionInfo: cachedSession,
-				agentState: cachedProcessingState,
-				commandsData: { availableCommands: this.commandsCache.get(sessionId) || [] },
-				error: this.errorCache.get(sessionId) || null,
-				timestamp: Date.now(),
-			};
+	private async broadcastSessionUpdateFromCache(sessionId: string): Promise<void> {
+		try {
+			// CRITICAL: Always broadcast session state change, even if session is not cached
+			// This ensures agent state (stop/send button) is always in sync with server
+			// broadcastSessionStateChange has a fallback mechanism using cached processing state
+			await this.broadcastSessionStateChange(sessionId);
+
+			// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
+			// which automatically detects DB changes via SQLite triggers.
+		} catch (error) {
+			// Session may have been deleted during update
+			this.logger.warn(`Failed to broadcast session update for ${sessionId}:`, error);
 		}
-		return null;
+	}
+
+	/**
+	 * FIX: Get and increment version for a specific channel
+	 */
+	private incrementVersion(channel: string): number {
+		const current = this.channelVersions.get(channel) || 0;
+		const next = current + 1;
+		this.channelVersions.set(channel, next);
+		return next;
+	}
+
+	/**
+	 * Setup RPC handlers for state snapshots
+	 */
+	private setupHandlers(): void {
+		// Global state snapshot
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
+			return await this.getGlobalSnapshot();
+		});
+
+		// Session state snapshot
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
+			const { sessionId } = data as { sessionId: string };
+			return await this.getSessionSnapshot(sessionId);
+		});
+
+		// Unified system state handler
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
+			return await this.getSystemState();
+		});
+
+		// Individual channel requests (for on-demand refresh)
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
+			return await this.getSessionsState();
+		});
+
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
+			return await this.getSettingsState();
+		});
+
+		// Session-specific channel requests
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION, async (data) => {
+			const { sessionId } = data as { sessionId: string };
+			return await this.getSessionState(sessionId);
+		});
+
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
+			const { sessionId, since } = data as {
+				sessionId: string;
+				since?: number;
+			};
+			return await this.getSDKMessagesState(sessionId, since);
+		});
 	}
 
 	// ========================================
@@ -298,8 +355,9 @@ export class StateProjectionService implements ChannelVersionSource {
 
 	/**
 	 * Get unified system state (auth + config + health + API connection)
+	 * NEW: Replaces individual getAuthState/getConfigState/getHealthState
 	 */
-	async getSystemState(): Promise<SystemState> {
+	private async getSystemState(): Promise<SystemState> {
 		const authStatus = await this.authManager.getAuthStatus();
 
 		return {
@@ -337,14 +395,14 @@ export class StateProjectionService implements ChannelVersionSource {
 	/**
 	 * Get global settings state
 	 */
-	async getSettingsState(): Promise<SettingsState> {
+	private async getSettingsState(): Promise<SettingsState> {
 		return {
 			settings: this.settingsManager.getGlobalSettings(),
 			timestamp: Date.now(),
 		};
 	}
 
-	async getSessionsState(): Promise<SessionsState> {
+	private async getSessionsState(): Promise<SessionsState> {
 		const settings = this.settingsManager.getGlobalSettings();
 
 		// Check if there are any archived sessions in the database
@@ -388,11 +446,12 @@ export class StateProjectionService implements ChannelVersionSource {
 
 	/**
 	 * Get unified session state (metadata + agent + commands + context)
+	 * NEW: Replaces getSessionMetaState/getAgentState/getCommandsState/getContextState
 	 *
 	 * Context info is now populated with real-time token usage data from streaming.
 	 * During streaming, input_tokens from message_start represents total context consumption.
 	 */
-	async getSessionState(sessionId: string): Promise<SessionState> {
+	private async getSessionState(sessionId: string): Promise<SessionState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
 			// Special handling for DB-only sessions (no AgentSession):
@@ -424,6 +483,10 @@ export class StateProjectionService implements ChannelVersionSource {
 		// Get error from cache (null if no error or error has been cleared)
 		const error = this.errorCache.get(sessionId) || null;
 
+		// Context info lives in sessionData.metadata.lastContextInfo
+		// (persisted by ContextTracker, restored on session load)
+		// No separate top-level field needed.
+
 		return {
 			sessionInfo: sessionData,
 			agentState: agentState,
@@ -435,7 +498,7 @@ export class StateProjectionService implements ChannelVersionSource {
 		};
 	}
 
-	async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
+	private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
 			// DB-only sessions: read directly from sdk_messages table
@@ -462,5 +525,121 @@ export class StateProjectionService implements ChannelVersionSource {
 			hasMore,
 			timestamp: Date.now(),
 		};
+	}
+
+	// ========================================
+	// State Change Broadcasters
+	// ========================================
+
+	/**
+	 * Broadcast unified system state change (auth + config + health)
+	 * FIX: Uses per-channel versioning
+	 */
+	async broadcastSystemChange(): Promise<void> {
+		const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SYSTEM);
+		const state = { ...(await this.getSystemState()), version };
+
+		this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
+			channel: 'global',
+		});
+	}
+
+	/**
+	 * Broadcast global settings change
+	 */
+	async broadcastSettingsChange(): Promise<void> {
+		const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SETTINGS);
+		const state = { ...(await this.getSettingsState()), version };
+
+		this.messageHub.event(STATE_CHANNELS.GLOBAL_SETTINGS, state, {
+			channel: 'global',
+		});
+	}
+
+	/**
+	 * Broadcast unified session state change (metadata + agent + commands + context)
+	 * NEW: Replaces broadcastSessionMetaChange/broadcastAgentStateChange/broadcastCommandsChange/broadcastContextChange
+	 * FIX: Uses per-channel versioning
+	 */
+	async broadcastSessionStateChange(sessionId: string): Promise<void> {
+		// Guard: an empty sessionId indicates an upstream event emitted without a
+		// valid session (e.g. a provider error surfacing before session binding).
+		// Broadcasting to `session:` with no ID is meaningless and throws inside
+		// getSessionState() producing noisy "Session not found" warnings.
+		if (!sessionId) {
+			return;
+		}
+
+		const version = this.incrementVersion(`${STATE_CHANNELS.SESSION}:${sessionId}`);
+
+		try {
+			const state = { ...(await this.getSessionState(sessionId)), version };
+
+			this.messageHub.event(STATE_CHANNELS.SESSION, state, {
+				channel: `session:${sessionId}`,
+			});
+		} catch (error) {
+			// Session may have been deleted or database may be closed during cleanup
+			// This is expected behavior, don't throw
+			// ALWAYS log to help diagnose state sync issues (e.g., button not updating after interrupt)
+			this.logger.warn(
+				`[StateProjectionService] Failed to broadcast session state for ${sessionId}:`,
+				error instanceof Error ? error.message : error
+			);
+
+			// If we have cached processing state, try to broadcast a minimal state update
+			// This ensures UI state (like stop/send button) stays in sync even if full state fetch fails
+			const cachedProcessingState = this.processingStateCache.get(sessionId);
+			const cachedSession = this.sessionCache.get(sessionId);
+			if (cachedProcessingState && cachedSession) {
+				try {
+					const fallbackState = {
+						sessionInfo: cachedSession,
+						agentState: cachedProcessingState,
+						commandsData: { availableCommands: this.commandsCache.get(sessionId) || [] },
+						error: this.errorCache.get(sessionId) ?? null,
+						timestamp: Date.now(),
+						version,
+					};
+					this.messageHub.event(STATE_CHANNELS.SESSION, fallbackState, {
+						channel: `session:${sessionId}`,
+					});
+				} catch (fallbackError) {
+					this.logger.error(
+						`[StateProjectionService] Fallback broadcast also failed for ${sessionId}:`,
+						fallbackError instanceof Error ? fallbackError.message : fallbackError
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Broadcast SDK messages change
+	 * FIX: Uses per-channel versioning
+	 */
+	async broadcastSDKMessagesChange(sessionId: string): Promise<void> {
+		const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`);
+		const state = { ...(await this.getSDKMessagesState(sessionId)), version };
+
+		this.messageHub.event(STATE_CHANNELS.SESSION_SDK_MESSAGES, state, {
+			channel: `session:${sessionId}`,
+		});
+	}
+
+	/**
+	 * Broadcast SDK messages delta (single new message)
+	 * Only sends delta - clients not subscribed to deltas should subscribe to full channel
+	 * FIX: Uses per-channel versioning
+	 */
+	async broadcastSDKMessagesDelta(sessionId: string, update: SDKMessagesUpdate): Promise<void> {
+		const version = this.incrementVersion(
+			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`
+		);
+		this.messageHub.event(
+			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta`,
+			{ ...update, version },
+			{ channel: `session:${sessionId}` }
+		);
 	}
 }

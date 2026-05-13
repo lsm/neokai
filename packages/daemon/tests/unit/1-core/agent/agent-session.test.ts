@@ -17,7 +17,7 @@ import type {
 } from '@neokai/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Database } from '../../../../src/storage/database';
-import type { MessageHub, DaemonHub } from '@neokai/shared';
+import type { MessageHub } from '@neokai/shared';
 
 // Test the AgentSession class indirectly through its components
 // since direct testing with mock.module() causes global mock pollution
@@ -236,7 +236,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -282,11 +281,6 @@ describe('AgentSession', () => {
 				sendMessage: mock(() => {}),
 			} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -299,7 +293,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -380,7 +373,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -419,15 +411,18 @@ describe('AgentSession', () => {
 				sendMessage: mock(() => {}),
 			} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
-				subscribe: mock((_: string, __: Function, ___: object) => () => {}),
+				subscribe: mock(
+					(_event: string, handler: (payload: Record<string, unknown>) => void, _opts: object) => {
+						if (_event === 'session.updated') {
+							captured = onListener(handler);
+							return captured.unsubscribe;
+						}
+						return () => {};
+					}
+				),
 			} as unknown as InternalEventBus<any>;
 
 			mockGetApiKey = mock(async () => 'test-api-key');
@@ -436,7 +431,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -499,7 +493,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -544,15 +537,18 @@ describe('AgentSession', () => {
 				sendMessage: mock(() => {}),
 			} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
-				subscribe: mock((_: string, __: Function, ___: object) => () => {}),
+				subscribe: mock(
+					(event: string, handler: (payload: Record<string, unknown>) => void, _opts: object) => {
+						if (event === 'session.updated') {
+							captured = onListener(handler);
+							return captured.unsubscribe;
+						}
+						return () => {};
+					}
+				),
 			} as unknown as InternalEventBus<any>;
 
 			mockGetApiKey = mock(async () => 'test-api-key');
@@ -561,7 +557,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -649,7 +644,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey,
 				undefined,
@@ -676,7 +670,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey,
 				undefined,
@@ -862,7 +855,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -897,11 +889,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -914,7 +901,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -949,7 +935,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -997,12 +982,6 @@ describe('AgentSession', () => {
 				sendMessage: mock(() => {}),
 			} as unknown as MessageHub;
 
-			// Create minimal mock daemon hub
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})), // Returns unsubscribe function
-			} as unknown as DaemonHub;
-
 			// Create mock API key getter
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
@@ -1017,7 +996,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1102,7 +1080,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1137,11 +1114,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1154,7 +1126,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1177,7 +1148,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1212,11 +1182,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1229,7 +1194,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1252,7 +1216,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1287,11 +1250,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1304,7 +1262,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1340,7 +1297,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1375,11 +1331,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1392,7 +1343,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1415,7 +1365,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1450,11 +1399,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1467,7 +1411,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1491,7 +1434,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1526,11 +1468,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1543,7 +1480,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1566,7 +1502,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1601,11 +1536,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1618,7 +1548,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1641,7 +1570,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1676,11 +1604,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1693,7 +1616,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1718,7 +1640,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1753,11 +1674,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1770,7 +1686,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1793,7 +1708,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1828,11 +1742,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1845,7 +1754,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -1868,7 +1776,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -1903,11 +1810,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -1920,7 +1822,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2132,10 +2033,6 @@ describe('AgentSession', () => {
 			} as unknown as Database;
 
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -2147,7 +2044,6 @@ describe('AgentSession', () => {
 				init,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey,
 				'claude-sonnet-4-5-20250929'
@@ -2206,10 +2102,6 @@ describe('AgentSession', () => {
 			} as unknown as Database;
 
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -2221,7 +2113,6 @@ describe('AgentSession', () => {
 				init,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey,
 				'default'
@@ -2274,10 +2165,6 @@ describe('AgentSession', () => {
 			} as unknown as Database;
 
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -2289,7 +2176,6 @@ describe('AgentSession', () => {
 				init,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey,
 				'default'
@@ -2353,10 +2239,6 @@ describe('AgentSession', () => {
 			} as unknown as Database;
 
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -2368,7 +2250,6 @@ describe('AgentSession', () => {
 				init,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey,
 				'default'
@@ -2436,19 +2317,16 @@ describe('AgentSession', () => {
 			} as unknown as Database;
 
 			let captured: ReturnType<typeof onListener> | null = null;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(
-					(_event: string, handler: (payload: Record<string, unknown>) => void): (() => void) => {
-						captured = onListener(handler);
-						return captured.unsubscribe;
-					}
-				),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
-				subscribe: mock((_: string, __: Function, ___: object) => () => {}),
+				subscribe: mock((event: string, handler: (payload: Record<string, unknown>) => void) => {
+					if (event === 'session.updated') {
+						captured = onListener(handler);
+						return captured.unsubscribe;
+					}
+					return () => {};
+				}),
 			} as unknown as InternalEventBus<any>;
 			const mockMessageHub = {} as MessageHub;
 			const mockGetApiKey = mock(async () => 'test-key');
@@ -2465,7 +2343,6 @@ describe('AgentSession', () => {
 				init,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey,
 				'claude-sonnet-4-5-20250929'
@@ -2560,10 +2437,6 @@ describe('AgentSession', () => {
 			} as unknown as Database;
 
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -2575,7 +2448,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2628,10 +2500,6 @@ describe('AgentSession', () => {
 			} as unknown as Database;
 
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -2643,7 +2511,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2687,29 +2554,23 @@ describe('AgentSession', () => {
 				getMessagesByStatus: mock(() => []),
 			} as unknown as Database;
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
 				subscribe: mock((_: string, __: Function, ___: object) => () => {}),
 			} as unknown as InternalEventBus<any>;
 			const mockGetApiKey = mock(async () => 'test-api-key');
-			return { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey };
+			return { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey };
 		};
 
 		it('should merge new servers into empty mcpServers config without persisting', () => {
 			const mockSession = makeMockSession();
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2735,14 +2596,12 @@ describe('AgentSession', () => {
 				'db-query': { type: 'sdk', name: 'db-query' } as unknown as McpServerConfig,
 			};
 			const mockSession = makeMockSession(existing);
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2778,14 +2637,12 @@ describe('AgentSession', () => {
 				'db-query': originalDbQuery,
 			};
 			const mockSession = makeMockSession(existing);
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2819,13 +2676,11 @@ describe('AgentSession', () => {
 				} as unknown as McpServerConfig,
 			};
 			const mockSession = makeMockSession(existing);
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2858,8 +2713,7 @@ describe('AgentSession', () => {
 				}
 				return [];
 			});
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 			(mockDb as unknown as { getMessagesByStatus: ReturnType<typeof mock> }).getMessagesByStatus =
 				getMessagesByStatus;
 
@@ -2867,7 +2721,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey,
 				undefined,
@@ -2918,17 +2771,13 @@ describe('AgentSession', () => {
 				getMessagesByStatus: mock(() => []),
 			} as unknown as Database;
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
 				subscribe: mock((_: string, __: Function, ___: object) => () => {}),
 			} as unknown as InternalEventBus<any>;
 			const mockGetApiKey = mock(async () => 'test-api-key');
-			return { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey };
+			return { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey };
 		};
 
 		it('should remove the named server from mcpServers', () => {
@@ -2937,14 +2786,12 @@ describe('AgentSession', () => {
 				'space-agent-tools': { type: 'sdk' } as unknown as McpServerConfig,
 			};
 			const mockSession = makeMockSession(existing);
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2962,14 +2809,12 @@ describe('AgentSession', () => {
 				'space-agent-tools': { type: 'sdk' } as unknown as McpServerConfig,
 			};
 			const mockSession = makeMockSession(existing);
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -2983,14 +2828,12 @@ describe('AgentSession', () => {
 
 		it('should be a no-op when mcpServers is not defined', () => {
 			const mockSession = makeMockSession(); // no existing servers
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3004,14 +2847,12 @@ describe('AgentSession', () => {
 				'node-agent': { type: 'sdk' } as unknown as McpServerConfig,
 			};
 			const mockSession = makeMockSession(existing);
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3030,14 +2871,12 @@ describe('AgentSession', () => {
 				'space-agent-tools': { type: 'sdk' } as unknown as McpServerConfig,
 			};
 			const mockSession = makeMockSession(existing);
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3059,7 +2898,6 @@ describe('AgentSession', () => {
 		let mockSession: Session;
 		let mockDb: Database;
 		let mockMessageHub: MessageHub;
-		let mockDaemonHub: DaemonHub;
 		let mockInternalEventBus: InternalEventBus<any>;
 		let mockGetApiKey: () => Promise<string | null>;
 		let agentSession: AgentSession;
@@ -3094,11 +2932,6 @@ describe('AgentSession', () => {
 
 			mockMessageHub = {} as unknown as MessageHub;
 
-			mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
-
 			mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -3111,7 +2944,6 @@ describe('AgentSession', () => {
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3171,17 +3003,13 @@ describe('AgentSession', () => {
 				getMessagesByStatus: mock(() => []),
 			} as unknown as Database;
 			const mockMessageHub = {} as MessageHub;
-			const mockDaemonHub = {
-				emit: mock(async () => {}),
-				on: mock(() => mock(() => {})),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
 				subscribe: mock((_: string, __: Function, ___: object) => () => {}),
 			} as unknown as InternalEventBus<any>;
 			const mockGetApiKey = mock(async () => 'test-api-key');
-			return { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey };
+			return { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey };
 		};
 
 		/**
@@ -3213,14 +3041,12 @@ describe('AgentSession', () => {
 
 		it('emits a structured payload with sessionId, action, sorted servers on merge', () => {
 			const mockSession = makeMockSession();
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3251,14 +3077,12 @@ describe('AgentSession', () => {
 					},
 				},
 			});
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3276,14 +3100,12 @@ describe('AgentSession', () => {
 
 		it('emits action=replace from the deprecated replaceAllRuntimeMcpServers entry point', () => {
 			const mockSession = makeMockSession();
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3302,14 +3124,12 @@ describe('AgentSession', () => {
 			const mockSession = makeMockSession({
 				id: 'space:s1:task:t-42:exec:e7',
 			});
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3328,14 +3148,12 @@ describe('AgentSession', () => {
 				id: 'space:abc:agent:reviewer',
 				context: { spaceId: 'abc', taskId: 'task-99' },
 			});
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3355,14 +3173,12 @@ describe('AgentSession', () => {
 
 		it('omits spaceId/taskId when neither context nor sub-session shape provides them', () => {
 			const mockSession = makeMockSession({ id: 'standalone-session' });
-			const { mockDb, mockMessageHub, mockDaemonHub, mockInternalEventBus, mockGetApiKey } =
-				makeMocks();
+			const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
 			const agentSession = new AgentSession(
 				mockSession,
 				mockDb,
 				mockMessageHub,
-				mockDaemonHub,
 				mockInternalEventBus,
 				mockGetApiKey
 			);
@@ -3423,10 +3239,6 @@ describe('AgentSession', () => {
 				sendMessage: mock(() => {}),
 			} as unknown as MessageHub;
 
-			const dHub = {
-				on: mock(() => () => {}),
-				emit: mock(() => {}),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -3439,7 +3251,6 @@ describe('AgentSession', () => {
 				'restored-session',
 				db,
 				msgHub,
-				dHub,
 				mockInternalEventBus,
 				getApiKey
 			);
@@ -3482,10 +3293,6 @@ describe('AgentSession', () => {
 				sendMessage: mock(() => {}),
 			} as unknown as MessageHub;
 
-			const dHub = {
-				on: mock(() => () => {}),
-				emit: mock(() => {}),
-			} as unknown as DaemonHub;
 			const mockInternalEventBus = {
 				publish: mock(async () => {}),
 				publishAsync: mock(() => {}),
@@ -3498,7 +3305,6 @@ describe('AgentSession', () => {
 				'restored-session-no-guards',
 				db,
 				msgHub,
-				dHub,
 				mockInternalEventBus,
 				getApiKey
 			);

@@ -30,7 +30,7 @@ import {
 	registerSettingsHandlers,
 } from '../../../../src/lib/rpc-handlers/settings-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
 import type {
 	InternalEventBus,
@@ -198,7 +198,6 @@ function createMockMcpImportService(): {
 
 describe('Settings RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
-	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
 	let internalEventBusData: ReturnType<typeof createMockInternalEventBus>;
 	let settingsManagerData: ReturnType<typeof createMockSettingsManager>;
 	let dbData: ReturnType<typeof createMockDatabase>;
@@ -206,7 +205,6 @@ describe('Settings RPC Handlers', () => {
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
-		daemonHubData = createMockDaemonHub();
 		internalEventBusData = createMockInternalEventBus();
 		settingsManagerData = createMockSettingsManager();
 		dbData = createMockDatabase();
@@ -216,7 +214,6 @@ describe('Settings RPC Handlers', () => {
 		registerSettingsHandlers(
 			messageHubData.hub,
 			settingsManagerData.settingsManager,
-			daemonHubData.daemonHub,
 			internalEventBusData.bus,
 			dbData.db,
 			mcpImportServiceData.service
@@ -415,7 +412,6 @@ describe('Settings RPC Handlers', () => {
 			registerSettingsHandlers(
 				messageHubData.hub,
 				settingsManagerData.settingsManager,
-				daemonHubData.daemonHub,
 				internalEventBusData.bus,
 				dbData.db
 			);

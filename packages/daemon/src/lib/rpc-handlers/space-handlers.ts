@@ -91,21 +91,12 @@ export function setupSpaceHandlers(
 	spaceManager: SpaceManager,
 	taskRepo: SpaceTaskRepository,
 	workflowRunRepo: SpaceWorkflowRunRepository,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceAgentManager: SpaceAgentManager,
 	spaceWorkflowManager: SpaceWorkflowManager,
-	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	sessionManager?: SessionManager,
 	spaceRuntimeService?: SpaceRuntimeService
 ): void {
-	const publishSpaceEvent = <K extends keyof DaemonInternalEventMap & string>(
-		event: K,
-		payload: DaemonInternalEventMap[K]
-	): void => {
-		internalEventBus.publishAsync(
-			event,
-			payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
-		);
-	};
 	// ─── space.create ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.create', async (data) => {
 		const params = data as CreateSpaceParams;
@@ -199,12 +190,11 @@ export function setupSpaceHandlers(
 			}
 		}
 
-		publishSpaceEvent('space.created', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: space.id,
-			space,
-		});
+		internalEventBus
+			.publish('space.created', { sessionId: 'global', spaceId: space.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.created:', err);
+			});
 
 		if (seedWarnings.length > 0) {
 			return { ...space, seedWarnings } satisfies SpaceCreateResult;
@@ -254,12 +244,11 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.updateSlug(params.id, params.slug);
 
-		publishSpaceEvent('space.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.id,
-			space,
-		});
+		internalEventBus
+			.publish('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
 
 		return space;
 	});
@@ -283,12 +272,11 @@ export function setupSpaceHandlers(
 		const { id, ...updateParams } = params;
 		const space = await spaceManager.updateSpace(id, updateParams);
 
-		publishSpaceEvent('space.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: id,
-			space,
-		});
+		internalEventBus
+			.publish('space.updated', { sessionId: 'global', spaceId: id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
 
 		return space;
 	});
@@ -305,12 +293,11 @@ export function setupSpaceHandlers(
 
 		// Emit a dedicated space.archived event (consistent with room.archived pattern),
 		// carrying the full archived space object so subscribers have complete state.
-		publishSpaceEvent('space.archived', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.id,
-			space,
-		});
+		internalEventBus
+			.publish('space.archived', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.archived:', err);
+			});
 
 		return space;
 	});
@@ -334,12 +321,11 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.stopSpace(params.id);
 
-		publishSpaceEvent('space.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.id,
-			space,
-		});
+		internalEventBus
+			.publish('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
 
 		return space;
 	});
@@ -355,12 +341,11 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.startSpace(params.id);
 
-		publishSpaceEvent('space.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.id,
-			space,
-		});
+		internalEventBus
+			.publish('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
 
 		return space;
 	});
@@ -375,12 +360,11 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.pauseSpace(params.id);
 
-		publishSpaceEvent('space.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.id,
-			space,
-		});
+		internalEventBus
+			.publish('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
 
 		return space;
 	});
@@ -395,12 +379,11 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.resumeSpace(params.id);
 
-		publishSpaceEvent('space.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.id,
-			space,
-		});
+		internalEventBus
+			.publish('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
 
 		return space;
 	});
@@ -418,11 +401,11 @@ export function setupSpaceHandlers(
 			throw new Error(`Space not found: ${params.id}`);
 		}
 
-		publishSpaceEvent('space.deleted', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.id,
-		});
+		internalEventBus
+			.publish('space.deleted', { sessionId: 'global', spaceId: params.id })
+			.catch((err) => {
+				log.warn('Failed to emit space.deleted:', err);
+			});
 
 		return { success: true };
 	});

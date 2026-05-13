@@ -87,8 +87,8 @@ describe('handleTaskScheduleFire', () => {
 		db.close();
 	});
 
-	function makeDeps() {
-		return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo };
+	function makeDeps(eventHub?: { publish: (event: string, data: unknown) => Promise<unknown> }) {
+		return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub };
 	}
 
 	function createCronSchedule(): string {
@@ -185,10 +185,10 @@ describe('handleTaskScheduleFire', () => {
 			{ subscriberName: 'test' }
 		);
 
-		const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
-			...makeDeps(),
-			internalEventBus,
-		});
+		const result = await handleTaskScheduleFire(
+			makeJob({ payload: { scheduleId } }),
+			makeDeps({ publish: (event, data) => internalEventBus.publish(event, data as any) })
+		);
 
 		await Promise.resolve();
 

@@ -13,7 +13,7 @@ import {
 } from '../../../../src/lib/agent/model-switch-handler';
 import type { Session, ModelInfo } from '@neokai/shared';
 import type { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';

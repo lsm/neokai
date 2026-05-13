@@ -151,7 +151,7 @@ export interface NodeAgentToolsConfig {
 	 */
 	nodeExecutionRepo: NodeExecutionRepository;
 	/**
-	 * InternalEventBus instance for emitting client-visible space events.
+	 * InternalEventBus<DaemonInternalEventMap> instance for emitting task update events.
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -740,14 +740,19 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 									});
 								}
 
-								internalEventBus?.publishAsync('space.gateData.updated', {
-									namespaceId: 'global',
-									sessionId: 'global',
-									spaceId,
-									runId: workflowRunId,
-									gateId,
-									data: updated.data,
-								});
+								if (internalEventBus) {
+									void internalEventBus
+										.publish('space.gateData.updated', {
+											sessionId: 'global',
+											spaceId,
+											runId: workflowRunId,
+											gateId,
+											data: updated.data,
+										})
+										.catch((err) => {
+											log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
+										});
+								}
 							}
 						}
 					}

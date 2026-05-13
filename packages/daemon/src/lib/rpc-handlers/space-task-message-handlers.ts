@@ -167,15 +167,6 @@ export function setupSpaceTaskMessageHandlers(
 	pendingMessageQueue?: PendingAgentMessageQueue
 ): void {
 	const taskRepo = new SpaceTaskRepository(db.getDatabase());
-	const publishSpaceEvent = <K extends keyof DaemonInternalEventMap & string>(
-		event: K,
-		payload: DaemonInternalEventMap[K]
-	): void => {
-		internalEventBus.publishAsync(
-			event,
-			payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
-		);
-	};
 
 	/**
 	 * Best-effort: failure to reset must not fail the RPC, since the reset is an
@@ -194,8 +185,7 @@ export function setupSpaceTaskMessageHandlers(
 				`workflow.cycles.reset: runId=${workflowRunId} reason=human_touch taskId=${taskId} rowsReset=${rowsReset}`
 			);
 			if (rowsReset > 0) {
-				publishSpaceEvent('space.workflowRun.cyclesReset', {
-					namespaceId: 'global',
+				await internalEventBus.publish('space.workflowRun.cyclesReset', {
 					sessionId: 'global',
 					runId: workflowRunId,
 					reason: 'human_touch',
@@ -365,8 +355,7 @@ export function setupSpaceTaskMessageHandlers(
 
 		const updatedTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
 
-		publishSpaceEvent('space.task.updated', {
-			namespaceId: 'global',
+		await internalEventBus.publish('space.task.updated', {
 			sessionId: 'global',
 			spaceId: params.spaceId,
 			taskId: params.taskId,
@@ -509,8 +498,7 @@ export function setupSpaceTaskMessageHandlers(
 		const sessionAfter = ensuredTask.taskAgentSessionId ?? null;
 
 		if (sessionAfter !== sessionBefore) {
-			publishSpaceEvent('space.task.updated', {
-				namespaceId: 'global',
+			await internalEventBus.publish('space.task.updated', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				taskId: params.taskId,

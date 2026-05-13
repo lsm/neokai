@@ -8,8 +8,7 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
-import { ClientEventGateway, MessageHub, MessageHubRouter } from '@neokai/shared';
-import { createDaemonHub } from './lib/daemon-hub';
+import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import {
 	createDaemonInternalEventBus,
 	type DaemonInternalEventMap,
@@ -70,10 +69,8 @@ export interface DaemonAppContext {
 	settingsManager: SettingsManager;
 	stateManager: StateProjectionService;
 	transport: WebSocketServerTransport;
-	daemonHub: Awaited<ReturnType<typeof createDaemonHub>>;
 	/**
-	 * Semantic internal event bus for migrated daemon domain events.
-	 * New publishers/subscribers should use this instead of DaemonHub.
+	 * Semantic internal event bus for daemon domain events.
 	 * See docs/plans/internal-event-command-query-architecture.md.
 	 */
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
@@ -237,12 +234,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// 5. Register Transport with MessageHub
 	messageHub.registerTransport(transport);
 
-	// Initialize DaemonHub (TypedHub-based event coordination)
-	const daemonHub = createDaemonHub('daemon');
-	await daemonHub.initialize();
-
-	// Initialize InternalEventBus for migrated daemon domain events.
-	// Subscribers/publishers register here as they migrate off DaemonHub.
+	// Initialize InternalEventBus for daemon domain events.
 	const internalEventBus = createDaemonInternalEventBus();
 
 	// Initialize InternalQueryBus for point-in-time reads.
@@ -290,7 +282,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
 	}
 
-	// Initialize session manager (with DaemonHub, SettingsManager, no StateManager dependency!)
+	// Initialize session manager (with InternalEventBus<DaemonInternalEventMap>, SettingsManager, no StateManager dependency!)
 	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
 	// trigger LiveQuery invalidation immediately.
 	const sessionManager = new SessionManager(
@@ -298,7 +290,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		messageHub,
 		authManager,
 		settingsManager,
-		daemonHub,
+		internalEventBus,
 		{
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
@@ -307,8 +299,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobQueue,
 		jobProcessor,
 		skillsManager,
-		db.appMcpServers,
-		internalEventBus
+		db.appMcpServers
 	);
 
 	// Register session title generation handler before jobProcessor starts
@@ -318,8 +309,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
 	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
-	// Initialize StateProjectionService (pure read-model caches from InternalEventBus)
+	// Initialize StateProjectionService (read-model caches from InternalEventBus)
 	const stateManager = new StateProjectionService(
+		messageHub,
 		sessionManager,
 		authManager,
 		settingsManager,
@@ -328,74 +320,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		internalEventBus
 	);
 
-	// Bridge migrated DaemonHub events to InternalEventBus so
-	// StateProjectionService (and future subscribers) receive them without
-	// touching every publisher call site. This is the M5 compatibility path;
-	// publishers will migrate to InternalEventBus directly in later milestones.
-	//
-	// We use publish() (awaited) instead of publishAsync() so cache updates
-	// settle before ClientEventBridge triggers broadcastSystemChange() from
-	// the same DaemonHub event — preserving the ordering between cache write
-	// and broadcast read.
-	const unsubSessionCreated = daemonHub.on('session.created', (data) => {
-		void internalEventBus.publish('session.created', {
-			namespaceId: data.sessionId,
-			session: data.session,
-		});
-	});
-	const unsubSessionUpdated = daemonHub.on('session.updated', (data) => {
-		void internalEventBus.publish('session.updated', {
-			namespaceId: data.sessionId,
-			source: data.source,
-			session: data.session,
-			processingState: data.processingState,
-		});
-	});
-	const unsubSessionDeleted = daemonHub.on('session.deleted', (data) => {
-		void internalEventBus.publish('session.deleted', {
-			namespaceId: data.sessionId,
-		});
-	});
-	const unsubCommandsUpdated = daemonHub.on('commands.updated', (data) => {
-		void internalEventBus.publish('commands.updated', {
-			namespaceId: data.sessionId,
-			commands: data.commands,
-		});
-	});
-	const unsubSessionError = daemonHub.on('session.error', (data) => {
-		void internalEventBus.publish('session.error', {
-			namespaceId: data.sessionId,
-			error: data.error,
-			details: data.details,
-		});
-	});
-	const unsubSessionErrorClear = daemonHub.on('session.errorClear', (data) => {
-		void internalEventBus.publish('session.errorClear', {
-			namespaceId: data.sessionId,
-		});
-	});
-	const unsubApiConnection = daemonHub.on('api.connection', (data) => {
-		// Forward the complete payload so diagnostic fields (errorCount,
-		// lastError, lastSuccessfulCall) are preserved in projections.
-		void internalEventBus.publish('api.connection', {
-			namespaceId: data.sessionId,
-			...data,
-		});
-	});
-
-	// Initialize ClientEventBridge — owns ALL client-facing delivery:
-	// - Event forwarding (space, session, connection, config, error events)
-	// - Versioned state broadcasts (system, settings, session state, SDK messages)
-	// - RPC handler registration (state snapshot queries)
-	// Migrated space events route through InternalEventBus; unmigrated spaceAgent/spaceWorkflow
-	// events remain on DaemonHub.
-	const clientEventGateway = new ClientEventGateway({ hub: messageHub });
+	// Initialize ClientEventBridge — forwards selected InternalEventBus events to
+	// WebSocket clients via ClientEventGateway. This extracts the repetitive
+	// room/space forwarding out of StateProjectionService.
+	const clientEventGateway = stateManager.getClientEventGateway();
 	const clientEventBridge = createClientEventBridge(
-		daemonHub,
-		messageHub,
+		internalEventBus,
 		clientEventGateway,
-		stateManager,
-		internalEventBus
+		stateManager
 	);
 	clientEventBridge.start();
 
@@ -413,7 +345,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		if (apiKey) {
 			gitHubService = createGitHubService({
 				db,
-				daemonHub,
+				internalEventBus,
 				config,
 				apiKey,
 				githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
@@ -462,7 +394,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		config,
-		daemonHub,
 		internalEventBus,
 		db,
 		gitHubService: gitHubService ?? undefined,
@@ -628,7 +559,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			jobQueue,
 			spaceRepo: taskScheduleSpaceRepo,
 			taskRepo: taskScheduleTaskRepo,
-			internalEventBus,
+			eventHub: internalEventBus,
 		});
 	});
 
@@ -795,15 +726,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// while we're tearing down sessions and transport.
 			clientEventBridge.stop();
 
-			// Unsubscribe DaemonHub → InternalEventBus bridge listeners
-			unsubSessionCreated();
-			unsubSessionUpdated();
-			unsubSessionDeleted();
-			unsubCommandsUpdated();
-			unsubSessionError();
-			unsubSessionErrorClear();
-			unsubApiConnection();
-
 			try {
 				server.stop();
 			} catch {
@@ -908,7 +830,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		stateManager,
 		transport,
-		daemonHub,
 		internalEventBus,
 		queryBus,
 		gitHubService,

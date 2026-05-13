@@ -1623,6 +1623,10 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		const workflow = makeWorkflowWithGatedChannel(gate);
 		const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
 		const fakeInternalEventBus = {
+			publish: async (name: string, payload: unknown) => {
+				emitted.push({ name, payload: payload as Record<string, unknown> });
+				return { delivered: 0, failures: [] };
+			},
 			publishAsync: (name: string, payload: unknown) => {
 				emitted.push({ name, payload: payload as Record<string, unknown> });
 			},
@@ -2245,6 +2249,10 @@ describe('node-agent-tools: async gate evaluation', () => {
 
 		const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
 		const fakeInternalEventBus = {
+			publish: async (name: string, payload: unknown) => {
+				emitted.push({ name, payload: payload as Record<string, unknown> });
+				return { delivered: 0, failures: [] };
+			},
 			publishAsync: (name: string, payload: unknown) => {
 				emitted.push({ name, payload: payload as Record<string, unknown> });
 			},

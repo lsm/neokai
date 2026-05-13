@@ -51,7 +51,7 @@
  * - QueryRunner: Low-level query execution
  * - QueryOptionsBuilder: SDK options construction
  * - SDKRuntimeConfig: Runtime SDK settings
- * - EventSubscriptionSetup: DaemonHub event wiring
+ * - EventSubscriptionSetup: InternalEventBus<DaemonInternalEventMap> event wiring
  * - QueryModeHandler: Manual/auto-queue mode
  * - SlashCommandManager: Slash command caching
  * - MessageRecoveryHandler: Orphaned message recovery
@@ -91,7 +91,6 @@ import type {
 	SkillEnablementOverride,
 	DeclarativeToolGuard,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
@@ -338,7 +337,6 @@ export class AgentSession
 		readonly session: Session,
 		readonly db: Database,
 		readonly messageHub: MessageHub,
-		readonly daemonHub: DaemonHub,
 		readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		private getApiKey: () => Promise<string | null>,
 		readonly skillsManager?: import('../skills-manager').SkillsManager,
@@ -347,7 +345,7 @@ export class AgentSession
 		readonly toolGuards?: DeclarativeToolGuard[],
 		private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
 	) {
-		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub, this.internalEventBus);
+		this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
 		this.logger = new Logger(`AgentSession ${session.id}`);
 		this.settingsManager = new SettingsManager(
 			this.db,
@@ -356,7 +354,7 @@ export class AgentSession
 
 		// Initialize core components (order matters - some handlers depend on earlier ones)
 		this.messageQueue = new MessageQueue();
-		this.stateManager = new ProcessingStateManager(session.id, daemonHub, internalEventBus, db);
+		this.stateManager = new ProcessingStateManager(session.id, internalEventBus, db);
 		this.contextTracker = new ContextTracker(session.id, (contextInfo: ContextInfo) => {
 			this.session.metadata.lastContextInfo = contextInfo;
 			this.db.updateSession(this.session.id, { metadata: this.session.metadata });
@@ -439,7 +437,7 @@ export class AgentSession
 	 * @param init - Session initialization config
 	 * @param db - Database instance
 	 * @param messageHub - MessageHub for WebSocket communication
-	 * @param daemonHub - DaemonHub for event bus
+	 * @param internalEventBus - InternalEventBus<DaemonInternalEventMap> for event bus
 	 * @param getApiKey - Function to get API key
 	 * @param defaultModel - Default model to use if not specified in init
 	 * @returns AgentSession instance
@@ -448,7 +446,6 @@ export class AgentSession
 		init: AgentSessionInit,
 		db: Database,
 		messageHub: MessageHub,
-		daemonHub: DaemonHub,
 		internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		getApiKey: () => Promise<string | null>,
 		defaultModel: string,
@@ -543,7 +540,6 @@ export class AgentSession
 			session,
 			db,
 			messageHub,
-			daemonHub,
 			internalEventBus,
 			getApiKey,
 			skillsManager,
@@ -566,7 +562,6 @@ export class AgentSession
 		sessionId: string,
 		db: Database,
 		messageHub: MessageHub,
-		daemonHub: DaemonHub,
 		internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		getApiKey: () => Promise<string | null>,
 		skillsManager?: import('../skills-manager').SkillsManager,
@@ -580,7 +575,6 @@ export class AgentSession
 			session,
 			db,
 			messageHub,
-			daemonHub,
 			internalEventBus,
 			getApiKey,
 			skillsManager,
@@ -745,7 +739,7 @@ export class AgentSession
 	 * idle. Called by reapers (force-completion, rehydrate failure) so the
 	 * UI removes the now-unanswerable question card.
 	 *
-	 * @param telemetryReason Annotates the `question.orphaned` daemonHub event
+	 * @param telemetryReason Annotates the `question.orphaned` internalEventBus event
 	 *   only — the persisted `cancelReason` is hardcoded to
 	 *   `agent_session_terminated` (see `AskUserQuestionHandler.markQuestionOrphaned`).
 	 * @returns true if a question was actually orphaned, false if the session
@@ -1087,20 +1081,24 @@ export class AgentSession
 			}, timeoutMs);
 
 			// Listen for sdk-session update emitted by SDKMessageHandler.handleSystemMessage
-			unsubscribe = this.daemonHub.on('session.updated', (payload) => {
-				if (payload.sessionId !== this.session.id) return;
-				// Fast path: payload carries the new id
-				const payloadId = payload.session?.sdkSessionId;
-				if (typeof payloadId === 'string' && payloadId.length > 0) {
-					finish(null, payloadId);
-					return;
-				}
-				// Fallback: check the mutated session object
-				if (this.session.sdkSessionId) {
-					finish(null, this.session.sdkSessionId);
-				}
-			});
+			unsubscribe = this.internalEventBus.subscribe(
+				'session.updated',
+				(payload) => {
+					if (payload.sessionId && payload.sessionId !== this.session.id) return;
 
+					// Fast path: payload carries the new id
+					const payloadId = payload.session?.sdkSessionId;
+					if (typeof payloadId === 'string' && payloadId.length > 0) {
+						finish(null, payloadId);
+						return;
+					}
+					// Fallback: check the mutated session object
+					if (this.session.sdkSessionId) {
+						finish(null, this.session.sdkSessionId);
+					}
+				},
+				{ sessionId: this.session.id, subscriberName: 'AgentSession.waitForSdkSessionId' }
+			);
 			// Re-check synchronously in case the init arrived between the top
 			// check and subscription wiring.
 			if (this.session.sdkSessionId) {

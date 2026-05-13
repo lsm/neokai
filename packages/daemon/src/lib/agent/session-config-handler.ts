@@ -11,7 +11,6 @@
  */
 
 import type { Session, McpServerConfig } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import { SettingsManager } from '../settings-manager';
@@ -24,7 +23,6 @@ import { Logger } from '../logger';
 export interface SessionConfigHandlerContext {
 	readonly session: Session;
 	readonly db: Database;
-	readonly daemonHub: DaemonHub;
 	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
 	// Mutable settings manager (needs to be recreated when workspace changes)
@@ -50,12 +48,12 @@ export class SessionConfigHandler {
 	 * For user-facing MCP configuration changes use `updateUserMcpServers` instead.
 	 */
 	async updateConfig(configUpdates: Partial<Session['config']>): Promise<void> {
-		const { session, db } = this.ctx;
+		const { session, db, internalEventBus } = this.ctx;
 
 		session.config = { ...session.config, ...configUpdates };
 		db.updateSession(session.id, { config: session.config });
 
-		await this.ctx.daemonHub.emit('session.updated', {
+		await internalEventBus.publish('session.updated', {
 			sessionId: session.id,
 			source: 'config-update',
 			session: { config: session.config },
@@ -74,7 +72,7 @@ export class SessionConfigHandler {
 	 * Persists to DB and emits a `session.updated` event like `updateConfig`.
 	 */
 	async updateUserMcpServers(servers: Record<string, McpServerConfig>): Promise<void> {
-		const { session, db } = this.ctx;
+		const { session, db, internalEventBus } = this.ctx;
 
 		// Collect in-process (SDK-type) servers that must be preserved.
 		const existing = (session.config?.mcpServers ?? {}) as Record<string, McpServerConfig>;
@@ -92,7 +90,7 @@ export class SessionConfigHandler {
 		session.config = { ...session.config, mcpServers: merged };
 		db.updateSession(session.id, { config: session.config });
 
-		await this.ctx.daemonHub.emit('session.updated', {
+		await internalEventBus.publish('session.updated', {
 			sessionId: session.id,
 			source: 'config-update',
 			session: { config: session.config },

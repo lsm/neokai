@@ -50,7 +50,7 @@ function makeRepo(root: string): string {
 function makeDeps(overrides: {
 	worktreePath: string | null;
 	db: Database;
-	publishAsync?: ReturnType<typeof mock>;
+	publish?: ReturnType<typeof mock>;
 }) {
 	const cacheRepo = new WorkflowRunArtifactCacheRepository(overrides.db);
 	const workflowRunRepo = {
@@ -98,9 +98,13 @@ function makeDeps(overrides: {
 	const spaceWorktreeManager = {
 		getTaskWorktreePath: mock(async () => overrides.worktreePath),
 	} as unknown as SpaceWorktreeManager;
-	const publishAsync = overrides.publishAsync ?? mock(() => {});
+	const publish = overrides.publish ?? mock(async () => ({ delivered: 0, failures: [] }));
 	const internalEventBus = {
-		publishAsync,
+		publish,
+		publishAsync: mock(() => {}),
+		subscribe: mock(() => () => {}),
+		off: mock(() => {}),
+		clear: mock(() => {}),
 	} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
 	return {
@@ -112,7 +116,7 @@ function makeDeps(overrides: {
 			spaceWorktreeManager,
 			internalEventBus,
 		},
-		publishAsync,
+		publish,
 		cacheRepo,
 	};
 }
@@ -152,7 +156,7 @@ describe('space-workflow-run-artifact.handler', () => {
 			// Modify a tracked file so `git diff HEAD --numstat` has content.
 			// (Untracked files do not show up in `git diff HEAD`.)
 			writeFileSync(join(repoPath, 'README.md'), 'hello\nnew line\n');
-			const { deps, publishAsync, cacheRepo } = makeDeps({ worktreePath: repoPath, db });
+			const { deps, publish, cacheRepo } = makeDeps({ worktreePath: repoPath, db });
 
 			const result = await handleSyncGateArtifacts({ runId: RUN_ID, taskId: TASK_ID }, deps);
 
@@ -162,7 +166,7 @@ describe('space-workflow-run-artifact.handler', () => {
 			expect(row?.data).toMatchObject({ isGitRepo: true });
 			const data = row?.data as { files: unknown[] };
 			expect(data.files.length).toBeGreaterThan(0);
-			expect(publishAsync).toHaveBeenCalledWith(
+			expect(publish).toHaveBeenCalledWith(
 				'space.artifactCache.updated',
 				expect.objectContaining({
 					runId: RUN_ID,

@@ -10,7 +10,7 @@ import {
 	type AskUserQuestionHandlerContext,
 } from '../../../../src/lib/agent/ask-user-question-handler';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';

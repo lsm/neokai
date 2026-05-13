@@ -19,9 +19,12 @@ import {
 	type UpdateSpaceTaskParams,
 } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+
+const log = new Logger('space-task-handlers');
 
 /**
  * Factory that creates a SpaceTaskManager bound to a specific spaceId.
@@ -36,15 +39,6 @@ export function setupSpaceTaskHandlers(
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceRuntimeService?: SpaceRuntimeService
 ): void {
-	const publishSpaceEvent = <K extends keyof DaemonInternalEventMap & string>(
-		event: K,
-		payload: DaemonInternalEventMap[K]
-	): void => {
-		internalEventBus.publishAsync(
-			event,
-			payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
-		);
-	};
 	// ─── spaceTask.create ───────────────────────────────────────────────────────
 	messageHub.onRequest('spaceTask.create', async (data) => {
 		const params = data as CreateSpaceTaskParams & { draft?: boolean };
@@ -79,13 +73,16 @@ export function setupSpaceTaskHandlers(
 		}
 		const task = await taskManager.createTask(rest);
 
-		publishSpaceEvent('space.task.created', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId,
-			taskId: task.id,
-			task,
-		});
+		internalEventBus
+			.publish('space.task.created', {
+				sessionId: 'global',
+				spaceId,
+				taskId: task.id,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.created:', err);
+			});
 
 		return task;
 	});
@@ -225,21 +222,19 @@ export function setupSpaceTaskHandlers(
 
 		const taskManager = taskManagerFactory(spaceId);
 
-		/** Emit space.task.updated for cascaded tasks (dependency blocks/unblocks). */
-		const emitCascadedTasks = async (cascaded: SpaceTask[]): Promise<void> => {
-			for (const t of cascaded) {
-				publishSpaceEvent('space.task.updated', {
-					namespaceId: 'global',
+		let task: SpaceTask;
+		let emitTaskUpdated = true;
+		const emitCascadedTasks = async (cascadedTasks: SpaceTask[]) => {
+			if (!emitTaskUpdated) return;
+			for (const cascadedTask of cascadedTasks) {
+				await internalEventBus.publish('space.task.updated', {
 					sessionId: 'global',
 					spaceId,
-					taskId: t.id,
-					task: t,
+					taskId: cascadedTask.id,
+					task: cascadedTask,
 				});
 			}
 		};
-
-		let task: SpaceTask;
-		let emitTaskUpdated = true;
 
 		// Route to setTaskStatus only when the status is actually changing.
 		// Sending the current status as part of a broader metadata update must not
@@ -277,10 +272,10 @@ export function setupSpaceTaskHandlers(
 						...otherFields
 					} = updateParams;
 					if (Object.keys(otherFields).length > 0) {
+						emitTaskUpdated = true;
 						task = await taskManager.updateTask(taskId, otherFields, {
 							onCascadedTasks: emitCascadedTasks,
 						});
-						emitTaskUpdated = true;
 					}
 				} else {
 					// Reject bare transitions into `review`. Every task that lands in
@@ -338,7 +333,6 @@ export function setupSpaceTaskHandlers(
 								? 'human'
 								: undefined,
 						approvalReason: mappedReason,
-						onCascadedTasks: emitCascadedTasks,
 					});
 
 					// When the transition alone cannot carry the rejection reason (e.g.
@@ -392,13 +386,16 @@ export function setupSpaceTaskHandlers(
 		}
 
 		if (emitTaskUpdated) {
-			publishSpaceEvent('space.task.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId,
-				taskId,
-				task,
-			});
+			internalEventBus
+				.publish('space.task.updated', {
+					sessionId: 'global',
+					spaceId,
+					taskId,
+					task,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.task.updated:', err);
+				});
 		}
 
 		return task;
@@ -470,13 +467,16 @@ export function setupSpaceTaskHandlers(
 			reason: params.reason ?? null,
 		});
 
-		publishSpaceEvent('space.task.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.spaceId,
-			taskId: params.taskId,
-			task,
-		});
+		internalEventBus
+			.publish('space.task.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				taskId: params.taskId,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.updated:', err);
+			});
 
 		return task;
 	});
@@ -565,13 +565,16 @@ export function setupSpaceTaskHandlers(
 			});
 		}
 
-		publishSpaceEvent('space.task.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.spaceId,
-			taskId: params.taskId,
-			task,
-		});
+		internalEventBus
+			.publish('space.task.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				taskId: params.taskId,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.updated:', err);
+			});
 
 		return task;
 	});
@@ -606,13 +609,16 @@ export function setupSpaceTaskHandlers(
 
 		const task = await taskManager.publishTask(params.taskId);
 
-		publishSpaceEvent('space.task.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: params.spaceId,
-			taskId: params.taskId,
-			task,
-		});
+		internalEventBus
+			.publish('space.task.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				taskId: params.taskId,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.updated:', err);
+			});
 
 		return task;
 	});

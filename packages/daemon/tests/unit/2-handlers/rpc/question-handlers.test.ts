@@ -12,7 +12,7 @@ import { MessageHub, type QuestionDraftResponse } from '@neokai/shared';
 import { setupQuestionHandlers } from '../../../../src/lib/rpc-handlers/question-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;

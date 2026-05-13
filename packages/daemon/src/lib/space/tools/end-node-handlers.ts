@@ -65,7 +65,7 @@ export interface EndNodeHandlerDeps {
 	/** Space manager — used to look up current autonomy level for approve_task. */
 	spaceManager: Pick<SpaceManager, 'getSpace'>;
 	/** Optional hub for emitting `space.task.updated` events after state changes. */
-	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
 }
 
 export interface EndNodeHandlers {
@@ -81,7 +81,7 @@ export interface EndNodeHandlers {
  *
  * Transitions the task `approved → done` via `SpaceTaskManager.setTaskStatus`
  * (so the centralised transition validator runs), clears the post-approval
- * tracking fields, and emits a `space.task.updated` DaemonHub event.
+ * tracking fields, and emits a `space.task.updated` InternalEventBus<DaemonInternalEventMap> event.
  */
 export interface MarkCompleteHandlerDeps {
 	taskId: string;
@@ -91,7 +91,7 @@ export interface MarkCompleteHandlerDeps {
 	/** Task manager — used to transition and update the task atomically. */
 	taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
 	/** Optional hub for emitting `space.task.updated` events. */
-	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
 }
 
 /**
@@ -105,13 +105,14 @@ export function createMarkCompleteHandler(
 	const { taskId, spaceId, taskRepo, taskManager, internalEventBus } = deps;
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
-		internalEventBus?.publishAsync('space.task.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId,
-			taskId: task.id,
-			task,
-		});
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			});
 	};
 
 	return async (_args: MarkCompleteInput): Promise<ToolResult> => {
@@ -134,8 +135,8 @@ export function createMarkCompleteHandler(
 			// `postApprovalBlockedReason` in the same UPDATE.
 			const updated = await taskManager.setTaskStatus(taskId, 'done', {
 				approvalSource: task.approvalSource ?? 'agent',
-				onCascadedTasks: async (cascaded) => {
-					for (const t of cascaded) emitTaskUpdated(t);
+				onCascadedTasks: async (cascadedTasks) => {
+					for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 				},
 			});
 			emitTaskUpdated(updated);
@@ -174,13 +175,14 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
 	} = deps;
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
-		internalEventBus?.publishAsync('space.task.updated', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId,
-			taskId: task.id,
-			task,
-		});
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			});
 	};
 
 	return {
