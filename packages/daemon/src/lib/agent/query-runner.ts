@@ -121,9 +121,10 @@ export interface QueryRunnerContext {
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	originalEnvVars: OriginalEnvVars;
-	/** Resolves when the SDK subprocess exits. Set by QueryRunner via spawnClaudeCodeProcess wrapper. */
+	/** Resolves when tracked SDK subprocesses exit. Set by QueryRunner via spawnClaudeCodeProcess wrapper. */
 	processExitedPromise: Promise<void> | null;
 	trackAgentProcess(proc: TrackedAgentProcess): void;
+	snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]>;
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
 	getQueryGeneration(): number;

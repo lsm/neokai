@@ -98,6 +98,8 @@ import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
 
+const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
+
 /**
  * AgentSessionInit - Configuration for creating a new AgentSession
  *
@@ -297,7 +299,8 @@ export class AgentSession
 	originalEnvVars: OriginalEnvVars = {};
 	processExitedPromise: Promise<void> | null = null;
 	private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
-	private recentlyExitedAgentRootPids = new Set<number>();
+	private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
+	private recentlyExitedAgentRootPids = new Map<number, number>();
 	private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 	// Session state
@@ -1239,38 +1242,53 @@ export class AgentSession
 
 	trackAgentProcess(proc: TrackedAgentProcess): void {
 		const pid = proc.pid;
-		if (typeof pid === 'number' && pid > 0) {
-			this.clearForceKillTimer(pid);
-			this.recentlyExitedAgentRootPids.delete(pid);
-			this.trackedAgentProcesses.set(pid, proc);
+		if (typeof pid !== 'number' || pid <= 0) {
+			this.processExitedPromise = new Promise<void>((resolve) => {
+				proc.once('exit', () => resolve());
+			});
+			return;
 		}
 
-		this.processExitedPromise = new Promise<void>((resolve) => {
+		this.clearForceKillTimer(pid);
+		this.recentlyExitedAgentRootPids.delete(pid);
+		this.trackedAgentProcesses.set(pid, proc);
+
+		const exitPromise = new Promise<void>((resolve) => {
 			proc.once('exit', () => {
-				if (typeof pid === 'number') {
-					this.clearForceKillTimer(pid);
-					if (this.trackedAgentProcesses.get(pid) === proc) {
-						this.trackedAgentProcesses.delete(pid);
-						this.recentlyExitedAgentRootPids.add(pid);
-					}
+				this.clearForceKillTimer(pid);
+				if (this.trackedAgentProcesses.get(pid) === proc) {
+					this.trackedAgentProcesses.delete(pid);
+					this.trackedAgentProcessExitPromises.delete(pid);
+					this.recentlyExitedAgentRootPids.set(pid, Date.now());
 				}
 				resolve();
 			});
 		});
+		this.trackedAgentProcessExitPromises.set(pid, exitPromise);
+		this.updateProcessExitedPromise();
 	}
 
 	*getTrackedAgentRootPids(): Iterable<number> {
+		this.expireRecentlyExitedAgentRootPids();
 		yield* this.trackedAgentProcesses.keys();
-		yield* this.recentlyExitedAgentRootPids;
+		yield* this.recentlyExitedAgentRootPids.keys();
 	}
 
-	terminateTrackedAgentProcesses(options?: { forceDelayMs?: number }): void {
+	snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]> {
+		return [...this.trackedAgentProcesses];
+	}
+
+	terminateTrackedAgentProcesses(options?: {
+		forceDelayMs?: number;
+		processes?: Array<[number, TrackedAgentProcess]>;
+	}): void {
 		const forceDelayMs = options?.forceDelayMs ?? 2000;
-		const processSnapshot = [...this.trackedAgentProcesses];
+		const processSnapshot = options?.processes ?? [...this.trackedAgentProcesses];
 		if (processSnapshot.length === 0) return;
 
 		this.signalTrackedAgentProcesses(processSnapshot, 'SIGTERM');
 		for (const [pid, proc] of processSnapshot) {
+			if (this.trackedAgentProcesses.get(pid) !== proc) continue;
 			this.clearForceKillTimer(pid);
 			this.scheduleForceKill(pid, proc, forceDelayMs);
 		}
@@ -1310,7 +1328,9 @@ export class AgentSession
 			const signaled = this.signalTrackedAgentProcess(pid, proc, signal);
 			if (signal === 'SIGKILL' && signaled && this.trackedAgentProcesses.get(pid) === proc) {
 				this.trackedAgentProcesses.delete(pid);
-				this.recentlyExitedAgentRootPids.add(pid);
+				this.trackedAgentProcessExitPromises.delete(pid);
+				this.recentlyExitedAgentRootPids.set(pid, Date.now());
+				this.updateProcessExitedPromise();
 			}
 		}
 	}
@@ -1329,6 +1349,20 @@ export class AgentSession
 		} catch {
 			// Child may have already exited.
 			return false;
+		}
+	}
+
+	private updateProcessExitedPromise(): void {
+		const exitPromises = [...this.trackedAgentProcessExitPromises.values()];
+		this.processExitedPromise =
+			exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
+	}
+
+	private expireRecentlyExitedAgentRootPids(now = Date.now()): void {
+		for (const [pid, exitedAt] of this.recentlyExitedAgentRootPids) {
+			if (now - exitedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
+				this.recentlyExitedAgentRootPids.delete(pid);
+			}
 		}
 	}
 

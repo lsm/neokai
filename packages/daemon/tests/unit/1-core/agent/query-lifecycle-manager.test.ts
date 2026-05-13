@@ -46,6 +46,7 @@ describe('QueryLifecycleManager', () => {
 	let handleErrorSpy: ReturnType<typeof mock>;
 	let clearModelsCacheSpy: ReturnType<typeof mock>;
 	let terminateTrackedAgentProcessesSpy: ReturnType<typeof mock>;
+	let snapshotTrackedAgentProcessesSpy: ReturnType<typeof mock>;
 	let internalPublishAsyncSpy: ReturnType<typeof mock>;
 	let internalPublishSpy: ReturnType<typeof mock>;
 
@@ -91,6 +92,7 @@ describe('QueryLifecycleManager', () => {
 		handleErrorSpy = mock(async () => {});
 		clearModelsCacheSpy = mock(async () => {});
 		terminateTrackedAgentProcessesSpy = mock(() => {});
+		snapshotTrackedAgentProcessesSpy = mock(() => []);
 		internalPublishAsyncSpy = mock(async () => {});
 		internalPublishSpy = mock(async () => {});
 
@@ -142,6 +144,7 @@ describe('QueryLifecycleManager', () => {
 			startupTimeoutTimer: null,
 			queryAbortController: null,
 			terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,
+			snapshotTrackedAgentProcesses: snapshotTrackedAgentProcessesSpy,
 			// Cleanup support methods
 			setCleaningUp: mock(() => {}),
 			cleanupEventSubscriptions: mock(() => {}),
@@ -286,7 +289,10 @@ describe('QueryLifecycleManager', () => {
 
 			await manager.stop();
 
-			expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({ forceDelayMs: 2000 });
+			expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({
+				forceDelayMs: 2000,
+				processes: [],
+			});
 			expect(closeMock).toHaveBeenCalled();
 			expect(terminateTrackedAgentProcessesSpy.mock.invocationCallOrder[0]).toBeLessThan(
 				closeMock.mock.invocationCallOrder[0]

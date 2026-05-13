@@ -66,7 +66,11 @@ export interface QueryLifecycleManagerContext {
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	/** Abort controller for the current query — must be cleared during stop(). */
 	queryAbortController: AbortController | null;
-	terminateTrackedAgentProcesses(options?: { forceDelayMs?: number }): void;
+	terminateTrackedAgentProcesses(options?: {
+		forceDelayMs?: number;
+		processes?: Array<[number, import('./query-runner').TrackedAgentProcess]>;
+	}): void;
+	snapshotTrackedAgentProcesses(): Array<[number, import('./query-runner').TrackedAgentProcess]>;
 
 	// Mutable session state
 	pendingRestartReason: 'settings.local.json' | null;
@@ -229,6 +233,9 @@ export class QueryLifecycleManager {
 		// Snapshot BEFORE awaiting — runQuery()'s finally block clears ctx.processExitedPromise
 		// during queryPromise settlement, so capture it here while it's still set.
 		const processExitedPromise = this.ctx.processExitedPromise;
+		// Snapshot tracked processes before awaiting so that terminateTrackedAgentProcesses
+		// only signals processes belonging to THIS query, not a concurrently started new one.
+		const trackedProcessSnapshot = this.ctx.snapshotTrackedAgentProcesses();
 
 		// 1. Stop the message queue (no new messages processed)
 		messageQueue.stop();
@@ -270,7 +277,10 @@ export class QueryLifecycleManager {
 		// 4. Ask the tracked SDK process group to terminate. queryObject.close()
 		// kills the direct SDK child, but detached process-group cleanup also reaches
 		// tool grandchildren (bun test, make dev, etc.) that would otherwise survive.
-		this.ctx.terminateTrackedAgentProcesses({ forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS });
+		this.ctx.terminateTrackedAgentProcesses({
+			forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
+			processes: trackedProcessSnapshot,
+		});
 
 		// 5. Close query only if runQuery()'s finally block has not already done so.
 		// When queryPromise resolves normally, the finally block ran during the await
