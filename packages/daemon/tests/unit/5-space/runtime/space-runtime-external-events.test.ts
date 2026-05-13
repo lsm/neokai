@@ -912,6 +912,60 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 
+	test('does not register downstream interests before node execution exists', async () => {
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: `Workflow ${Math.random()}`,
+			description: '',
+			nodes: [
+				{
+					id: 'code',
+					name: 'Code',
+					agents: [{ agentId: AGENT_ID, name: 'coder' }],
+				},
+				{
+					id: 'review',
+					name: 'Review',
+					agents: [
+						{
+							agentId: AGENT_ID,
+							name: 'reviewer',
+							eventInterests: [{ topic: 'github/*/*/pull_request.review_*' }],
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'code',
+			endNodeId: 'review',
+			rules: [],
+			tags: [],
+		});
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const task = taskRepo.listByWorkflowRun(run.id)[0]!;
+
+		await runtime.executeTick();
+		const earlyEvent = makeEvent({ id: 'evt-downstream-before-activation' });
+		await eventService.publish(earlyEvent);
+		expect(eventStore.getById(earlyEvent.id)?.state).toBe('ignored');
+		expect(eventStore.listDeliveries(earlyEvent.id)).toHaveLength(0);
+
+		nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'review',
+			agentName: 'reviewer',
+			agentId: AGENT_ID,
+			status: 'pending',
+		});
+		runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+		const activatedEvent = makeEvent({ id: 'evt-downstream-after-activation' });
+		await eventService.publish(activatedEvent);
+
+		const delivery = eventStore.listDeliveries(activatedEvent.id)[0]!;
+		expect(delivery.state).toBe('pending');
+		expect(delivery.nodeId).toBe('review');
+	});
+
 	test('registers all matching deliveries before successful delivery terminalizes source event', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
