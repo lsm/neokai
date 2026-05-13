@@ -33,7 +33,7 @@ describe('process-watchdog', () => {
 				},
 			],
 			killProcess,
-			getRootPids: () => [100],
+			getRootPids: () => ({ live: [100], exited: [] }),
 		});
 
 		expect(killed).toBe(1);
@@ -53,7 +53,7 @@ describe('process-watchdog', () => {
 				},
 			],
 			killProcess,
-			getRootPids: () => [100],
+			getRootPids: () => ({ live: [100], exited: [] }),
 		});
 
 		expect(killed).toBe(0);
@@ -73,7 +73,7 @@ describe('process-watchdog', () => {
 				},
 			],
 			killProcess,
-			getRootPids: () => [100],
+			getRootPids: () => ({ live: [100], exited: [] }),
 		});
 
 		expect(killed).toBe(0);
@@ -99,7 +99,7 @@ describe('process-watchdog', () => {
 				},
 			],
 			killProcess,
-			getRootPids: () => [100],
+			getRootPids: () => ({ live: [100], exited: [] }),
 		});
 
 		expect(killed).toBe(0);
@@ -119,7 +119,7 @@ describe('process-watchdog', () => {
 				},
 			],
 			killProcess,
-			getRootPids: () => [],
+			getRootPids: () => ({ live: [], exited: [] }),
 		});
 
 		expect(killed).toBe(0);
@@ -134,7 +134,8 @@ describe('process-watchdog', () => {
 				{ pid: 102, ppid: 101, pgid: 100, elapsedSeconds: 1, command: 'grandchild' },
 				{ pid: 200, ppid: 1, pgid: 200, elapsedSeconds: 1, command: 'other' },
 			],
-			new Set([100])
+			new Set([100]),
+			new Set()
 		);
 
 		expect(descendants).toEqual(new Set([100, 101, 102]));
@@ -161,7 +162,7 @@ describe('process-watchdog', () => {
 				},
 			],
 			killProcess,
-			getRootPids: () => [100],
+			getRootPids: () => ({ live: [], exited: [100] }),
 		});
 
 		expect(killed).toBe(1);
@@ -184,6 +185,33 @@ describe('process-watchdog', () => {
 			{ pid: 123, ppid: 1, pgid: 123, elapsedSeconds: 3723, command: 'bun test foo.test.ts' },
 			{ pid: 456, ppid: 123, pgid: 123, elapsedSeconds: 183845, command: 'make dev' },
 		]);
+	});
+
+	test('skips reused exited root PIDs in descendant collection', () => {
+		// PID 100 was a daemon root that exited. PID 100 is now reused by an unrelated process.
+		const descendants = collectDescendantPids(
+			[
+				{ pid: 100, ppid: 1, pgid: 999, elapsedSeconds: 1, command: 'other' },
+				{ pid: 200, ppid: 1, pgid: 999, elapsedSeconds: 1, command: 'child' },
+			],
+			new Set(), // no live roots
+			new Set([100]) // exited root
+		);
+
+		// PID 100 appears in snapshot (reused) — should NOT be treated as owned.
+		// PID 200 shares PGID 999 (unrelated group) — should NOT be found via the exited root.
+		expect(descendants).toEqual(new Set());
+	});
+
+	test('finds orphaned children via exited root PGID when root is not reused', () => {
+		// PID 100 exited and is NOT in the snapshot. Orphaned child PID 200 shares PGID 100.
+		const descendants = collectDescendantPids(
+			[{ pid: 200, ppid: 1, pgid: 100, elapsedSeconds: 1, command: 'orphaned-child' }],
+			new Set(), // no live roots
+			new Set([100]) // exited root
+		);
+
+		expect(descendants).toEqual(new Set([200]));
 	});
 
 	test('starts only one interval and stops it', async () => {

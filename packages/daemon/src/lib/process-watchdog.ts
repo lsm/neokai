@@ -15,7 +15,7 @@ export interface ProcessSnapshot {
 
 export type ProcessLister = () => Promise<ProcessSnapshot[]>;
 export type ProcessKiller = (pid: number, signal: NodeJS.Signals) => void;
-export type RootPidProvider = () => Iterable<number>;
+export type RootPidProvider = () => { live: Iterable<number>; exited: Iterable<number> };
 
 const SUSPICIOUS_THRESHOLDS = [
 	{ pattern: /\bbun\s+test\b/, thresholdMs: 15 * 60 * 1000 },
@@ -100,11 +100,15 @@ export async function cleanupSuspiciousProcesses(options?: {
 }): Promise<number> {
 	const lister = options?.listProcesses ?? listProcesses;
 	const killer = options?.killProcess ?? ((pid, signal) => process.kill(pid, signal));
-	const rootPids = new Set(options?.getRootPids ? [...options.getRootPids()] : []);
-	if (rootPids.size === 0) return 0;
+	const rootResult = options?.getRootPids
+		? options.getRootPids()
+		: { live: [] as number[], exited: [] as number[] };
+	const liveRoots = new Set(rootResult.live);
+	const exitedRoots = new Set(rootResult.exited);
+	if (liveRoots.size === 0 && exitedRoots.size === 0) return 0;
 
 	const snapshots = await lister();
-	const ownedPids = collectDescendantPids(snapshots, rootPids);
+	const ownedPids = collectDescendantPids(snapshots, liveRoots, exitedRoots);
 	let killed = 0;
 
 	for (const snapshot of snapshots) {
@@ -134,11 +138,14 @@ export async function cleanupSuspiciousProcesses(options?: {
 
 export function collectDescendantPids(
 	snapshots: ProcessSnapshot[],
-	rootPids: ReadonlySet<number>
+	liveRootPids: ReadonlySet<number>,
+	exitedRootPids?: ReadonlySet<number>
 ): Set<number> {
 	const childrenByParent = new Map<number, number[]>();
 	const processesByGroup = new Map<number, number[]>();
+	const snapshotPids = new Set<number>();
 	for (const snapshot of snapshots) {
+		snapshotPids.add(snapshot.pid);
 		const children = childrenByParent.get(snapshot.ppid) ?? [];
 		children.push(snapshot.pid);
 		childrenByParent.set(snapshot.ppid, children);
@@ -151,7 +158,25 @@ export function collectDescendantPids(
 	}
 
 	const owned = new Set<number>();
-	const queue = [...rootPids];
+	const queue: number[] = [];
+
+	// Live roots that exist in the snapshot — traverse normally (parent-child + PGID).
+	for (const pid of liveRootPids) {
+		if (snapshotPids.has(pid)) {
+			queue.push(pid);
+		}
+	}
+
+	// Exited roots: discover orphaned children via PGID only.
+	// If an exited root PID appears in the snapshot it was reused by an unrelated
+	// process — skip it to avoid cross-process kills.
+	const effectiveExited = exitedRootPids ?? new Set<number>();
+	for (const pid of effectiveExited) {
+		if (snapshotPids.has(pid)) continue;
+		const groupMembers = processesByGroup.get(pid);
+		if (groupMembers) queue.push(...groupMembers);
+	}
+
 	while (queue.length > 0) {
 		const pid = queue.shift()!;
 		if (owned.has(pid)) continue;

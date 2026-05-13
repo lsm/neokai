@@ -1274,6 +1274,14 @@ export class AgentSession
 		yield* this.recentlyExitedAgentRootPids.keys();
 	}
 
+	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
+		this.expireRecentlyExitedAgentRootPids();
+		return {
+			live: [...this.trackedAgentProcesses.keys()],
+			exited: [...this.recentlyExitedAgentRootPids.keys()],
+		};
+	}
+
 	snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]> {
 		return [...this.trackedAgentProcesses];
 	}
@@ -1314,7 +1322,12 @@ export class AgentSession
 		processes: Array<[number, TrackedAgentProcess]>,
 		signal: NodeJS.Signals
 	): void {
-		for (const [pid] of processes) {
+		for (const [pid, proc] of processes) {
+			// Ownership guard: skip stale snapshot entries where the PID no longer
+			// maps to the same process object (e.g. child exited + PID reused).
+			if (this.trackedAgentProcesses.get(pid) !== proc) continue;
+
+			// Signal the entire process group (reaches tool grandchildren).
 			if (process.platform !== 'win32' && pid > 0) {
 				try {
 					process.kill(-pid, signal);
@@ -1322,11 +1335,10 @@ export class AgentSession
 					// Process group may have already exited.
 				}
 			}
-		}
 
-		for (const [pid, proc] of processes) {
+			// Direct signal to the tracked child.
 			const signaled = this.signalTrackedAgentProcess(pid, proc, signal);
-			if (signal === 'SIGKILL' && signaled && this.trackedAgentProcesses.get(pid) === proc) {
+			if (signal === 'SIGKILL' && signaled) {
 				this.trackedAgentProcesses.delete(pid);
 				this.trackedAgentProcessExitPromises.delete(pid);
 				this.recentlyExitedAgentRootPids.set(pid, Date.now());

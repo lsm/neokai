@@ -190,10 +190,25 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	let taskAgentManager: TaskAgentManager | null = null;
 	const processWatchdog = new ProcessWatchdog(undefined, () =>
 		cleanupSuspiciousProcesses({
-			getRootPids: function* () {
-				if (sessionManager) yield* sessionManager.getTrackedAgentRootPids();
-				if (neoAgentManager) yield* neoAgentManager.getTrackedAgentRootPids();
-				if (taskAgentManager) yield* taskAgentManager.getTrackedAgentRootPids();
+			getRootPids: () => {
+				const live: number[] = [];
+				const exited: number[] = [];
+				if (sessionManager) {
+					const split = sessionManager.getTrackedAgentRootPidsSplit();
+					live.push(...split.live);
+					exited.push(...split.exited);
+				}
+				if (neoAgentManager) {
+					const split = neoAgentManager.getTrackedAgentRootPidsSplit();
+					live.push(...split.live);
+					exited.push(...split.exited);
+				}
+				if (taskAgentManager) {
+					const split = taskAgentManager.getTrackedAgentRootPidsSplit();
+					live.push(...split.live);
+					exited.push(...split.exited);
+				}
+				return { live, exited };
 			},
 		})
 	);
