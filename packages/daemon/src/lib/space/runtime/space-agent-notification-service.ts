@@ -42,6 +42,15 @@ export interface SpaceAgentNotificationServiceConfig {
 	 * Defaults to `1` (most supervised) if not provided.
 	 */
 	autonomyLevel?: SpaceAutonomyLevel;
+	/**
+	 * Notify after N consecutive auto-completions for the same task.
+	 * Auto-completions below this threshold are silently retried without
+	 * notifying the space agent. Once the threshold is reached, a single
+	 * notification is sent and the counter is reset.
+	 *
+	 * Defaults to `3`.
+	 */
+	notifyThreshold?: number;
 }
 
 /**
@@ -54,7 +63,15 @@ export class SpaceAgentNotificationService {
 	private readonly sessionId: string;
 	private readonly spaceId: string;
 	private readonly autonomyLevel: SpaceAutonomyLevel;
+	private readonly notifyThreshold: number;
 	private unsubscribers: Array<() => void> = [];
+	/**
+	 * Tracks consecutive auto-completions per task. Keyed by taskId.
+	 * Incremented on each `space.agent.autoCompleted` for the same task.
+	 * Reset when the threshold is reached (after notification) or when the
+	 * task completes successfully.
+	 */
+	private autoCompletedCounts = new Map<string, number>();
 
 	constructor(config: SpaceAgentNotificationServiceConfig) {
 		this.internalEventBus = config.internalEventBus;
@@ -62,6 +79,7 @@ export class SpaceAgentNotificationService {
 		this.sessionId = config.sessionId;
 		this.spaceId = config.spaceId;
 		this.autonomyLevel = config.autonomyLevel ?? 1;
+		this.notifyThreshold = config.notifyThreshold ?? 3;
 	}
 
 	/**
@@ -129,7 +147,14 @@ export class SpaceAgentNotificationService {
 				'space.agent.autoCompleted',
 				(event) => {
 					if (event.spaceId !== this.spaceId) return;
-					void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel));
+					const count = (this.autoCompletedCounts.get(event.taskId) ?? 0) + 1;
+					this.autoCompletedCounts.set(event.taskId, count);
+
+					if (count >= this.notifyThreshold) {
+						// Reset counter after notifying (prevents repeated notifications for same loop)
+						this.autoCompletedCounts.delete(event.taskId);
+						void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel, count));
+					}
 				},
 				{
 					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.agent.autoCompleted`,
@@ -181,6 +206,21 @@ export class SpaceAgentNotificationService {
 					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.awaitingApproval`,
 				}
 			),
+			// When a task reaches a terminal state (done or cancelled), clear its
+			// auto-completion counter so the next cycle starts fresh. This prevents
+			// a successfully-completed task from carrying a stale counter forward.
+			this.internalEventBus.subscribe(
+				'space.task.updated',
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					if (event.task.status === 'done' || event.task.status === 'cancelled') {
+						this.autoCompletedCounts.delete(event.taskId);
+					}
+				},
+				{
+					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.updated`,
+				}
+			),
 		];
 
 		return () => {
@@ -188,6 +228,7 @@ export class SpaceAgentNotificationService {
 				unsub();
 			}
 			this.unsubscribers = [];
+			this.autoCompletedCounts.clear();
 		};
 	}
 
@@ -342,17 +383,22 @@ function formatAgentAutoCompleted(
 		elapsedMs: number;
 		timestamp: string;
 	},
-	autonomyLevel: SpaceAutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel,
+	consecutiveCount: number
 ): string {
 	const elapsedMinutes = Math.round(event.elapsedMs / 60_000);
+	const totalEstimatedMinutes = elapsedMinutes * consecutiveCount;
 	const humanReadable =
-		`Task ${event.taskId} in space ${event.spaceId} was auto-completed after ${elapsedMinutes} minute(s) ` +
-		`because the agent did not set task.reportedStatus within the configured timeout.`;
+		`Task ${event.taskId} in space ${event.spaceId} has timed out ${consecutiveCount} consecutive time(s) ` +
+		`(total ~${totalEstimatedMinutes} minutes of execution). ` +
+		`The task appears stuck in a retry loop without making progress.`;
 	return buildMessage('agent_auto_completed', humanReadable, {
 		kind: 'agent_auto_completed',
 		spaceId: event.spaceId,
 		taskId: event.taskId,
 		elapsedMs: event.elapsedMs,
+		consecutiveCount,
+		totalEstimatedMinutes,
 		timestamp: event.timestamp,
 		autonomyLevel,
 	});
