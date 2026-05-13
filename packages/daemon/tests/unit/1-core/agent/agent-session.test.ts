@@ -318,7 +318,75 @@ describe('AgentSession', () => {
 
 			expect(firstProc.kill).toHaveBeenCalledWith('SIGKILL');
 			expect(secondProc.kill).not.toHaveBeenCalledWith('SIGKILL');
-			expect([...agentSession.getTrackedAgentRootPids()]).toEqual([222]);
+			expect([...agentSession.getTrackedAgentRootPids()]).toEqual([222, 111]);
+		});
+
+		it('keeps SIGKILL escalation for remaining processes when one exits', async () => {
+			const agentSession = createAgentSession();
+			processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);
+			let firstExitHandler: (() => void) | null = null;
+			const firstProc = {
+				pid: 111,
+				once: mock((_event: string, handler: () => void) => {
+					firstExitHandler = handler;
+					return firstProc;
+				}),
+				kill: mock(() => true),
+			};
+			const secondProc = {
+				pid: 222,
+				once: mock((_event: string, _handler: () => void) => secondProc),
+				kill: mock(() => true),
+			};
+
+			agentSession.trackAgentProcess(firstProc as never);
+			agentSession.trackAgentProcess(secondProc as never);
+			agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 15 });
+			firstExitHandler?.();
+
+			await new Promise((resolve) => setTimeout(resolve, 30));
+
+			expect(secondProc.kill).toHaveBeenCalledWith('SIGKILL');
+		});
+
+		it('signals each tracked process group in the stop snapshot', () => {
+			const agentSession = createAgentSession();
+			processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);
+			const firstProc = {
+				pid: 111,
+				once: mock((_event: string, _handler: () => void) => firstProc),
+				kill: mock(() => true),
+			};
+			const secondProc = {
+				pid: 222,
+				once: mock((_event: string, _handler: () => void) => secondProc),
+				kill: mock(() => true),
+			};
+
+			agentSession.trackAgentProcess(firstProc as never);
+			agentSession.trackAgentProcess(secondProc as never);
+			agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 50 });
+
+			expect(processKillSpy).toHaveBeenCalledWith(-111, 'SIGTERM');
+			expect(processKillSpy).toHaveBeenCalledWith(-222, 'SIGTERM');
+		});
+
+		it('keeps failed SIGKILL deliveries tracked for later cleanup', async () => {
+			const agentSession = createAgentSession();
+			processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);
+			const proc = {
+				pid: 333,
+				once: mock((_event: string, _handler: () => void) => proc),
+				kill: mock((signal: NodeJS.Signals) => signal !== 'SIGKILL'),
+			};
+
+			agentSession.trackAgentProcess(proc as never);
+			agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10 });
+
+			await new Promise((resolve) => setTimeout(resolve, 25));
+
+			expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+			expect([...agentSession.getTrackedAgentRootPids()]).toEqual([333]);
 		});
 	});
 

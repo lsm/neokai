@@ -129,15 +129,43 @@ describe('process-watchdog', () => {
 	test('collects descendants recursively from daemon root pids', () => {
 		const descendants = collectDescendantPids(
 			[
-				{ pid: 100, ppid: 1, elapsedSeconds: 1, command: 'root' },
-				{ pid: 101, ppid: 100, elapsedSeconds: 1, command: 'child' },
-				{ pid: 102, ppid: 101, elapsedSeconds: 1, command: 'grandchild' },
-				{ pid: 200, ppid: 1, elapsedSeconds: 1, command: 'other' },
+				{ pid: 100, ppid: 1, pgid: 100, elapsedSeconds: 1, command: 'root' },
+				{ pid: 101, ppid: 100, pgid: 100, elapsedSeconds: 1, command: 'child' },
+				{ pid: 102, ppid: 101, pgid: 100, elapsedSeconds: 1, command: 'grandchild' },
+				{ pid: 200, ppid: 1, pgid: 200, elapsedSeconds: 1, command: 'other' },
 			],
 			new Set([100])
 		);
 
 		expect(descendants).toEqual(new Set([100, 101, 102]));
+	});
+
+	test('retains ownership for orphaned processes in a recently exited root process group', async () => {
+		const killProcess = mock(() => {});
+
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 321,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/orphaned.test.ts',
+				},
+				{
+					pid: 999,
+					ppid: 1,
+					pgid: 999,
+					elapsedSeconds: 16 * 60,
+					command: 'bun test unrelated.test.ts',
+				},
+			],
+			killProcess,
+			getRootPids: () => [100],
+		});
+
+		expect(killed).toBe(1);
+		expect(killProcess).toHaveBeenCalledWith(321, 'SIGTERM');
 	});
 
 	test('parses BSD ps elapsed durations', () => {
@@ -148,13 +176,13 @@ describe('process-watchdog', () => {
 
 	test('parses process list output with BSD duration elapsed field', () => {
 		const processes = parseProcessList(
-			'  123     1 01:02:03 bun test foo.test.ts\n  456   123 2-03:04:05 make dev\n',
+			'  123     1   123 01:02:03 bun test foo.test.ts\n  456   123   123 2-03:04:05 make dev\n',
 			'duration'
 		);
 
 		expect(processes).toEqual([
-			{ pid: 123, ppid: 1, elapsedSeconds: 3723, command: 'bun test foo.test.ts' },
-			{ pid: 456, ppid: 123, elapsedSeconds: 183845, command: 'make dev' },
+			{ pid: 123, ppid: 1, pgid: 123, elapsedSeconds: 3723, command: 'bun test foo.test.ts' },
+			{ pid: 456, ppid: 123, pgid: 123, elapsedSeconds: 183845, command: 'make dev' },
 		]);
 	});
 

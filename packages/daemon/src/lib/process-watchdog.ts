@@ -8,6 +8,7 @@ const logger = new Logger('ProcessWatchdog');
 export interface ProcessSnapshot {
 	pid: number;
 	ppid: number;
+	pgid?: number;
 	elapsedSeconds: number;
 	command: string;
 }
@@ -27,13 +28,13 @@ export async function listProcesses(): Promise<ProcessSnapshot[]> {
 	if (process.platform === 'win32') return [];
 
 	if (usesBsdPsElapsedFormat()) {
-		const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,etime=,command='], {
+		const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,pgid=,etime=,command='], {
 			maxBuffer: 1024 * 1024,
 		});
 		return parseProcessList(stdout, 'duration');
 	}
 
-	const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,etimes=,command='], {
+	const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,pgid=,etimes=,command='], {
 		maxBuffer: 1024 * 1024,
 	});
 	return parseProcessList(stdout, 'seconds');
@@ -56,9 +57,9 @@ export function parseProcessList(
 		.map((line) => line.trim())
 		.filter(Boolean)
 		.flatMap((line): ProcessSnapshot[] => {
-			const match = line.match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
+			const match = line.match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
 			if (!match) return [];
-			const [, pidRaw, ppidRaw, elapsedRaw, command] = match;
+			const [, pidRaw, ppidRaw, pgidRaw, elapsedRaw, command] = match;
 			const elapsedSeconds =
 				elapsedFormat === 'seconds' ? Number(elapsedRaw) : parsePsElapsedDuration(elapsedRaw);
 			if (!Number.isFinite(elapsedSeconds)) return [];
@@ -66,6 +67,7 @@ export function parseProcessList(
 				{
 					pid: Number(pidRaw),
 					ppid: Number(ppidRaw),
+					pgid: Number(pgidRaw),
 					elapsedSeconds,
 					command,
 				},
@@ -135,10 +137,17 @@ export function collectDescendantPids(
 	rootPids: ReadonlySet<number>
 ): Set<number> {
 	const childrenByParent = new Map<number, number[]>();
+	const processesByGroup = new Map<number, number[]>();
 	for (const snapshot of snapshots) {
 		const children = childrenByParent.get(snapshot.ppid) ?? [];
 		children.push(snapshot.pid);
 		childrenByParent.set(snapshot.ppid, children);
+
+		if (typeof snapshot.pgid === 'number' && Number.isFinite(snapshot.pgid)) {
+			const groupProcesses = processesByGroup.get(snapshot.pgid) ?? [];
+			groupProcesses.push(snapshot.pid);
+			processesByGroup.set(snapshot.pgid, groupProcesses);
+		}
 	}
 
 	const owned = new Set<number>();
@@ -148,6 +157,7 @@ export function collectDescendantPids(
 		if (owned.has(pid)) continue;
 		owned.add(pid);
 		queue.push(...(childrenByParent.get(pid) ?? []));
+		queue.push(...(processesByGroup.get(pid) ?? []));
 	}
 	return owned;
 }
