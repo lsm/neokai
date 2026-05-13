@@ -37,3 +37,4 @@ export {
 	type ExternalEventPublishedPayload,
 } from './external-event-service';
 export { TopicTrie, isReceivingStatus } from './topic-trie';
+export { normalizeGitHubLiteralTopic } from './topic-validator';

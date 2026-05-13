@@ -217,24 +217,42 @@ function validateGitHubLiteralTopic(topic: string): ValidationResult {
 }
 
 /**
+ * Normalize a legacy 4-segment GitHub topic to 5-segment format.
+ * Converts: github/owner/repo/resource.action → github/owner/repo/resource/0.action
+ * Uses 0 as a placeholder entity ID for legacy events.
+ */
+export function normalizeGitHubLiteralTopic(topic: string): string {
+	const segments = topic.split('/');
+	if (segments.length === 5) {
+		return topic; // Already 5-segment
+	}
+	if (segments.length === 4 && segments[0] === 'github') {
+		const [source, owner, repo, resourceAction] = segments;
+		const [resource, action] = resourceAction.split('.');
+		return `${source}/${owner}/${repo}/${resource}/0.${action}`;
+	}
+	return topic; // Not a GitHub legacy topic, return as-is
+}
+
+/**
  * Validate GitHub subscription pattern structure.
- * GitHub patterns use either 4 segments (legacy) or 5 segments (current):
- * - Legacy: {source}/{scope1}/{scope2}/{resource.action}
- * - Current: {source}/{scope1}/{scope2}/{resource}/{entityId.action}
- *
- * Both formats are accepted during the migration period.
+ * GitHub patterns must have exactly 5 segments (current format).
+ * Legacy 4-segment patterns are rejected with migration guidance.
  */
 function validateGitHubSubscriptionPattern(pattern: string): ValidationResult {
 	const segments = pattern.split('/');
 
-	// Accept both 4-segment (legacy) and 5-segment (current) formats
-	if (segments.length !== 4 && segments.length !== 5) {
+	// Only accept 5-segment patterns for subscriptions
+	// Legacy 4-segment patterns must be migrated to 5-segment format
+	if (segments.length !== 5) {
 		return {
 			valid: false,
 			reason:
-				`GitHub subscription pattern must have 4 or 5 segments ` +
-				`(source/scope1/scope2/resource.action or source/scope1/scope2/resource/entityId.action); got ${segments.length}. ` +
-				`Examples: 'github/*/*/pull_request.*' or 'github/*/*/pull_request/*.*'`,
+				`GitHub subscription pattern must have exactly 5 segments ` +
+				`(source/owner/repo/resource/entityId.action); got ${segments.length}. ` +
+				`Legacy 4-segment patterns are no longer supported. ` +
+				`Migrate to: github/owner/repo/resource/0.* (with 0 as placeholder entity ID). ` +
+				`Example: 'github/*/*/pull_request/*.*'`,
 		};
 	}
 
