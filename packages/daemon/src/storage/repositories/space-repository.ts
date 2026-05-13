@@ -169,6 +169,13 @@ export class SpaceRepository {
 		if (params.config !== undefined) {
 			fields.push('config = ?');
 			values.push(JSON.stringify(params.config));
+			if (
+				params.maxConcurrentTasks === undefined &&
+				params.config?.maxConcurrentTasks !== undefined
+			) {
+				fields.push('max_concurrent_tasks = ?');
+				values.push(params.config.maxConcurrentTasks);
+			}
 		}
 		if (params.taskAgentConfig !== undefined) {
 			fields.push('task_agent_config = ?');

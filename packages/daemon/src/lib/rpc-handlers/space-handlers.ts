@@ -11,7 +11,11 @@
  * - space.overview - Get a Space with tasks, workflowRuns, and sessions
  */
 
-import type { MessageHub } from '@neokai/shared';
+import {
+	MAX_SPACE_CONCURRENT_TASKS,
+	MIN_SPACE_CONCURRENT_TASKS,
+	type MessageHub,
+} from '@neokai/shared';
 import type {
 	Space,
 	SpaceCreateResult,
@@ -35,8 +39,6 @@ import { Logger } from '../logger';
 
 const log = new Logger('space-handlers');
 const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
-const MIN_CONCURRENT_TASKS = 1;
-const MAX_CONCURRENT_TASKS = 10;
 
 export interface SpaceOverviewResult {
 	space: Space;
@@ -48,12 +50,12 @@ export interface SpaceOverviewResult {
 function validateConcurrentLimit(limit: unknown): number {
 	if (typeof limit !== 'number' || !Number.isInteger(limit)) {
 		throw new Error(
-			`Invalid concurrent task limit: ${String(limit)}. Must be an integer between ${MIN_CONCURRENT_TASKS} and ${MAX_CONCURRENT_TASKS}`
+			`Invalid concurrent task limit: ${String(limit)}. Must be an integer between ${MIN_SPACE_CONCURRENT_TASKS} and ${MAX_SPACE_CONCURRENT_TASKS}`
 		);
 	}
-	if (limit < MIN_CONCURRENT_TASKS || limit > MAX_CONCURRENT_TASKS) {
+	if (limit < MIN_SPACE_CONCURRENT_TASKS || limit > MAX_SPACE_CONCURRENT_TASKS) {
 		throw new Error(
-			`Invalid concurrent task limit: ${String(limit)}. Must be an integer between ${MIN_CONCURRENT_TASKS} and ${MAX_CONCURRENT_TASKS}`
+			`Invalid concurrent task limit: ${String(limit)}. Must be an integer between ${MIN_SPACE_CONCURRENT_TASKS} and ${MAX_SPACE_CONCURRENT_TASKS}`
 		);
 	}
 	return limit;
@@ -134,6 +136,7 @@ export function setupSpaceHandlers(
 		if (params.maxConcurrentTasks !== undefined) {
 			params.maxConcurrentTasks = validateConcurrentLimit(params.maxConcurrentTasks);
 		}
+		// TODO: Drop this deprecated config path after older clients send only top-level maxConcurrentTasks.
 		if (params.config?.maxConcurrentTasks !== undefined) {
 			params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
 		}
@@ -293,6 +296,7 @@ export function setupSpaceHandlers(
 		if (params.maxConcurrentTasks !== undefined) {
 			params.maxConcurrentTasks = validateConcurrentLimit(params.maxConcurrentTasks);
 		}
+		// TODO: Drop this deprecated config path after older clients send only top-level maxConcurrentTasks.
 		if (params.config?.maxConcurrentTasks !== undefined) {
 			params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
 		}
@@ -320,9 +324,6 @@ export function setupSpaceHandlers(
 
 		const limit = validateConcurrentLimit(params.limit);
 		const space = await spaceManager.updateSpace(spaceId, { maxConcurrentTasks: limit });
-		if (!space) {
-			throw new Error(`Space not found: ${spaceId}`);
-		}
 
 		internalEventBus
 			.publish('space.updated', { sessionId: 'global', spaceId, space })

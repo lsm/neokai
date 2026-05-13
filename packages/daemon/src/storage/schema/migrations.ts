@@ -8807,13 +8807,6 @@ export function runMigration127(db: BunDatabase): void {
  * settings, with a cascading FK to spaces so deleting a space removes its
  * extension configuration.
  */
-export function runMigration129(db: BunDatabase): void {
-	if (!tableExists(db, 'spaces')) return;
-	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
-
-	db.exec(`ALTER TABLE spaces ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 1`);
-}
-
 export function runMigration128(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS external_event_source_configs (
@@ -8838,6 +8831,26 @@ export function runMigration128(db: BunDatabase): void {
 			PRIMARY KEY(space_id, source),
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
+	`);
+}
+
+/**
+ * Migration 129: Add per-space concurrent task execution limit.
+ *
+ * Backfills from legacy config.maxConcurrentTasks when present and valid, otherwise
+ * defaults to 1. This preserves legacy SpaceConfig-based limits during upgrade.
+ */
+export function runMigration129(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
+
+	db.exec(`ALTER TABLE spaces ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 1`);
+	db.exec(`
+		UPDATE spaces
+		SET max_concurrent_tasks = CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER)
+		WHERE config IS NOT NULL
+		  AND json_type(config, '$.maxConcurrentTasks') IN ('integer', 'real')
+		  AND CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER) BETWEEN 1 AND 10
 	`);
 }
 

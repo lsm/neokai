@@ -30,6 +30,9 @@ export type SpaceStatus = 'active' | 'archived';
  */
 export type SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5;
 
+export const MIN_SPACE_CONCURRENT_TASKS = 1;
+export const MAX_SPACE_CONCURRENT_TASKS = 10;
+
 /**
  * Who approved a task or gate — used for audit trail tracking.
  *

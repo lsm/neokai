@@ -1264,6 +1264,39 @@ describe('SpaceRuntime', () => {
 			expect(taskRepo.getTask(prerequisite.id)!.status).toBe('in_progress');
 			expect(taskRepo.getTask(dependent.id)!.status).toBe('open');
 		});
+
+		test('starts lower-priority ready tasks when higher-priority dependencies are unmet', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Work', agentId: AGENT_CODER },
+			]);
+
+			const blocker = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Blocker',
+				status: 'blocked',
+				preferredWorkflowId: workflow.id,
+			});
+			const urgentBlocked = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Urgent blocked',
+				status: 'open',
+				priority: 'urgent',
+				dependsOn: [blocker.id],
+				preferredWorkflowId: workflow.id,
+			});
+			const normalReady = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Normal ready',
+				status: 'open',
+				priority: 'normal',
+				preferredWorkflowId: workflow.id,
+			});
+
+			await runtime.executeTick();
+
+			expect(taskRepo.getTask(urgentBlocked.id)!.status).toBe('open');
+			expect(taskRepo.getTask(normalReady.id)!.status).toBe('in_progress');
+		});
 	});
 
 	// -------------------------------------------------------------------------
