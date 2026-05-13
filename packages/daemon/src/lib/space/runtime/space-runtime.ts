@@ -970,6 +970,20 @@ export class SpaceRuntime {
 				});
 				return;
 			}
+			// Re-check run deliverability before dispatching — the run may have
+			// transitioned to terminal while the retry timer was pending.
+			const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+			const blockedNoExec = run?.status === 'blocked' && !this.hasActiveExecutionForRun(run.id);
+			if (!run || !isExternallyDeliverableRun(run.status) || blockedNoExec) {
+				this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+					terminal: true,
+					reason: 'run_not_externally_deliverable',
+				});
+				this.clearExternalEventRetry(deliveryKey);
+				this.clearQueuedDelivery(target, deliveryKey);
+				this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+				return;
+			}
 			void this.deliverToSession(target, event, deliveryKey, deliveryMode);
 		}, EXTERNAL_EVENT_RETRY_DELAY_MS);
 		this.externalEventRetryTimers.set(deliveryKey, timer);
