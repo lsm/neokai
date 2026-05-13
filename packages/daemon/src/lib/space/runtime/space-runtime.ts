@@ -43,6 +43,7 @@ import {
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
+import type { ExternalEvent } from '../../external-events/types';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -373,6 +374,10 @@ function formatCommandError(error: unknown): string {
 	return JSON.stringify(error);
 }
 
+function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
+	return status === 'in_progress' || status === 'blocked';
+}
+
 function parseSubscriptionQueueKey(
 	key: string
 ): Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'> | null {
@@ -690,9 +695,16 @@ export class SpaceRuntime {
 		return this.config.nodeExecutionRepo.createOrIgnore(params);
 	}
 
-	registerRunInterests(workflowRunId: string, taskId: string, nodes: WorkflowNode[]): void {
+	registerRunInterests(
+		workflowRunId: string,
+		taskId: string,
+		nodes: WorkflowNode[],
+		options: { clearQueuedDeliveries?: boolean } = {}
+	): void {
 		this.topicTrie.remove((target) => target.workflowRunId === workflowRunId);
-		this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
+		if (options.clearQueuedDeliveries) {
+			this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
+		}
 		for (const node of nodes) {
 			for (const agent of resolveNodeAgents(node)) {
 				const interests = agent.eventInterests ?? [];
@@ -766,7 +778,7 @@ export class SpaceRuntime {
 		if (!store) return;
 		const matches = this.topicTrie.lookup(payload.topic).filter((target) => {
 			const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-			return run?.spaceId === payload.spaceId;
+			return run?.spaceId === payload.spaceId && isExternallyDeliverableRun(run.status);
 		});
 
 		if (matches.length === 0) {
@@ -1841,8 +1853,9 @@ export class SpaceRuntime {
 			throw err;
 		}
 
-		this.registerRunInterests(run.id, canonicalTask.id, workflow.nodes);
-		this.acceptingExternalEvents = true;
+		this.registerRunInterests(run.id, canonicalTask.id, workflow.nodes, {
+			clearQueuedDeliveries: true,
+		});
 
 		// Resolve channel topology for the start node and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
@@ -2195,6 +2208,45 @@ export class SpaceRuntime {
 	 *
 	 * Runs that reference a missing workflow are skipped silently.
 	 */
+	private requeuePersistedPendingDeliveries(): void {
+		const store = this.config.externalEventStore;
+		if (!store) return;
+
+		for (const delivery of store.listPendingDeliveries()) {
+			const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
+			if (!run || !isExternallyDeliverableRun(run.status)) continue;
+			const eventRecord = store.getById(delivery.eventId);
+			if (!eventRecord || eventRecord.state !== 'published') continue;
+
+			this.queueForPendingNode(
+				{
+					workflowRunId: delivery.workflowRunId,
+					taskId: delivery.taskId,
+					nodeId: delivery.nodeId,
+					agentName: delivery.agentName,
+				},
+				this.externalEventPayloadFromRecord(eventRecord.event),
+				delivery.deliveryKey
+			);
+		}
+	}
+
+	private externalEventPayloadFromRecord(event: ExternalEvent): ExternalEventPublishedPayload {
+		return {
+			namespaceId: event.spaceId,
+			spaceId: event.spaceId,
+			eventId: event.id,
+			source: event.source,
+			topic: event.topic,
+			dedupeKey: event.dedupeKey,
+			summary: event.summary,
+			externalUrl: event.externalUrl,
+			payload: event.payload,
+			occurredAt: event.occurredAt,
+			ingestedAt: event.ingestedAt,
+		};
+	}
+
 	async rehydrateExecutors(): Promise<void> {
 		const spaces = await this.config.spaceManager.listSpaces(false);
 
@@ -2233,6 +2285,8 @@ export class SpaceRuntime {
 				}
 			}
 		}
+
+		this.requeuePersistedPendingDeliveries();
 
 		// Rehydrate Task Agent sessions after executors are ready.
 		// Executors must be loaded first so Task Agents can use MCP tools

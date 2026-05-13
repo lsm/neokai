@@ -216,6 +216,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 	test('marks unmatched events ignored', async () => {
 		const workflow = createWorkflow('github/*/*/pull_request.review_*');
 		await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		await runtime.executeTick();
 
 		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request.comment_created' });
 		await eventService.publish(event);
@@ -241,6 +242,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 	test('skips invalid event interest topics during registration', async () => {
 		const workflow = createWorkflow('github/lsm/neokai/pull_request');
 		await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		await runtime.executeTick();
 
 		const event = makeEvent();
 		await eventService.publish(event);
@@ -256,7 +258,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const event = makeEvent();
 		await eventService.publish(event);
 
-		runtime.registerRunInterests(run.id, tasks[0]!.id, []);
+		runtime.registerRunInterests(run.id, tasks[0]!.id, [], { clearQueuedDeliveries: true });
 		runtime.flushPendingNodeQueue({
 			workflowRunId: run.id,
 			taskId: tasks[0]!.id,
@@ -482,6 +484,115 @@ describe('SpaceRuntime external event subscriptions', () => {
 		await eventService.publish(event);
 
 		expect(eventStore.getById(event.id)?.state).toBe('ignored');
+	});
+
+	test('keeps unmatched events published until restart rehydrate completes', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-rehydrate-race',
+			startedAt: Date.now(),
+		});
+		await runtime.stop();
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: createInternalCommandBus(),
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.start();
+		await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'New run before rehydrate');
+
+		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request.comment_created' });
+		await eventService.publish(event);
+
+		expect(eventStore.getById(event.id)?.state).toBe('published');
+	});
+
+	test('requeues persisted pending deliveries during runtime rehydrate', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+		await eventService.publish(event);
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('pending');
+		await runtime.stop();
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+
+		await runtime.rehydrateExecutors();
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-rehydrated-pending',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
+	test('ignores terminal runs when matching external event deliveries', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+		await runtime.executeTick();
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(eventStore.getById(event.id)?.state).toBe('ignored');
+		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+	});
+
+	test('preserves queued deliveries while re-registering unchanged interests', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		runtime.registerRunInterests(run.id, tasks[0]!.id, workflow.nodes);
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-preserved-reregister',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(1);
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 
 	test('retries transient external event injection failures from the pending queue', async () => {
