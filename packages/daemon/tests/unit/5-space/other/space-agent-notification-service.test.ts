@@ -768,14 +768,80 @@ describe('SpaceAgentNotificationService', () => {
 			expect(factory.calls).toHaveLength(0);
 		});
 
-		it('clears counter when injectMessage fails on threshold notification', async () => {
-			// Counter is cleared regardless of notification outcome to avoid a race
-			// where restoring a stale counter after a terminal task transition would
-			// cause spurious early notifications on the next attempt.
-			const { bus } = makeService(
-				{ injectError: new Error('Session not found') },
-				{ notifyThreshold: 2 }
-			);
+		it('restores counter when injectMessage fails without terminal transition', async () => {
+			// Use a factory that fails on the first call then succeeds on the second.
+			let callCount = 0;
+			const calls: InjectedCall[] = [];
+			const factory: SessionFactory & { calls: InjectedCall[] } = {
+				calls,
+				injectMessage: async (sessionId, message, injectOpts) => {
+					callCount++;
+					if (callCount === 1) throw new Error('Session not found');
+					calls.push({ sessionId, message, opts: injectOpts });
+				},
+			};
+
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const service = new SpaceAgentNotificationService({
+				internalEventBus: bus,
+				sessionFactory: factory,
+				sessionId: SESSION_ID,
+				spaceId: SPACE_ID,
+				notifyThreshold: 2,
+			});
+			service.subscribe();
+
+			// Two auto-completions → threshold reached, but first notification fails
+			await bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+			await bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+
+			// Counter was restored on failure, so next auto-completion (count=3 ≥ threshold)
+			// retries the notification — this time injectMessage succeeds.
+			await bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+
+			// Only the 3rd attempt (where injectMessage succeeded) produced a notification
+			expect(calls).toHaveLength(1);
+			const json = extractJson(calls[0].message);
+			expect(json.consecutiveCount).toBe(3);
+		});
+
+		it('does not restore counter after terminal transition during failed notify', async () => {
+			// Use a factory that always fails.
+			const calls: InjectedCall[] = [];
+			const factory: SessionFactory & { calls: InjectedCall[] } = {
+				calls,
+				injectMessage: async () => {
+					throw new Error('Session not found');
+				},
+			};
+
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const service = new SpaceAgentNotificationService({
+				internalEventBus: bus,
+				sessionFactory: factory,
+				sessionId: SESSION_ID,
+				spaceId: SPACE_ID,
+				notifyThreshold: 2,
+			});
+			service.subscribe();
 
 			// Two auto-completions → threshold reached, notification fails
 			await bus.publish('space.agent.autoCompleted', {
@@ -793,9 +859,24 @@ describe('SpaceAgentNotificationService', () => {
 				timestamp: TIMESTAMP,
 			});
 
-			// Counter was NOT restored — next auto-completion starts fresh (count=1)
-			// This is intentional: restoring stale state after a terminal transition
-			// is worse than losing the counter.
+			// Terminal transition clears the in-flight marker
+			await bus.publish('space.task.updated', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				task: { id: 'task-stuck', status: 'done' } as SpaceTask,
+			});
+
+			// Counter was NOT restored (terminal transition cleared notifyInFlight)
+			// so next auto-completion starts fresh (count=1, below threshold)
+			await bus.publish('space.agent.autoCompleted', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-stuck',
+				elapsedMs: 300000,
+				timestamp: TIMESTAMP,
+			});
+			expect(calls).toHaveLength(0);
 		});
 
 		it('does not emit duplicate notifications while injectMessage is pending', async () => {

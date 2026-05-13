@@ -72,6 +72,13 @@ export class SpaceAgentNotificationService {
 	 * task completes successfully.
 	 */
 	private autoCompletedCounts = new Map<string, number>();
+	/**
+	 * Tracks taskIds with a pending threshold notification. Used to prevent
+	 * stale counter restoration after a terminal task transition: if a
+	 * terminal transition clears this set entry, the `.then()` callback
+	 * knows not to restore the counter.
+	 */
+	private notifyInFlight = new Set<string>();
 
 	constructor(config: SpaceAgentNotificationServiceConfig) {
 		this.internalEventBus = config.internalEventBus;
@@ -99,6 +106,7 @@ export class SpaceAgentNotificationService {
 		// Clear stale counters from a previous subscription so a re-init
 		// doesn't carry over partial counts from before the tear-down.
 		this.autoCompletedCounts.clear();
+		this.notifyInFlight.clear();
 		this.unsubscribers = [
 			this.internalEventBus.subscribe(
 				'space.task.blocked',
@@ -157,13 +165,16 @@ export class SpaceAgentNotificationService {
 						// Immediately clear the counter so concurrent events arriving
 						// while injectMessage is in-flight don't produce duplicates.
 						this.autoCompletedCounts.delete(event.taskId);
-						void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel, count));
-						// Counter is cleared regardless of notification outcome. If the
-						// session is unavailable (injectMessage fails), subsequent
-						// notifications would also fail. The task starts a fresh threshold
-						// cycle on the next auto-completion. Avoids a race where restoring
-						// a stale counter after a terminal task transition would cause
-						// spurious early notifications on the next attempt.
+						this.notifyInFlight.add(event.taskId);
+						const message = formatAgentAutoCompleted(event, this.autonomyLevel, count);
+						void this.notify(message).then((sent) => {
+							// Only restore if notification failed AND no terminal transition
+							// cleared the in-flight marker in the meantime.
+							if (!sent && this.notifyInFlight.has(event.taskId)) {
+								this.autoCompletedCounts.set(event.taskId, count);
+							}
+							this.notifyInFlight.delete(event.taskId);
+						});
 					}
 				},
 				{
@@ -217,10 +228,11 @@ export class SpaceAgentNotificationService {
 				}
 			),
 			// When a task reaches a terminal or blocked state, clear its
-			// auto-completion counter so the next cycle starts fresh. This prevents
-			// a successfully-completed or restarted task from carrying a stale
-			// counter forward. Blocked tasks that are manually restarted represent
-			// a new attempt cycle, not a continuation of the previous retry loop.
+			// auto-completion counter and in-flight marker so the next cycle
+			// starts fresh. This prevents a successfully-completed or restarted
+			// task from carrying a stale counter forward. Clearing notifyInFlight
+			// prevents a pending .then() callback from restoring a stale counter
+			// after the task has already transitioned to a terminal state.
 			this.internalEventBus.subscribe(
 				'space.task.updated',
 				(event) => {
@@ -231,6 +243,7 @@ export class SpaceAgentNotificationService {
 						event.task.status === 'blocked'
 					) {
 						this.autoCompletedCounts.delete(event.taskId);
+						this.notifyInFlight.delete(event.taskId);
 					}
 				},
 				{
@@ -245,21 +258,24 @@ export class SpaceAgentNotificationService {
 			}
 			this.unsubscribers = [];
 			this.autoCompletedCounts.clear();
+			this.notifyInFlight.clear();
 		};
 	}
 
-	private async notify(message: string): Promise<void> {
+	private async notify(message: string): Promise<boolean> {
 		try {
 			await this.sessionFactory.injectMessage(this.sessionId, message, {
 				deliveryMode: 'defer',
 				origin: 'system',
 			});
+			return true;
 		} catch (err) {
 			// Session not found or unavailable — log warning, do not propagate.
 			// The notification service must not fail the caller's event handler.
 			log.warn(
 				`[SpaceAgentNotificationService] Failed to inject notification into session ${this.sessionId}: ${err instanceof Error ? err.message : String(err)}`
 			);
+			return false;
 		}
 	}
 }
