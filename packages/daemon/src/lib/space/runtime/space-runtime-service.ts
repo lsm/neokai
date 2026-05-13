@@ -39,7 +39,6 @@ import {
 	SpaceAgentNotificationService,
 	type SpaceAgentNotificationServiceConfig,
 } from './space-agent-notification-service';
-import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 

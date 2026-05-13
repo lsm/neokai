@@ -405,9 +405,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		artifactRepo,
 		pendingMessageRepo,
 		scheduleService,
-tttinternalEventBus: deps.internalEventBus,
-tttcommandBus: deps.commandBus,
-tttexternalEventStore: deps.externalEventStore,
+		commandBus: deps.commandBus,
+		externalEventStore: deps.externalEventStore,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so

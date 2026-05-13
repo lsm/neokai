@@ -917,6 +917,24 @@ export class SpaceRuntime {
 		this.externalEventRetryTimers.set(deliveryKey, timer);
 	}
 
+	private rescheduleQueuedExternalEventRetries(): void {
+		for (const [queueKey, queue] of this.pendingExternalEventQueue) {
+			const target = parseSubscriptionQueueKey(queueKey);
+			if (!target) continue;
+			for (const item of queue) {
+				const resolved = this.resolveSubscriptionTarget(target);
+				if (!resolved.sessionId) continue;
+				this.scheduleExternalEventRetry(
+					resolved,
+					item.event,
+					item.deliveryKey,
+					item.deliveryMode,
+					`deliveryMode:${item.deliveryMode}; retry rescheduled after runtime restart`
+				);
+			}
+		}
+	}
+
 	private clearExternalEventRetry(deliveryKey: string): void {
 		const timer = this.externalEventRetryTimers.get(deliveryKey);
 		if (timer) clearTimeout(timer);
@@ -1710,6 +1728,7 @@ export class SpaceRuntime {
 
 		this.subscribeExternalEventPublished();
 		this.acceptingExternalEvents = this.rehydrated;
+		this.rescheduleQueuedExternalEventRetries();
 		const interval = this.config.tickIntervalMs ?? 5_000;
 
 		// Kick off the first tick immediately, then schedule the loop.

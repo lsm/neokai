@@ -736,6 +736,58 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 
+	test('reschedules queued transient retries across runtime stop and start', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-retry-restart',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-retry-restart');
+		await runtime.stop();
+		let failNext = true;
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			if (failNext) {
+				failNext = false;
+				return { ok: false, error: 'temporary restart retry failure' };
+			}
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerRunInterests(run.id, taskRepo.listByWorkflowRun(run.id)[0]!.id, workflow.nodes);
+
+		const event = makeEvent();
+		await eventService.publish(event);
+		await runtime.stop();
+		runtime.start();
+
+		expect(injected).toHaveLength(0);
+		await new Promise((resolve) => setTimeout(resolve, 1100));
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-retry-restart');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
 	test('fails delivery terminally when injection command handler is missing', async () => {
 		const workflow = createWorkflow();
 		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
