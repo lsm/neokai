@@ -8849,7 +8849,8 @@ export function runMigration129(db: BunDatabase): void {
 		UPDATE spaces
 		SET max_concurrent_tasks = CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER)
 		WHERE config IS NOT NULL
-		  AND json_type(config, '$.maxConcurrentTasks') IN ('integer', 'real')
+		  AND json_valid(config)
+		  AND json_type(config, '$.maxConcurrentTasks') = 'integer'
 		  AND CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER) BETWEEN 1 AND 10
 	`);
 }

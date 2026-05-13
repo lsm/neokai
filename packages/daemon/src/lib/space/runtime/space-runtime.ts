@@ -3763,6 +3763,10 @@ export class SpaceRuntime {
 		const blockedReason = blockedExecutions[0].result ?? 'Unknown blocked reason';
 
 		if (retryCount < MAX_BLOCKED_RUN_RETRIES) {
+			// Enforce slot cap — don't promote if concurrency limit is reached.
+			const space = await this.config.spaceManager.getSpace(meta.spaceId);
+			if (this.getAvailableTaskSlots(space) <= 0) return;
+
 			// Tier 1: Reset blocked executions and resume the run.
 			for (const execution of blockedExecutions) {
 				this.config.nodeExecutionRepo.update(execution.id, {

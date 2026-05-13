@@ -541,14 +541,14 @@ describe('SpaceOverview', () => {
 		it('calls updateSpace when slider value changes', async () => {
 			mockSpace.value = makeSpace({ maxConcurrentTasks: 1 });
 			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
-			await fireEvent.input(getByTestId('concurrency-slider'), { target: { value: '5' } });
+			await fireEvent.change(getByTestId('concurrency-slider'), { target: { value: '5' } });
 			expect(mockUpdateSpace).toHaveBeenCalledWith({ maxConcurrentTasks: 5 });
 		});
 
 		it('does not call updateSpace when value is unchanged', async () => {
 			mockSpace.value = makeSpace({ maxConcurrentTasks: 3 });
 			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
-			await fireEvent.input(getByTestId('concurrency-slider'), { target: { value: '3' } });
+			await fireEvent.change(getByTestId('concurrency-slider'), { target: { value: '3' } });
 			expect(mockUpdateSpace).not.toHaveBeenCalled();
 		});
 	});

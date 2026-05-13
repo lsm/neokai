@@ -243,7 +243,7 @@ function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: numb
 				step={1}
 				value={limit}
 				data-testid="concurrency-slider"
-				onInput={(e) => onChange(Number((e.target as HTMLInputElement).value))}
+				onChange={(e) => onChange(Number((e.target as HTMLInputElement).value))}
 				class="w-full h-2 rounded-full appearance-none cursor-pointer bg-dark-700 accent-blue-500"
 			/>
 		</div>
