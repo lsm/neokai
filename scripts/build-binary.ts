@@ -6,8 +6,8 @@
  * 4. Compile binary with bun build --compile
  *
  * Usage:
- *   bun run scripts/build-binary.ts                         # All platforms
- *   bun run scripts/build-binary.ts --target bun-darwin-arm64  # Single platform
+ *   bun run scripts/build-binary.ts                             # Host platform
+ *   bun run scripts/build-binary.ts --target bun-darwin-arm64   # Single target
  */
 
 import { execSync } from 'node:child_process';
@@ -25,6 +25,14 @@ const ALL_TARGETS = [
 	'bun-windows-x64',
 ];
 
+/** Detect the host platform's build target from process.platform/arch. */
+function getHostTarget(): string {
+	const os =
+		process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'windows' : 'linux';
+	const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+	return `bun-${os}-${arch}`;
+}
+
 // Parse --target argument
 const targetIdx = process.argv.indexOf('--target');
 const targetArg = targetIdx !== -1 ? process.argv[targetIdx + 1] : null;
@@ -35,7 +43,9 @@ if (targetArg && !ALL_TARGETS.includes(targetArg)) {
 	process.exit(1);
 }
 
-const targets = targetArg ? [targetArg] : ALL_TARGETS;
+// Default to the host platform only. Cross-compilation requires explicit
+// --target and the corresponding SDK platform package to be installed.
+const targets = targetArg ? [targetArg] : [getHostTarget()];
 
 function run(cmd: string) {
 	execSync(cmd, { cwd: ROOT, stdio: 'inherit' });

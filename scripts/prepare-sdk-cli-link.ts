@@ -90,8 +90,8 @@ function resolveSdkBinary(os: string, arch: string, musl: boolean): string | und
 		const daemonRequire = createRequire(daemonEntry);
 		const sdkPath = daemonRequire.resolve('@anthropic-ai/claude-agent-sdk');
 		// sdkPath = .../node_modules/.bun/@anthropic-ai+claude-agent-sdk@.../node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
-		// Navigate up 4 levels to .bun directory
-		const bunDir = dirname(dirname(dirname(dirname(sdkPath))));
+		// Navigate up 5 levels to reach .bun, then look in .bun/node_modules/<pkg>
+		const bunDir = dirname(dirname(dirname(dirname(dirname(sdkPath)))));
 		const hoistedPath = join(bunDir, 'node_modules', pkgName, binaryName);
 		if (existsSync(hoistedPath)) return hoistedPath;
 	} catch {

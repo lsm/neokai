@@ -143,7 +143,7 @@ function resolveFromNodeModules(): string | undefined {
 	}
 
 	// Strategy 2: Navigate from main SDK package to bun's hoisted platform binary.
-	// Bun installs the main SDK at node_modules/.bun/@anthropic-ai+claude-agent-sdk@.../node_modules/@anthropic-ai/claude-agent-sdk/
+	// Bun installs the main SDK at node_modules/.bun/@anthropic-ai+claude-agent-sdk@.../node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
 	// and symlinks the platform package at node_modules/.bun/node_modules/@anthropic-ai/claude-agent-sdk-{os}-{arch}/.
 	if (platformPkg) {
 		try {
@@ -152,8 +152,8 @@ function resolveFromNodeModules(): string | undefined {
 				const sdkPath = sdkModulePath.startsWith('file://')
 					? fileURLToPath(sdkModulePath)
 					: sdkModulePath;
-				// Navigate up 4 levels: @anthropic-ai/claude-agent-sdk -> node_modules -> @anthropic-ai+claude-agent-sdk@... -> .bun
-				const bunDir = dirname(dirname(dirname(dirname(sdkPath))));
+				// Navigate up 5 levels: sdk.mjs -> claude-agent-sdk -> @anthropic-ai -> node_modules -> @anthropic-ai+... -> .bun
+				const bunDir = dirname(dirname(dirname(dirname(dirname(sdkPath)))));
 				const hoistedPath = join(bunDir, 'node_modules', platformPkg, binaryName);
 				if (existsSync(hoistedPath)) {
 					return hoistedPath;
