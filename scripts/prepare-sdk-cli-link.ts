@@ -18,7 +18,7 @@
  *   - scripts/build-binary.ts
  */
 
-import { existsSync, readdirSync, symlinkSync, unlinkSync } from 'node:fs';
+import { copyFileSync, existsSync, readdirSync, symlinkSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -138,8 +138,15 @@ try {
 }
 
 if (binaryPath) {
-	symlinkSync(binaryPath, EMBEDDED_CLI_LINK);
-	console.log(`SDK CLI linked: ${pkgName} -> ${binaryPath}`);
+	// Prefer symlinks (cheap, no copy), but fall back to file copy on
+	// Windows where symlinks may require Developer Mode or elevated privileges.
+	try {
+		symlinkSync(binaryPath, EMBEDDED_CLI_LINK);
+		console.log(`SDK CLI linked: ${pkgName} -> ${binaryPath}`);
+	} catch {
+		copyFileSync(binaryPath, EMBEDDED_CLI_LINK);
+		console.log(`SDK CLI copied: ${pkgName} -> ${binaryPath}`);
+	}
 } else {
 	console.error(`Error: SDK native binary not found for ${pkgName}.`);
 	console.error('The compile will fail because prod-entry.ts requires an embedded CLI.');
