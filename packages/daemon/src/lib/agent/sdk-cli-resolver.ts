@@ -103,7 +103,7 @@ export function isRunningUnderBun(): boolean {
 	return typeof globalThis.Bun !== 'undefined';
 }
 
-/** Cached resolved real filesystem path */
+/** Cached resolved real filesystem path. Empty string = resolution failed (negative cache). */
 let cachedCliPath: string | undefined;
 
 /**
@@ -113,9 +113,9 @@ let cachedCliPath: string | undefined;
 function getSdkVersion(): string {
 	try {
 		// Read from the daemon package.json which has the SDK as a dependency
+		// Path: src/lib/agent/sdk-cli-resolver.ts → ../../.. → daemon/
 		const daemonPkgPath = join(
 			dirname(fileURLToPath(import.meta.url)),
-			'..',
 			'..',
 			'..',
 			'..',
@@ -280,8 +280,14 @@ function sha512OfFile(filePath: string): string {
 
 /**
  * Fetch the tarball URL and integrity hash for an npm package version from
- * the npm registry. Uses HTTPS directly — no npm CLI or external tools needed.
+ * the npm registry. Uses `curl` for synchronous HTTP — no npm CLI needed.
  * Returns `{ tarballUrl, integrity }` or undefined on failure.
+ *
+ * Note: Standard `fetch()` is async and cannot be used in this synchronous
+ * resolution path. Bun's sync fetch (experimental) is not yet stable.
+ * `curl` is available on all supported platforms (macOS, Linux, Windows via
+ * Git Bash). If curl is unavailable, the resolver falls back to returning
+ * undefined and the caller gets a clear error about the SDK CLI not found.
  */
 function fetchNpmPackageMeta(
 	packageName: string,
@@ -289,10 +295,6 @@ function fetchNpmPackageMeta(
 ): { tarballUrl: string; integrity: string } | undefined {
 	const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${version}`;
 	try {
-		// Use fetch() when available (Bun, Node 18+), fall back to curl
-		if (typeof globalThis.fetch === 'function') {
-			// Sync fetch not available, fall through to curl
-		}
 		const result = execSync(`curl -sf "${url}"`, {
 			encoding: 'utf-8',
 			timeout: 15_000,
@@ -573,9 +575,14 @@ export function _resetForTesting(): void {
  * 2. Cache directory (~/.neokai/sdk/) — previously downloaded
  * 3. Auto-download from npm — fetch, extract, and cache
  *
+ * Failed resolution is cached (empty string) to avoid repeated download
+ * timeouts in offline/restricted environments.
+ *
  * @returns Real filesystem path to the CLI, or undefined if not found
  */
 export function resolveSDKCliPath(): string | undefined {
+	// Empty string = negative cache (resolution previously failed)
+	if (cachedCliPath === '') return undefined;
 	if (cachedCliPath !== undefined) return cachedCliPath;
 
 	// Priority 1: Resolve from node_modules (dev mode)
@@ -599,5 +606,8 @@ export function resolveSDKCliPath(): string | undefined {
 		return cachedCliPath;
 	}
 
+	// Cache failure to avoid repeated download timeouts
+	cachedCliPath = '';
+	logWarn('[sdk-cli-resolver] All resolution strategies failed — caching negative result');
 	return undefined;
 }
