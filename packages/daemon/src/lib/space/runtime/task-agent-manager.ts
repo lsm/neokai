@@ -2257,7 +2257,7 @@ export class TaskAgentManager {
 	 * Lookup order (mirrors `isSessionAlive`):
 	 *  1. `agentSessionIndex` (fast reverse index for sub-sessions)
 	 *  2. `taskAgentSessions` map (Task Agents)
-	 *  3. `SessionManager.getSession()` (general session cache)
+	 *  3. `SessionManager.getSessionAsync()` (general session cache, may lazy-load from DB)
 	 *
 	 * Step 3 may **lazy-hydrate** an AgentSession from the database if it's
 	 * not currently in any in-memory map — this is intentional, because:
@@ -2281,7 +2281,7 @@ export class TaskAgentManager {
 	 * Returns undefined when the session is not in memory and either does
 	 * not exist in the DB or fails to load.
 	 */
-	getAgentSessionById(sessionId: string): AgentSession | undefined {
+	async getAgentSessionById(sessionId: string): Promise<AgentSession | undefined> {
 		const indexed = this.agentSessionIndex.get(sessionId);
 		if (indexed) return indexed;
 
@@ -2289,10 +2289,9 @@ export class TaskAgentManager {
 			if (taskAgent.session.id === sessionId) return taskAgent;
 		}
 
-		// SessionManager.getSession may hydrate a fresh AgentSession from DB;
-		// that's intentional — see method JSDoc for why. Normalize null → undefined
-		// so the return contract stays uniform.
-		return this.config.sessionManager.getSession(sessionId) ?? undefined;
+		// Use getSessionAsync for safe DB hydration with race-condition protection.
+		// Normalize null → undefined so the return contract stays uniform.
+		return (await this.config.sessionManager.getSessionAsync(sessionId)) ?? undefined;
 	}
 
 	/**
@@ -2305,7 +2304,7 @@ export class TaskAgentManager {
 	 */
 	async prepareSubSessionForWorkflowResume(sessionId: string): Promise<boolean> {
 		if (!this.isSessionAlive(sessionId)) return false;
-		const session = this.getAgentSessionById(sessionId);
+		const session = await this.getAgentSessionById(sessionId);
 		if (!session) return false;
 		await this.mcpSelfHeal(sessionId, ['node-agent']);
 		return true;

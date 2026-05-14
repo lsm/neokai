@@ -396,10 +396,11 @@ export class SessionManager {
 	}
 
 	/**
-	 * Get session (with lazy-loading race condition fix)
+	 * Get session synchronously — in-memory cache only.
 	 *
-	 * FIX: Prevents multiple simultaneous loads of the same session
-	 * which would create duplicate Claude API connections
+	 * Returns the cached AgentSession if present, otherwise null.
+	 * Does NOT load from the database. Callers that need lazy-loading
+	 * must use getSessionAsync() instead.
 	 */
 	getSession(sessionId: string): AgentSession | null {
 		return this.sessionCache.get(sessionId);
