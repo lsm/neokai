@@ -184,6 +184,9 @@ export interface AgentMessageInjectCommand {
 	/** Message content to inject (usually a formatted agent envelope). */
 	message: string;
 
+	/** Delivery strategy for busy/idle session handling. */
+	deliveryMode?: 'immediate' | 'defer';
+
 	/** Optional metadata for routing diagnostics. */
 	metadata?: Record<string, unknown>;
 }

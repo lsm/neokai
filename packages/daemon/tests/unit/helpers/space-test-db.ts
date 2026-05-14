@@ -235,6 +235,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,
 			post_approval_blocked_reason TEXT DEFAULT NULL,
+			reported_status TEXT DEFAULT NULL,
+			reported_summary TEXT DEFAULT NULL,
 			created_by TEXT DEFAULT NULL,
 			created_by_session TEXT DEFAULT NULL,
 			created_by_task_schedule_id TEXT DEFAULT NULL,

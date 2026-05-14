@@ -31,6 +31,7 @@ import type {
 	SpaceWorkflowRun,
 	UpdateSpaceTaskParams,
 	WorkflowChannel,
+	WorkflowNode,
 } from '@neokai/shared';
 import {
 	computeGateDefaults,
@@ -40,6 +41,10 @@ import {
 	resolveNodeAgents,
 } from '@neokai/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
+import type { ExternalEventStore } from '../../external-events/external-event-store';
+import type { ExternalEvent } from '../../external-events/types';
+import { validateGlobPattern } from '../../external-events/topic-validator';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -75,12 +80,18 @@ import type {
 	InternalEventPayload,
 } from '../../internal-event-bus';
 import {
+	MissingCommandHandlerError,
+	type DaemonCommandMap,
+	type InternalCommandBus,
+} from '../../internal-command-bus';
+import {
 	type PostApprovalRouteContext,
 	type PostApprovalRouteResult,
 	PostApprovalRouter,
 } from './post-approval-router';
 import { resolveTimeoutForExecution } from './resolve-node-timeout';
 import type { TaskAgentManager } from './task-agent-manager';
+import { TopicTrie } from './topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
@@ -137,14 +148,14 @@ export interface SpaceRuntimeConfig {
 	 */
 	tickIntervalMs?: number;
 	/**
-	 * InternalEventBus for publishing typed Space domain events.
-	 *
-	 * When provided, SpaceRuntime publishes events such as `space.task.blocked`,
-	 * `space.workflowRun.completed`, etc. for `SpaceAgentNotificationService` and
-	 * other subscribers to consume. When omitted, events are dropped silently —
-	 * appropriate for unit tests that don't need to assert against the bus.
+	 * InternalEventBus for publishing typed Space domain events and subscribing to
+	 * external event publications.
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+	/** Command bus used to inject matched external events into node-agent sessions. */
+	commandBus?: InternalCommandBus<DaemonCommandMap>;
+	/** Persistent external-event delivery state store. */
+	externalEventStore?: ExternalEventStore;
 	/**
 	 * Completion detector — inspects the canonical `SpaceTask` to decide whether
 	 * a workflow run is complete or ready for runtime resolution.
@@ -229,6 +240,23 @@ interface ExecutorMeta {
 	spaceId: string;
 	workspacePath: string;
 }
+
+interface SubscriptionTarget {
+	workflowRunId: string;
+	taskId: string;
+	nodeId: string;
+	agentName: string;
+	sessionId?: string;
+}
+
+interface PendingExternalEvent {
+	event: ExternalEventPublishedPayload;
+	deliveryKey: string;
+	deliveryMode: 'immediate' | 'defer';
+}
+
+const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
+const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
 
 // ---------------------------------------------------------------------------
 // Internal notification event shape
@@ -347,6 +375,37 @@ type SpaceNotificationEvent =
  * space-scoped, not session-scoped. Subscribers that need space-scoped
  * filtering should inspect `payload.spaceId`.
  */
+function formatCommandError(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	if (typeof error === 'string') return error;
+	return JSON.stringify(error);
+}
+
+function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
+	return status === 'in_progress' || status === 'blocked';
+}
+
+function parseSubscriptionQueueKey(
+	key: string
+): Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'> | null {
+	try {
+		const parsed = JSON.parse(key) as unknown;
+		if (!Array.isArray(parsed) || parsed.length !== 4) return null;
+		const [workflowRunId, taskId, nodeId, agentName] = parsed;
+		if (
+			typeof workflowRunId !== 'string' ||
+			typeof taskId !== 'string' ||
+			typeof nodeId !== 'string' ||
+			typeof agentName !== 'string'
+		) {
+			return null;
+		}
+		return { workflowRunId, taskId, nodeId, agentName };
+	} catch {
+		return null;
+	}
+}
+
 function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 	event: keyof DaemonInternalEventMap;
 	payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
@@ -593,6 +652,13 @@ export class SpaceRuntime {
 	 */
 	private nonTerminalIdleCounts = new Map<string, number>();
 	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
+	private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
+	private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
+	private readonly externalEventRetryTimers = new Map<string, Timer>();
+	private readonly externalEventRetryCounts = new Map<string, number>();
+	private readonly externalEventDeliveriesInFlight = new Set<string>();
+	private unsubscribeExternalEventPublished?: () => void;
+	private acceptingExternalEvents = false;
 
 	/**
 	 * Manages gate poll timers for periodic script execution and message injection.
@@ -608,6 +674,16 @@ export class SpaceRuntime {
 		if (hasSqlExec(config.db)) {
 			this.toolContinuationRepo.ensureSchema();
 		}
+		this.subscribeExternalEventPublished();
+	}
+
+	private subscribeExternalEventPublished(): void {
+		if (this.unsubscribeExternalEventPublished || !this.config.internalEventBus) return;
+		this.unsubscribeExternalEventPublished = this.config.internalEventBus.subscribe(
+			'externalEvent.published',
+			(payload) => this.handleExternalEvent(payload),
+			{ subscriberName: 'SpaceRuntime.externalEvents' }
+		);
 	}
 
 	/**
@@ -627,6 +703,493 @@ export class SpaceRuntime {
 			throw new Error(`Agent name "${params.agentName}" is reserved for a built-in agent`);
 		}
 		return this.config.nodeExecutionRepo.createOrIgnore(params);
+	}
+
+	registerRunInterests(
+		workflowRunId: string,
+		taskId: string,
+		_nodes: WorkflowNode[],
+		options: { clearQueuedDeliveries?: boolean } = {}
+	): void {
+		this.topicTrie.remove((target) => target.workflowRunId === workflowRunId);
+		if (options.clearQueuedDeliveries) {
+			this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
+		}
+		// Subscription insertion is now driven by runtime callers
+		// (MCP tool, gate/artifact scripts) via registerSubscription().
+	}
+
+	/**
+	 * Register a single external event subscription for a specific workflow
+	 * run target. This is the primary entry point for runtime-driven
+	 * subscription registration (MCP tool, gate/artifact scripts).
+	 *
+	 * For test use and future runtime callers.
+	 */
+	registerSubscription(
+		workflowRunId: string,
+		taskId: string,
+		nodeId: string,
+		agentName: string,
+		topic: string
+	): void {
+		const trimmed = topic?.trim();
+		if (!trimmed) return;
+		const validation = validateGlobPattern(trimmed);
+		if (!validation.valid) {
+			log.warn(
+				`SpaceRuntime: skipping invalid subscription topic "${trimmed}" for ` +
+					`${workflowRunId}/${nodeId}/${agentName}: ${validation.reason ?? 'invalid pattern'}`
+			);
+			return;
+		}
+		this.topicTrie.insert(trimmed, { workflowRunId, taskId, nodeId, agentName });
+	}
+
+	unregisterExecution(
+		workflowRunId: string,
+		taskId: string,
+		nodeId: string,
+		agentName: string
+	): void {
+		this.topicTrie.remove(
+			(target) =>
+				target.workflowRunId === workflowRunId &&
+				target.taskId === taskId &&
+				target.nodeId === nodeId &&
+				target.agentName === agentName
+		);
+		this.failQueuedDeliveriesForTarget(
+			{ workflowRunId, taskId, nodeId, agentName },
+			'node_execution_cancelled'
+		);
+	}
+
+	clearRunInterests(workflowRunId: string): void {
+		this.topicTrie.remove((target) => target.workflowRunId === workflowRunId);
+		this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
+	}
+
+	flushPendingNodeQueue(target: SubscriptionTarget): void {
+		if (!target.sessionId) return;
+		const key = this.buildQueueKey(target);
+		const queued = this.pendingExternalEventQueue.get(key);
+		if (!queued) return;
+		this.pendingExternalEventQueue.delete(key);
+		for (const item of queued) {
+			this.clearExternalEventRetry(item.deliveryKey);
+			void this.deliverToSession(target, item.event, item.deliveryKey, item.deliveryMode);
+		}
+	}
+
+	private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
+		const store = this.config.externalEventStore;
+		if (!store) return;
+		const matches = this.topicTrie.lookup(payload.topic).filter((target) => {
+			const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+			if (!run || run.spaceId !== payload.spaceId) return false;
+			if (run.status === 'blocked') return this.hasActiveExecutionForRun(run.id);
+			return isExternallyDeliverableRun(run.status);
+		});
+
+		if (matches.length === 0) {
+			if (this.acceptingExternalEvents) {
+				store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+			}
+			return;
+		}
+
+		const deliveries = new Map<string, { target: SubscriptionTarget; deliveryKey: string }>();
+		for (const match of matches) {
+			try {
+				const target = this.resolveSubscriptionTarget(match);
+				const deliveryKey = this.buildDeliveryKey(target, payload);
+				store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
+				deliveries.set(deliveryKey, { target, deliveryKey });
+			} catch (err) {
+				log.warn(
+					`SpaceRuntime: failed to register external event ${payload.eventId} for ` +
+						`${match.workflowRunId}/${match.nodeId}/${match.agentName}: ${formatCommandError(err)}`
+				);
+			}
+		}
+
+		for (const { target, deliveryKey } of deliveries.values()) {
+			try {
+				if (
+					store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
+					this.externalEventDeliveriesInFlight.has(deliveryKey)
+				) {
+					continue;
+				}
+
+				if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
+					await this.deliverToSession(target, payload, deliveryKey, 'immediate');
+				} else if (target.sessionId) {
+					await this.deliverToSession(target, payload, deliveryKey, 'defer');
+				} else if (this.isPending(target)) {
+					this.queueForPendingNode(target, payload, deliveryKey);
+				} else if (
+					this.hasActiveExecutionForRun(target.workflowRunId) &&
+					!this.hasTerminalExecutionForTarget(target)
+				) {
+					this.queueForPendingNode(target, payload, deliveryKey);
+				} else {
+					store.markDeliveryFailed(payload.eventId, deliveryKey, {
+						terminal: true,
+						reason: 'node_execution_not_active',
+					});
+					store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+				}
+			} catch (err) {
+				log.warn(
+					`SpaceRuntime: failed to process external event ${payload.eventId} for ` +
+						`${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
+				);
+			}
+		}
+	}
+
+	private async deliverToSession(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer'
+	): Promise<void> {
+		const store = this.config.externalEventStore;
+		if (!store || !target.sessionId) return;
+		this.externalEventDeliveriesInFlight.add(deliveryKey);
+		try {
+			if (!this.config.commandBus) {
+				throw new MissingCommandHandlerError('agent.message.inject');
+			}
+			const result = await this.config.commandBus.dispatch('agent.message.inject', {
+				sessionId: target.sessionId,
+				message: this.formatExternalEventMessage(event),
+				deliveryMode,
+				metadata: {
+					workflowRunId: target.workflowRunId,
+					taskId: target.taskId,
+					nodeId: target.nodeId,
+					agentName: target.agentName,
+					source: 'external_event',
+					eventId: event.eventId,
+					topic: event.topic,
+				},
+			});
+			if (!result?.ok) {
+				throw new Error(formatCommandError(result?.error ?? 'agent.message.inject unavailable'));
+			}
+			this.clearExternalEventRetry(deliveryKey);
+			this.clearQueuedDelivery(target, deliveryKey);
+			store.markDeliveryDelivered(event.eventId, deliveryKey);
+			store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
+			store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+		} catch (err) {
+			const rawFailureReason = err instanceof Error ? err.message : String(err);
+			const failureReason = `deliveryMode:${deliveryMode}; ${rawFailureReason}`;
+			const terminal = err instanceof MissingCommandHandlerError;
+			store.markDeliveryFailed(event.eventId, deliveryKey, {
+				terminal,
+				reason: failureReason,
+			});
+			if (terminal) {
+				this.clearExternalEventRetry(deliveryKey);
+				this.clearQueuedDelivery(target, deliveryKey);
+				store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+				return;
+			}
+			// Re-check run deliverability before queueing a retry — the run may
+			// have transitioned to terminal while the dispatch was in flight.
+			const currentRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
+			const blockedWithoutActiveExec =
+				currentRun?.status === 'blocked' && !this.hasActiveExecutionForRun(currentRun.id);
+			if (
+				!currentRun ||
+				!isExternallyDeliverableRun(currentRun.status) ||
+				blockedWithoutActiveExec
+			) {
+				store.markDeliveryFailed(event.eventId, deliveryKey, {
+					terminal: true,
+					reason: 'run_not_externally_deliverable',
+				});
+				store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+				this.clearExternalEventRetry(deliveryKey);
+				this.clearQueuedDelivery(target, deliveryKey);
+				return;
+			}
+			this.queueForRetry(target, event, deliveryKey, deliveryMode, failureReason);
+		} finally {
+			this.externalEventDeliveriesInFlight.delete(deliveryKey);
+		}
+	}
+
+	private queueForRetry(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer',
+		failureReason: string
+	): void {
+		this.queueForPendingNode(target, event, deliveryKey, deliveryMode);
+		this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason);
+	}
+
+	private scheduleExternalEventRetry(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer',
+		failureReason: string,
+		options: { preserveAttemptCount?: boolean } = {}
+	): void {
+		if (!target.sessionId || this.externalEventRetryTimers.has(deliveryKey)) return;
+		const currentAttempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
+		const attempts = options.preserveAttemptCount ? currentAttempts : currentAttempts + 1;
+		this.externalEventRetryCounts.set(deliveryKey, attempts);
+		if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+			this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+				terminal: true,
+				reason: failureReason,
+			});
+			this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+			this.clearQueuedDelivery(target, deliveryKey);
+			this.clearExternalEventRetry(deliveryKey);
+			return;
+		}
+
+		const timer = setTimeout(() => {
+			this.externalEventRetryTimers.delete(deliveryKey);
+			if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
+				this.clearExternalEventRetry(deliveryKey);
+				return;
+			}
+			if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+				this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
+					preserveAttemptCount: true,
+				});
+				return;
+			}
+			// Re-check run deliverability before dispatching — the run may have
+			// transitioned to terminal while the retry timer was pending.
+			const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+			const blockedNoExec = run?.status === 'blocked' && !this.hasActiveExecutionForRun(run.id);
+			if (!run || !isExternallyDeliverableRun(run.status) || blockedNoExec) {
+				this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+					terminal: true,
+					reason: 'run_not_externally_deliverable',
+				});
+				this.clearExternalEventRetry(deliveryKey);
+				this.clearQueuedDelivery(target, deliveryKey);
+				this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+				return;
+			}
+			void this.deliverToSession(target, event, deliveryKey, deliveryMode);
+		}, EXTERNAL_EVENT_RETRY_DELAY_MS);
+		this.externalEventRetryTimers.set(deliveryKey, timer);
+	}
+
+	private rescheduleQueuedExternalEventRetries(): void {
+		for (const [queueKey, queue] of this.pendingExternalEventQueue) {
+			const target = parseSubscriptionQueueKey(queueKey);
+			if (!target) continue;
+			for (const item of queue) {
+				const resolved = this.resolveSubscriptionTarget(target);
+				if (!resolved.sessionId) continue;
+				this.scheduleExternalEventRetry(
+					resolved,
+					item.event,
+					item.deliveryKey,
+					item.deliveryMode,
+					`deliveryMode:${item.deliveryMode}; retry rescheduled after runtime restart`,
+					{ preserveAttemptCount: true }
+				);
+			}
+		}
+	}
+
+	private clearExternalEventRetry(deliveryKey: string): void {
+		const timer = this.externalEventRetryTimers.get(deliveryKey);
+		if (timer) clearTimeout(timer);
+		this.externalEventRetryTimers.delete(deliveryKey);
+		this.externalEventRetryCounts.delete(deliveryKey);
+	}
+
+	private clearQueuedDelivery(target: SubscriptionTarget, deliveryKey: string): void {
+		const key = this.buildQueueKey(target);
+		const queue = this.pendingExternalEventQueue.get(key);
+		if (!queue) return;
+		const remaining = queue.filter((item) => item.deliveryKey !== deliveryKey);
+		if (remaining.length === 0) {
+			this.pendingExternalEventQueue.delete(key);
+		} else {
+			this.pendingExternalEventQueue.set(key, remaining);
+		}
+	}
+
+	private queueForPendingNode(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer' = 'immediate'
+	): void {
+		const key = this.buildQueueKey(target);
+		const queue = this.pendingExternalEventQueue.get(key) ?? [];
+		if (queue.some((item) => item.deliveryKey === deliveryKey)) return;
+		if (queue.length >= 50) {
+			const dropped = queue.shift();
+			if (dropped && this.config.externalEventStore) {
+				this.config.externalEventStore.markDeliveryFailed(
+					dropped.event.eventId,
+					dropped.deliveryKey,
+					{
+						terminal: true,
+						reason: 'pending_node_queue_overflow',
+					}
+				);
+				this.config.externalEventStore.markEventFailedIfAllDeliveriesTerminal(
+					dropped.event.eventId
+				);
+				this.clearExternalEventRetry(dropped.deliveryKey);
+			}
+			log.warn(
+				`SpaceRuntime: pending external event queue overflow for ${key}; dropped oldest event`
+			);
+		}
+		queue.push({ event, deliveryKey, deliveryMode });
+		this.pendingExternalEventQueue.set(key, queue);
+	}
+
+	private failQueuedDeliveriesForTarget(
+		target: Omit<SubscriptionTarget, 'sessionId'>,
+		reason: string
+	): void {
+		const key = this.buildQueueKey(target);
+		const queued = this.pendingExternalEventQueue.get(key);
+		if (!queued) return;
+		this.failQueuedDeliveries(queued, reason);
+		for (const item of queued) {
+			this.clearExternalEventRetry(item.deliveryKey);
+		}
+		this.pendingExternalEventQueue.delete(key);
+	}
+
+	private clearQueuedDeliveriesForRun(workflowRunId: string, reason: string): void {
+		for (const [queueKey, queued] of this.pendingExternalEventQueue) {
+			const parsed = parseSubscriptionQueueKey(queueKey);
+			if (!parsed || parsed.workflowRunId !== workflowRunId) continue;
+			this.failQueuedDeliveries(queued, reason);
+			for (const item of queued) {
+				this.clearExternalEventRetry(item.deliveryKey);
+			}
+			this.pendingExternalEventQueue.delete(queueKey);
+		}
+	}
+
+	private failQueuedDeliveries(queued: PendingExternalEvent[], reason: string): void {
+		const store = this.config.externalEventStore;
+		if (!store) return;
+		for (const item of queued) {
+			store.markDeliveryFailed(item.event.eventId, item.deliveryKey, { terminal: true, reason });
+			store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+		}
+	}
+
+	private resolveSubscriptionTarget(target: SubscriptionTarget): SubscriptionTarget {
+		const current = this.getCurrentQueueableOrActiveExecution(target);
+		return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
+	}
+
+	private isPending(target: SubscriptionTarget): boolean {
+		const current = this.getCurrentQueueableOrActiveExecution(target);
+		return current?.status === 'pending' || current?.status === 'waiting_rebind';
+	}
+
+	private hasActiveExecutionForRun(workflowRunId: string): boolean {
+		return this.config.nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.some(
+				(execution) =>
+					(execution.status === 'pending' ||
+						execution.status === 'in_progress' ||
+						execution.status === 'waiting_rebind' ||
+						execution.status === 'blocked') &&
+					execution.completedAt === null
+			);
+	}
+
+	private getCurrentQueueableOrActiveExecution(
+		target: SubscriptionTarget
+	): NodeExecution | undefined {
+		return this.config.nodeExecutionRepo
+			.listByNode(target.workflowRunId, target.nodeId)
+			.filter(
+				(execution) =>
+					execution.agentName === target.agentName &&
+					(execution.status === 'pending' ||
+						execution.status === 'in_progress' ||
+						execution.status === 'waiting_rebind')
+			)
+			.sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0];
+	}
+
+	private isTargetSessionLive(sessionId: string): boolean {
+		return this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false;
+	}
+
+	/**
+	 * Returns true when the target node-agent has at least one terminal
+	 * execution (idle/cancelled). Used to prevent queueing deliveries for
+	 * targets that have permanently finished but whose run is still active
+	 * due to other nodes.
+	 */
+	private hasTerminalExecutionForTarget(
+		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
+	): boolean {
+		return this.config.nodeExecutionRepo
+			.listByNode(target.workflowRunId, target.nodeId)
+			.some(
+				(execution) =>
+					execution.agentName === target.agentName &&
+					(execution.status === 'idle' || execution.status === 'cancelled')
+			);
+	}
+
+	private buildQueueKey(
+		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
+	): string {
+		return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
+	}
+
+	private buildDeliveryKey(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload
+	): string {
+		return JSON.stringify([
+			event.source,
+			event.dedupeKey,
+			target.taskId,
+			target.nodeId,
+			target.agentName,
+			target.workflowRunId,
+		]);
+	}
+
+	private formatExternalEventMessage(event: ExternalEventPublishedPayload): string {
+		return JSON.stringify(
+			{
+				type: 'external_event',
+				summary: event.summary,
+				eventId: event.eventId,
+				topic: event.topic,
+				source: event.source,
+				externalUrl: event.externalUrl,
+				occurredAt: event.occurredAt,
+				payload: event.payload,
+			},
+			null,
+			2
+		);
 	}
 
 	/**
@@ -675,16 +1238,12 @@ export class SpaceRuntime {
 	/**
 	 * Notify the runtime that a workflow definition has changed.
 	 *
-	 * Called when a `spaceWorkflow.updated` InternalEventBus<DaemonInternalEventMap> event fires. Delegates to
-	 * `GatePollManager.refreshPollsForWorkflow`, which re-reads the latest
-	 * workflow definition, diffs poll configs against active timers, and
-	 * starts/stops/updates polls as needed.
-	 *
-	 * No-op when GatePollManager is not initialized (no taskAgentManager).
+	 * Called when a `spaceWorkflow.updated` InternalEventBus<DaemonInternalEventMap> event fires.
+	 * Rebuilds external-event interests for active/recoverable runs and refreshes gate poll timers
+	 * so mid-run workflow config changes are picked up without requiring a task restart.
 	 */
 	onWorkflowDefChanged(workflowId: string): void {
-		if (!this.pollManager) return;
-		this.pollManager.refreshPollsForWorkflow(workflowId);
+		this.pollManager?.refreshPollsForWorkflow(workflowId);
 	}
 
 	/**
@@ -1268,6 +1827,14 @@ export class SpaceRuntime {
 	start(): void {
 		if (this.tickTimer !== null) return; // already running
 
+		this.subscribeExternalEventPublished();
+		this.acceptingExternalEvents = this.rehydrated;
+		this.rescheduleQueuedExternalEventRetries();
+		// Sweep events that arrived while stopped. On first start this is a
+		// no-op (sweep runs inside executeTick after rehydrate). On
+		// stop→start of the same runtime instance, it catches events that
+		// were persisted while the external-event subscriber was detached.
+		this.redispatchPublishedEventsWithoutDeliveries();
 		const interval = this.config.tickIntervalMs ?? 5_000;
 
 		// Kick off the first tick immediately, then schedule the loop.
@@ -1294,6 +1861,14 @@ export class SpaceRuntime {
 	async stop(): Promise<void> {
 		// Stop all gate poll timers
 		this.pollManager?.stopAll();
+		this.unsubscribeExternalEventPublished?.();
+		this.unsubscribeExternalEventPublished = undefined;
+		for (const timer of this.externalEventRetryTimers.values()) {
+			clearTimeout(timer);
+		}
+		this.externalEventRetryTimers.clear();
+		this.externalEventRetryCounts.clear();
+		this.acceptingExternalEvents = false;
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
 			this.tickTimer = null;
@@ -1358,6 +1933,8 @@ export class SpaceRuntime {
 				// fires first wins, the other becomes a no-op.
 				await this.recoverStalledRuns();
 				this.rehydrated = true;
+				this.acceptingExternalEvents = true;
+				this.redispatchPublishedEventsWithoutDeliveries();
 			}
 
 			await this.attachStandaloneTasksToWorkflows();
@@ -1836,6 +2413,101 @@ export class SpaceRuntime {
 	 *
 	 * Runs that reference a missing workflow are skipped silently.
 	 */
+	private requeuePersistedPendingDeliveries(): void {
+		const store = this.config.externalEventStore;
+		if (!store) return;
+
+		for (const delivery of store.listPendingDeliveries()) {
+			const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
+			const eventRecord = store.getById(delivery.eventId);
+			if (!eventRecord || eventRecord.state !== 'published') continue;
+			const target = {
+				workflowRunId: delivery.workflowRunId,
+				taskId: delivery.taskId,
+				nodeId: delivery.nodeId,
+				agentName: delivery.agentName,
+			};
+			const canRequeue = run
+				? run.status === 'blocked'
+					? this.hasActiveExecutionForRun(run.id)
+					: isExternallyDeliverableRun(run.status)
+				: false;
+			if (!canRequeue) {
+				store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+					terminal: true,
+					reason: 'run_not_externally_deliverable',
+				});
+				store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+				continue;
+			}
+
+			if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+				store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+					terminal: true,
+					reason: 'subscription_no_longer_active',
+				});
+				store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+				continue;
+			}
+
+			const mode = delivery.failureReason?.startsWith('deliveryMode:defer;')
+				? 'defer'
+				: 'immediate';
+			const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+			this.queueForPendingNode(target, eventPayload, delivery.deliveryKey, mode);
+			const resolved = this.resolveSubscriptionTarget(target);
+			if (resolved.sessionId) {
+				this.scheduleExternalEventRetry(
+					resolved,
+					eventPayload,
+					delivery.deliveryKey,
+					mode,
+					delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after runtime rehydrate`,
+					{ preserveAttemptCount: true }
+				);
+			}
+		}
+	}
+
+	private redispatchPublishedEventsWithoutDeliveries(): void {
+		const store = this.config.externalEventStore;
+		if (!store) return;
+		for (const eventRecord of store.listPublishedEventsWithoutDeliveries()) {
+			void this.handleExternalEvent(this.externalEventPayloadFromRecord(eventRecord.event));
+		}
+	}
+
+	private isTargetStillSubscribed(
+		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
+		topic: string
+	): boolean {
+		return this.topicTrie
+			.lookup(topic)
+			.some(
+				(match) =>
+					match.workflowRunId === target.workflowRunId &&
+					match.taskId === target.taskId &&
+					match.nodeId === target.nodeId &&
+					match.agentName === target.agentName
+			);
+	}
+
+	private externalEventPayloadFromRecord(event: ExternalEvent): ExternalEventPublishedPayload {
+		return {
+			namespaceId: event.spaceId,
+			spaceId: event.spaceId,
+			eventId: event.id,
+			source: event.source,
+			topic: event.topic,
+			dedupeKey: event.dedupeKey,
+			summary: event.summary,
+			externalUrl: event.externalUrl,
+			payload: event.payload,
+			occurredAt: event.occurredAt,
+			ingestedAt: event.ingestedAt,
+		};
+	}
+
 	async rehydrateExecutors(): Promise<void> {
 		const spaces = await this.config.spaceManager.listSpaces(false);
 
@@ -1872,6 +2544,8 @@ export class SpaceRuntime {
 				}
 			}
 		}
+
+		this.requeuePersistedPendingDeliveries();
 
 		// Rehydrate Task Agent sessions after executors are ready.
 		// Executors must be loaded first so Task Agents can use MCP tools
@@ -3052,7 +3726,7 @@ export class SpaceRuntime {
 					for (const execution of pendingExecutions) {
 						if (tam.isExecutionSpawning(execution.id)) continue;
 						try {
-							await tam.spawnWorkflowNodeAgentForExecution(
+							const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
 								canonicalTask,
 								space,
 								meta.workflow,
@@ -3062,6 +3736,13 @@ export class SpaceRuntime {
 									kickoff: true,
 								}
 							);
+							this.flushPendingNodeQueue({
+								workflowRunId: runId,
+								taskId: canonicalTask.id,
+								nodeId: execution.workflowNodeId,
+								agentName: execution.agentName,
+								sessionId,
+							});
 						} catch (err) {
 							if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
 								permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
@@ -3165,6 +3846,21 @@ export class SpaceRuntime {
 
 	private cancelExecutionForPermanentSpawnError(execution: NodeExecution, err: unknown): boolean {
 		if (!isPermanentSpawnError(err)) return false;
+		const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
+		const task = run
+			? this.pickCanonicalTaskForRun(
+					run,
+					this.config.taskRepo.listByWorkflowRun(execution.workflowRunId)
+				)
+			: null;
+		if (task) {
+			this.unregisterExecution(
+				execution.workflowRunId,
+				task.id,
+				execution.workflowNodeId,
+				execution.agentName
+			);
+		}
 		this.config.nodeExecutionRepo.update(execution.id, {
 			status: 'cancelled',
 			result: err.message,
@@ -3330,6 +4026,13 @@ export class SpaceRuntime {
 					execution,
 					{ kickoff: true }
 				);
+				this.flushPendingNodeQueue({
+					workflowRunId: runId,
+					taskId: canonicalTask.id,
+					nodeId: execution.workflowNodeId,
+					agentName: execution.agentName,
+					sessionId,
+				});
 				await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
 				recordBlockedFlushFailure(targetAgentName, rowsForTarget);
 			} catch (err) {
@@ -4006,6 +4709,7 @@ export class SpaceRuntime {
 					this.notifiedTaskSet.delete(`${task.id}:blocked`);
 					this.notifiedTaskSet.delete(`${task.id}:timeout`);
 				}
+				this.clearRunInterests(runId);
 				// Stop gate polls for this terminal run
 				this.pollManager?.stopPolls(runId);
 				this.executors.delete(runId);

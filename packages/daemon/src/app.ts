@@ -14,6 +14,11 @@ import {
 	type DaemonInternalEventMap,
 	type InternalEventBus,
 } from './lib/internal-event-bus';
+import {
+	createInternalCommandBus,
+	type DaemonCommandMap,
+	type InternalCommandBus,
+} from './lib/internal-command-bus';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers';
@@ -80,6 +85,8 @@ export interface DaemonAppContext {
 	 * See docs/plans/internal-event-command-query-architecture.md.
 	 */
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+	/** Semantic internal command bus for action dispatch */
+	commandBus: InternalCommandBus<DaemonCommandMap>;
 	/** Semantic internal query bus for point-in-time reads */
 	queryBus: ReturnType<typeof createInternalQueryBus<DaemonQueryMap>>;
 	/**
@@ -274,6 +281,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Initialize InternalEventBus for daemon domain events.
 	const internalEventBus = createDaemonInternalEventBus();
 
+	// Initialize InternalCommandBus for daemon action dispatch.
+	const commandBus = createInternalCommandBus<DaemonCommandMap>();
+
 	// Initialize InternalQueryBus for point-in-time reads.
 	// Handlers will be registered by domain services as they migrate.
 	const queryBus = createInternalQueryBus<DaemonQueryMap>();
@@ -443,6 +453,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		config,
 		internalEventBus,
+		commandBus,
+		externalEventStore,
 		db,
 		gitHubService: gitHubService ?? undefined,
 		spaceGitHubService,
@@ -892,6 +904,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		stateManager,
 		transport,
 		internalEventBus,
+		commandBus,
 		queryBus,
 		gitHubService,
 		spaceGitHubService,
