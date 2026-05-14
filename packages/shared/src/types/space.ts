@@ -1267,15 +1267,7 @@ export interface WorkflowNodeAgent {
 	 */
 	extraMcpServers?: Record<string, McpServerConfig>;
 	/**
-	 * Optional per-slot timeout (milliseconds) used by the runtime to decide
-	 * when an agent that is still alive but apparently stuck should be
-	 * auto-completed.
-	 *
-	 * When unset, the runtime falls back to its `DEFAULT_NODE_TIMEOUT_MS`
-	 * default. Per-node overrides belong with the workflow definition itself —
-	 * the runtime does not embed a role-name → timeout lookup. To give a
-	 * specific node a longer or shorter timeout than the default, set this on
-	 * the agent slot in the workflow definition.
+	 * Optional per-slot timeout (milliseconds) for runtime monitoring.
 	 *
 	 * Must be a positive integer when present.
 	 */
@@ -1794,9 +1786,8 @@ export interface ExportedWorkflowNodeAgent {
 	 */
 	extraMcpServers?: Record<string, unknown>;
 	/**
-	 * Optional per-slot timeout (milliseconds) for runtime auto-completion of
-	 * stuck-but-alive agents. Mirrors `WorkflowNodeAgent.timeoutMs`. When unset,
-	 * the runtime applies its `DEFAULT_NODE_TIMEOUT_MS` default.
+	 * Optional per-slot timeout (milliseconds) for runtime monitoring.
+	 * Mirrors `WorkflowNodeAgent.timeoutMs`.
 	 *
 	 * Must be a positive integer when present.
 	 */

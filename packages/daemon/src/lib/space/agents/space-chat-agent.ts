@@ -271,7 +271,7 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push(`This Space is configured at autonomy level **${level}** (scale 1–5).`);
 	sections.push('');
 
-	// Note: The runtime auto-completes task outputs at level >= 2 (routine approval).
+	// Note: The runtime auto-approves task outputs at level >= 2 (routine approval).
 	// The agent's autonomous *corrective actions* (retry, reassign) require level >= 3.
 	// This is intentional: level 2 trusts task output quality but still defers
 	// recovery decisions (retries, reassignment) to the human.

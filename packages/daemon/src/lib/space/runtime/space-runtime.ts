@@ -64,11 +64,7 @@ import {
 } from '../managers/space-workflow-manager';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { CompletionDetector } from './completion-detector';
-import {
-	DEFAULT_NODE_TIMEOUT_MS,
-	MAX_BLOCKED_RUN_RETRIES,
-	MAX_TASK_AGENT_CRASH_RETRIES,
-} from './constants';
+import { MAX_BLOCKED_RUN_RETRIES, MAX_TASK_AGENT_CRASH_RETRIES } from './constants';
 import { evaluateGate } from './gate-evaluator';
 import { extractPrContext, GatePollManager, type PollScriptContext } from './gate-poll-manager';
 import { executeGateScript } from './gate-script-executor';
@@ -89,7 +85,7 @@ import {
 	type PostApprovalRouteResult,
 	PostApprovalRouter,
 } from './post-approval-router';
-import { resolveTimeoutForExecution } from './resolve-node-timeout';
+
 import type { TaskAgentManager } from './task-agent-manager';
 import { TopicTrie } from './topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
@@ -311,13 +307,6 @@ type SpaceNotificationEvent =
 			timestamp: string;
 	  }
 	| {
-			kind: 'agent_auto_completed';
-			spaceId: string;
-			taskId: string;
-			elapsedMs: number;
-			timestamp: string;
-	  }
-	| {
 			kind: 'agent_crash';
 			spaceId: string;
 			taskId: string;
@@ -467,17 +456,6 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 					fromStatus: event.fromStatus,
 					reason: event.reason,
 					by: event.by,
-					timestamp: event.timestamp,
-				},
-			};
-		case 'agent_auto_completed':
-			return {
-				event: 'space.agent.autoCompleted',
-				payload: {
-					namespaceId,
-					spaceId: event.spaceId,
-					taskId: event.taskId,
-					elapsedMs: event.elapsedMs,
 					timestamp: event.timestamp,
 				},
 			};
@@ -3360,7 +3338,7 @@ export class SpaceRuntime {
 			let blockedByCrash = false;
 
 			// Snapshot which executions were already pending before this tick's
-			// liveness/auto-complete processing. The repair loop below uses this
+			// liveness processing. The repair loop below uses this
 			// to avoid re-elevating executions that were just force-idled and
 			// then reset to pending within the same tick.
 			const preTickPendingIds = new Set(
@@ -3431,90 +3409,6 @@ export class SpaceRuntime {
 			if (stoppedAfterWaitingRebind) {
 				return;
 			}
-			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-
-			// Step 1.5: Auto-complete alive agents that have exceeded their timeout.
-			// Transitions to 'idle' — the same state as a naturally completing session.
-			//
-			// Part D (task #138): a session in `waiting_for_input` is *legitimately*
-			// blocked on a human, not stuck. Force-completing it here turns the
-			// pending AskUserQuestion card into a dead-end (Submit/Skip have no
-			// resolver to wake) and confuses the user. Skip those sessions; the
-			// long-term fix (Tier 0) removes Step 1.5 entirely.
-			let autoCompleted = 0;
-			let skippedWaitingForInput = 0;
-			const now = Date.now();
-			for (const execution of nodeExecutions) {
-				if (execution.status !== 'in_progress' || !execution.agentSessionId) continue;
-				if (!tam.isSessionAlive(execution.agentSessionId)) continue;
-
-				const timeoutMs =
-					resolveTimeoutForExecution(execution, meta.workflow) ?? DEFAULT_NODE_TIMEOUT_MS;
-				const referenceTime = execution.startedAt ?? execution.createdAt;
-				const elapsedMs = now - referenceTime;
-				if (elapsedMs <= timeoutMs) continue;
-				const toolGraceMs = Math.min(timeoutMs, 60_000);
-				if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id, toolGraceMs)) {
-					const reason =
-						`Agent exceeded timeout with an in-flight tool call; moved to waiting_rebind ` +
-						`for ${Math.round(toolGraceMs / 1000)}s continuation recovery grace`;
-					this.toolContinuationRepo.markExecutionWaitingRebind(execution.id, reason);
-					continue;
-				}
-
-				// Part D guard: spare sessions waiting for user input. The agent is
-				// not stuck — a human is.
-				const liveSession = tam.getAgentSessionById(execution.agentSessionId);
-				if (liveSession?.getProcessingState().status === 'waiting_for_input') {
-					skippedWaitingForInput++;
-					continue;
-				}
-
-				const timeoutMinutes = Math.round(timeoutMs / 60_000);
-
-				// Defensive Part C call: the Part D guard above already skips
-				// `waiting_for_input` sessions, so by construction this code only
-				// runs for sessions that are NOT in `waiting_for_input` — and
-				// `markPendingQuestionOrphaned` is a no-op (returns false) for
-				// those. We keep the call as belt-and-braces against a future
-				// refactor that loosens the guard or introduces an `await`
-				// between the guard and this point. Best-effort: never let
-				// cleanup failure block the auto-complete.
-				if (liveSession) {
-					try {
-						await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
-					} catch (err) {
-						log.warn(
-							`SpaceRuntime: failed to clean up pending question for session ${execution.agentSessionId}:`,
-							err
-						);
-					}
-				}
-
-				this.config.nodeExecutionRepo.update(execution.id, {
-					status: 'idle',
-					result: `Auto-completed: agent timed out after ${timeoutMinutes} minutes`,
-				});
-				await this.safeNotify({
-					kind: 'agent_auto_completed',
-					spaceId: meta.spaceId,
-					taskId: canonicalTask.id,
-					elapsedMs,
-					timestamp: new Date().toISOString(),
-				});
-				autoCompleted++;
-			}
-			if (autoCompleted > 0) {
-				log.warn(
-					`SpaceRuntime: auto-completed ${autoCompleted} stuck node agent(s) for run ${runId}`
-				);
-			}
-			if (skippedWaitingForInput > 0) {
-				log.info(
-					`SpaceRuntime: spared ${skippedWaitingForInput} node agent(s) blocked on waiting_for_input for run ${runId}`
-				);
-			}
-
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
 			const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
@@ -4193,12 +4087,7 @@ export class SpaceRuntime {
 
 		const idleExecutions = this.config.nodeExecutionRepo
 			.listByWorkflowRun(runId)
-			.filter(
-				(execution) =>
-					execution.status === 'idle' &&
-					execution.agentSessionId &&
-					!execution.result?.startsWith('Auto-completed:')
-			);
+			.filter((execution) => execution.status === 'idle' && !!execution.agentSessionId);
 		for (const execution of idleExecutions) {
 			const sessionId = execution.agentSessionId;
 			if (!sessionId) continue;

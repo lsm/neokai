@@ -472,15 +472,6 @@ export interface SpaceAgentRecoveredEvent {
 	timestamp: string;
 }
 
-/** A stuck agent was auto-completed by the runtime after timeout. */
-export interface SpaceAgentAutoCompletedEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	elapsedMs: number;
-	timestamp: string;
-}
-
 /** A node agent went idle without a terminal SDK message or reported status. */
 export interface SpaceAgentIdleNonTerminalEvent {
 	sessionId: string;
@@ -591,7 +582,6 @@ export interface SpaceEvents {
 	'space.task.failed': SpaceTaskFailedEvent;
 	'space.agent.crashed': SpaceAgentCrashedEvent;
 	'space.agent.recovered': SpaceAgentRecoveredEvent;
-	'space.agent.autoCompleted': SpaceAgentAutoCompletedEvent;
 	'space.agent.idleNonTerminal': SpaceAgentIdleNonTerminalEvent;
 	'space.workflowRun.completed': SpaceWorkflowRunCompletedEvent;
 	'space.workflowRun.failed': SpaceWorkflowRunFailedEvent;

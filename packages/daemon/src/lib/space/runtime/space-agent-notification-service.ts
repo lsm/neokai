@@ -42,15 +42,6 @@ export interface SpaceAgentNotificationServiceConfig {
 	 * Defaults to `1` (most supervised) if not provided.
 	 */
 	autonomyLevel?: SpaceAutonomyLevel;
-	/**
-	 * Notify after N consecutive auto-completions for the same task.
-	 * Auto-completions below this threshold are silently retried without
-	 * notifying the space agent. Once the threshold is reached, a single
-	 * notification is sent and the counter is reset.
-	 *
-	 * Defaults to `3`.
-	 */
-	notifyThreshold?: number;
 }
 
 /**
@@ -63,15 +54,7 @@ export class SpaceAgentNotificationService {
 	private readonly sessionId: string;
 	private readonly spaceId: string;
 	private readonly autonomyLevel: SpaceAutonomyLevel;
-	private readonly notifyThreshold: number;
 	private unsubscribers: Array<() => void> = [];
-	/**
-	 * Tracks consecutive auto-completions per task. Keyed by taskId.
-	 * Incremented on each `space.agent.autoCompleted` for the same task.
-	 * Reset when the threshold is reached (counter deleted immediately
-	 * before notification) or when the task reaches a terminal state.
-	 */
-	private autoCompletedCounts = new Map<string, number>();
 
 	constructor(config: SpaceAgentNotificationServiceConfig) {
 		this.internalEventBus = config.internalEventBus;
@@ -79,7 +62,6 @@ export class SpaceAgentNotificationService {
 		this.sessionId = config.sessionId;
 		this.spaceId = config.spaceId;
 		this.autonomyLevel = config.autonomyLevel ?? 1;
-		this.notifyThreshold = config.notifyThreshold ?? 3;
 	}
 
 	/**
@@ -96,9 +78,6 @@ export class SpaceAgentNotificationService {
 		for (const unsub of this.unsubscribers) {
 			unsub();
 		}
-		// Clear stale counters from a previous subscription so a re-init
-		// doesn't carry over partial counts from before the tear-down.
-		this.autoCompletedCounts.clear();
 		this.unsubscribers = [
 			this.internalEventBus.subscribe(
 				'space.task.blocked',
@@ -147,28 +126,6 @@ export class SpaceAgentNotificationService {
 				}
 			),
 			this.internalEventBus.subscribe(
-				'space.agent.autoCompleted',
-				(event) => {
-					if (event.spaceId !== this.spaceId) return;
-					const count = (this.autoCompletedCounts.get(event.taskId) ?? 0) + 1;
-					this.autoCompletedCounts.set(event.taskId, count);
-
-					if (count >= this.notifyThreshold) {
-						// Immediately clear the counter so concurrent events arriving
-						// while injectMessage is in-flight don't produce duplicates.
-						// Counter is NOT restored on failure — injectMessage is an
-						// in-process call, so a failure means the session is gone and
-						// subsequent notifications would also fail. When the session
-						// recovers (re-provision), subscribe() clears all state anyway.
-						this.autoCompletedCounts.delete(event.taskId);
-						void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel, count));
-					}
-				},
-				{
-					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.agent.autoCompleted`,
-				}
-			),
-			this.internalEventBus.subscribe(
 				'space.agent.crashed',
 				(event) => {
 					if (event.spaceId !== this.spaceId) return;
@@ -214,27 +171,6 @@ export class SpaceAgentNotificationService {
 					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.awaitingApproval`,
 				}
 			),
-			// When a task reaches a terminal or blocked state, clear its
-			// auto-completion counter so the next cycle starts fresh. This prevents
-			// a successfully-completed or restarted task from carrying a stale
-			// counter forward. Blocked tasks that are manually restarted represent
-			// a new attempt cycle, not a continuation of the previous retry loop.
-			this.internalEventBus.subscribe(
-				'space.task.updated',
-				(event) => {
-					if (event.spaceId !== this.spaceId) return;
-					if (
-						event.task.status === 'done' ||
-						event.task.status === 'cancelled' ||
-						event.task.status === 'blocked'
-					) {
-						this.autoCompletedCounts.delete(event.taskId);
-					}
-				},
-				{
-					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.updated`,
-				}
-			),
 		];
 
 		return () => {
@@ -242,7 +178,6 @@ export class SpaceAgentNotificationService {
 				unsub();
 			}
 			this.unsubscribers = [];
-			this.autoCompletedCounts.clear();
 		};
 	}
 
@@ -388,34 +323,6 @@ function formatWorkflowRunReopened(
 		autonomyLevel,
 	};
 	return buildMessage('workflow_run_reopened', humanReadable, payload);
-}
-
-function formatAgentAutoCompleted(
-	event: {
-		spaceId: string;
-		taskId: string;
-		elapsedMs: number;
-		timestamp: string;
-	},
-	autonomyLevel: SpaceAutonomyLevel,
-	consecutiveCount: number
-): string {
-	const elapsedMinutes = Math.round(event.elapsedMs / 60_000);
-	const totalEstimatedMinutes = elapsedMinutes * consecutiveCount;
-	const humanReadable =
-		`Task ${event.taskId} in space ${event.spaceId} has timed out ${consecutiveCount} consecutive time(s) ` +
-		`(total ~${totalEstimatedMinutes} minutes of execution). ` +
-		`The task appears stuck in a retry loop without making progress.`;
-	return buildMessage('agent_auto_completed', humanReadable, {
-		kind: 'agent_auto_completed',
-		spaceId: event.spaceId,
-		taskId: event.taskId,
-		elapsedMs: event.elapsedMs,
-		consecutiveCount,
-		totalEstimatedMinutes,
-		timestamp: event.timestamp,
-		autonomyLevel,
-	});
 }
 
 function formatAgentCrash(

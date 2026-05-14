@@ -2,29 +2,10 @@
  * Space Runtime Constants
  *
  * Shared configuration constants for the Space runtime layer.
- *
- * Per-node timeout policy lives with the workflow definition, not here. The
- * runtime knows exactly one timeout default — `DEFAULT_NODE_TIMEOUT_MS`. Any
- * per-slot override is read from `WorkflowNodeAgent.timeoutMs` at runtime by
- * `resolveTimeoutForExecution` (see `space-runtime.ts`). Adding a new agent
- * role no longer requires a runtime change.
  */
 
 // ---------------------------------------------------------------------------
-// Per-node default timeout
-// ---------------------------------------------------------------------------
-
-/**
- * Default timeout for node agents whose workflow slot does not declare an
- * explicit `timeoutMs`. 4 minutes 30 seconds (270_000 ms) — chosen to stay
- * within the model prompt-cache window so the next interaction can reuse
- * cached context. Per-node overrides are configured on the agent slot in the
- * workflow definition.
- */
-export const DEFAULT_NODE_TIMEOUT_MS = 4 * 60 * 1000 + 30 * 1000;
-
-// ---------------------------------------------------------------------------
-// Network retry constants (M9.4)
+// Crash retry constants
 // ---------------------------------------------------------------------------
 
 /**
