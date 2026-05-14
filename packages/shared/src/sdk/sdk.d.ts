@@ -350,10 +350,12 @@ declare namespace coreTypes {
         SDKLocalCommandOutputMessage,
         SDKMemoryRecallMessage,
         SDKMessageOrigin,
+        SDKMirrorErrorMessage,
         SDKMessage,
         SDKNotificationMessage,
         SDKPartialAssistantMessage,
         SDKPermissionDenial,
+        SDKPermissionDeniedMessage,
         SDKPluginInstallMessage,
         SDKPromptSuggestionMessage,
         SDKRateLimitEvent,
@@ -2040,7 +2042,7 @@ export declare type SDKAssistantMessage = {
     session_id: string;
 };
 
-export declare type SDKAssistantMessageError = 'authentication_failed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown' | 'max_output_tokens';
+export declare type SDKAssistantMessageError = 'authentication_failed' | 'oauth_org_not_allowed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown' | 'max_output_tokens';
 
 export declare type SDKAuthStatusMessage = {
     type: 'auth_status';
@@ -2465,6 +2467,22 @@ export declare type SDKElicitationCompleteMessage = {
     session_id: string;
 };
 
+/**
+ * Emitted when a tool call is auto-denied without an interactive permission prompt (e.g. auto-mode classifier, dontAsk mode, headless-agent auto-deny, or a deny rule). The 'ask' path surfaces via a can_use_tool control_request; this event covers the 'deny' short-circuit in canUseTool so SDK hosts can render the denial instead of only seeing an is_error tool_result. PreToolUse hook denies bypass canUseTool and are not covered here.
+ */
+export declare type SDKPermissionDeniedMessage = {
+    type: 'system';
+    subtype: 'permission_denied';
+    tool_name: string;
+    tool_use_id: string;
+    agent_id?: string;
+    decision_reason_type?: string;
+    decision_reason?: string;
+    message: string;
+    uuid: UUID;
+    session_id: string;
+};
+
 export declare type SDKFilesPersistedEvent = {
     type: 'system';
     subtype: 'files_persisted';
@@ -2595,7 +2613,20 @@ export declare type SDKMemoryRecallMessage = {
     session_id: string;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKSessionStateChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
+export declare type SDKMirrorErrorMessage = {
+    type: 'system';
+    subtype: 'mirror_error';
+    error: string;
+    key: {
+        projectKey: string;
+        sessionId: string;
+        subpath?: string;
+    };
+    uuid: UUID;
+    session_id: string;
+};
+
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKSessionStateChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPermissionDeniedMessage | SDKPromptSuggestionMessage | SDKMirrorErrorMessage;
 
 /**
  * Provenance of a user-role message (peer session, team lead, channel). Absent or `human` means keyboard input from the user.
@@ -2705,7 +2736,7 @@ export declare type SDKRateLimitInfo = {
     utilization?: number;
     overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
     overageResetsAt?: number;
-    overageDisabledReason?: 'overage_not_provisioned' | 'org_level_disabled' | 'org_level_disabled_until' | 'out_of_credits' | 'seat_tier_level_disabled' | 'member_level_disabled' | 'seat_tier_zero_credit_limit' | 'group_zero_credit_limit' | 'member_zero_credit_limit' | 'org_service_level_disabled' | 'org_service_zero_credit_limit' | 'no_limits_configured' | 'unknown';
+    overageDisabledReason?: 'overage_not_provisioned' | 'org_level_disabled' | 'org_level_disabled_until' | 'out_of_credits' | 'seat_tier_level_disabled' | 'member_level_disabled' | 'seat_tier_zero_credit_limit' | 'group_zero_credit_limit' | 'member_zero_credit_limit' | 'org_service_level_disabled' | 'no_limits_configured' | 'fetch_error' | 'unknown';
     isUsingOverage?: boolean;
     surpassedThreshold?: number;
 };

@@ -29,6 +29,28 @@ import { createHash } from 'node:crypto';
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
 /**
+ * Platform suffix for the SDK's native CLI binary package.
+ * Follows the naming convention: `@anthropic-ai/claude-agent-sdk-{os}-{arch}`
+ */
+function getPlatformPackageName(): string | undefined {
+	const { platform, arch } = process;
+	if (platform === 'win32' && arch === 'x64') return `${SDK_PACKAGE}-win32-x64`;
+	if (platform === 'win32' && arch === 'arm64') return `${SDK_PACKAGE}-win32-arm64`;
+	if (platform === 'darwin' && arch === 'x64') return `${SDK_PACKAGE}-darwin-x64`;
+	if (platform === 'darwin' && arch === 'arm64') return `${SDK_PACKAGE}-darwin-arm64`;
+	if (platform === 'linux' && arch === 'x64') return `${SDK_PACKAGE}-linux-x64`;
+	if (platform === 'linux' && arch === 'arm64') return `${SDK_PACKAGE}-linux-arm64`;
+	return undefined;
+}
+
+/**
+ * Native CLI binary name (platform-dependent).
+ */
+function getCliBinaryName(): string {
+	return process.platform === 'win32' ? 'claude.exe' : 'claude';
+}
+
+/**
  * Check if we're running inside a Bun compiled binary.
  * In compiled binaries, process.execPath points to the binary itself,
  * not to a JS runtime. The SDK would try to use it as the runtime
@@ -70,10 +92,74 @@ export function setEmbeddedCliPath(path: string): void {
 }
 
 /**
- * Try to resolve cli.js from node_modules (dev mode).
+ * Try to resolve the CLI from node_modules (dev mode).
+ *
+ * SDK ≥ 0.2.141 ships platform-specific native binaries (`claude`) via
+ * optional dependency packages (e.g. `@anthropic-ai/claude-agent-sdk-darwin-x64`).
+ * Older versions shipped `cli.js` in the main package.
  */
 function resolveFromNodeModules(): string | undefined {
-	// Strategy 1: import.meta.resolve
+	const binaryName = getCliBinaryName();
+	const platformPkg = getPlatformPackageName();
+
+	// Strategy 1: import.meta.resolve for platform-specific native binary
+	if (platformPkg) {
+		try {
+			const resolved = import.meta.resolve?.(platformPkg);
+			if (resolved) {
+				const pkgPath = resolved.startsWith('file://') ? fileURLToPath(resolved) : resolved;
+				// The platform package has the binary at its root
+				const binPath = join(dirname(pkgPath), binaryName);
+				if (existsSync(binPath)) {
+					return binPath;
+				}
+			}
+		} catch {
+			// import.meta.resolve might not be available or package not installed
+		}
+	}
+
+	// Strategy 2: Navigate from main SDK package to bun's hoisted platform binary.
+	// Bun installs the main SDK at node_modules/.bun/@anthropic-ai+claude-agent-sdk@.../node_modules/@anthropic-ai/claude-agent-sdk/
+	// and symlinks the platform package at node_modules/.bun/node_modules/@anthropic-ai/claude-agent-sdk-{os}-{arch}/.
+	if (platformPkg) {
+		try {
+			const sdkModulePath = import.meta.resolve?.(SDK_PACKAGE);
+			if (sdkModulePath) {
+				const sdkPath = sdkModulePath.startsWith('file://')
+					? fileURLToPath(sdkModulePath)
+					: sdkModulePath;
+				// Navigate up 4 levels: @anthropic-ai/claude-agent-sdk -> node_modules -> @anthropic-ai+claude-agent-sdk@... -> .bun
+				const bunDir = dirname(dirname(dirname(dirname(sdkPath))));
+				const hoistedPath = join(bunDir, 'node_modules', platformPkg, binaryName);
+				if (existsSync(hoistedPath)) {
+					return hoistedPath;
+				}
+			}
+		} catch {
+			// import.meta.resolve might not be available
+		}
+	}
+
+	// Strategy 3: Walk up from current file to find platform-specific binary
+	if (platformPkg) {
+		try {
+			let currentDir = dirname(fileURLToPath(import.meta.url));
+			for (let i = 0; i < 10; i++) {
+				const candidate = join(currentDir, 'node_modules', platformPkg, binaryName);
+				if (existsSync(candidate)) {
+					return candidate;
+				}
+				const parentDir = dirname(currentDir);
+				if (parentDir === currentDir) break;
+				currentDir = parentDir;
+			}
+		} catch {
+			// fileURLToPath might fail for virtual paths
+		}
+	}
+
+	// Strategy 4: Legacy cli.js (SDK < 0.2.141)
 	try {
 		const sdkModulePath = import.meta.resolve?.(SDK_PACKAGE);
 		if (sdkModulePath) {
@@ -89,7 +175,7 @@ function resolveFromNodeModules(): string | undefined {
 		// import.meta.resolve might not be available
 	}
 
-	// Strategy 2: Walk up from current file
+	// Strategy 5: Walk up for legacy cli.js
 	try {
 		let currentDir = dirname(fileURLToPath(import.meta.url));
 		for (let i = 0; i < 10; i++) {
@@ -111,10 +197,9 @@ function resolveFromNodeModules(): string | undefined {
 /**
  * Extract the embedded CLI to a real filesystem path.
  *
- * The SDK spawns cli.js as a child process using a JS runtime (node/bun).
- * Child processes can't access /$bunfs/root/ virtual paths, so we extract
- * the file to a temp directory. The path is content-hashed so SDK upgrades
- * get a fresh extraction.
+ * The SDK CLI is a native binary (or legacy cli.js). Child processes can't
+ * access /$bunfs/root/ virtual paths, so we extract the file to a temp
+ * directory. The path is content-hashed so SDK upgrades get a fresh extraction.
  *
  * After extraction, attempts to link system ripgrep into the SDK's expected
  * vendor path so that sandbox mode works on Linux/macOS CI environments.
@@ -128,7 +213,9 @@ function extractEmbeddedCli(): string | undefined {
 		// Content-hash for cache busting on SDK upgrades
 		const hash = createHash('md5').update(content.subarray(0, 1024)).digest('hex').slice(0, 12);
 		const extractDir = join(tmpdir(), 'neokai-sdk', hash);
-		const extractPath = join(extractDir, 'cli.js');
+		// Use the embedded path's filename to detect native binary vs legacy cli.js
+		const baseName = embeddedCliPath.endsWith('.js') ? 'cli.js' : getCliBinaryName();
+		const extractPath = join(extractDir, baseName);
 
 		if (!existsSync(extractPath)) {
 			mkdirSync(extractDir, { recursive: true });
@@ -136,7 +223,7 @@ function extractEmbeddedCli(): string | undefined {
 		}
 
 		// Ensure vendor ripgrep binary exists for sandbox mode.
-		// The SDK checks for ripgrep at vendor/ripgrep/<platform>/rg relative to cli.js.
+		// The SDK checks for ripgrep at vendor/ripgrep/<platform>/rg relative to the CLI.
 		// In compiled binary mode the vendor directory is not bundled, so we copy
 		// the system-installed ripgrep (from apt-get / brew) if available.
 		copySystemRipgrepToVendor(extractDir);
@@ -256,7 +343,10 @@ export function _resetForTesting(): void {
 /**
  * Resolve the path to the Claude Code CLI bundled with the SDK.
  *
- * @returns Real filesystem path to cli.js, or undefined if not found
+ * SDK ≥ 0.2.141 ships a native binary (e.g. `claude`); older versions
+ * shipped `cli.js`. This function handles both.
+ *
+ * @returns Real filesystem path to the CLI, or undefined if not found
  */
 export function resolveSDKCliPath(): string | undefined {
 	if (cachedCliPath !== undefined) {

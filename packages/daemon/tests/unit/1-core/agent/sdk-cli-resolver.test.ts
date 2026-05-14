@@ -52,11 +52,14 @@ describe('sdk-cli-resolver', () => {
 	});
 
 	describe('resolveSDKCliPath', () => {
-		it('resolves cli.js from node_modules in dev mode', () => {
+		it('resolves CLI from node_modules in dev mode', () => {
 			const result = resolveSDKCliPath();
 			expect(result).toBeDefined();
-			expect(result!).toContain('cli.js');
 			expect(result!).toContain('@anthropic-ai');
+			// SDK ≥ 0.2.141 uses a native binary 'claude'; older versions used 'cli.js'
+			const hasCli =
+				result!.endsWith('claude') || result!.endsWith('claude.exe') || result!.includes('cli.js');
+			expect(hasCli).toBe(true);
 		});
 
 		it('caches the resolved path on subsequent calls', () => {
