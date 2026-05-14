@@ -422,16 +422,74 @@ describe('ReactiveDatabase', () => {
 			expect(events.length).toBe(0);
 		});
 
-		test('versions are still incremented even on aborted transaction', () => {
-			// The proxy increments version eagerly before potential emit;
-			// abort only prevents event emission, not version mutation.
+		test('versions are restored after aborting a transaction', () => {
+			// Before the transaction, versions should be at baseline.
+			expect(reactiveDb.getTableVersion('sessions')).toBe(0);
+
 			reactiveDb.beginTransaction();
 			reactiveDb.db.createSession(makeSession('abort4'));
-			const versionDuringTx = reactiveDb.getTableVersion('sessions');
+			// Version is incremented during the transaction
+			expect(reactiveDb.getTableVersion('sessions')).toBe(1);
 			reactiveDb.abortTransaction();
 
-			// Version was already incremented by the write
-			expect(versionDuringTx).toBe(1);
+			// After abort, version should be restored to pre-transaction state
+			expect(reactiveDb.getTableVersion('sessions')).toBe(0);
+		});
+
+		test('versions are restored for multiple writes on abort', () => {
+			expect(reactiveDb.getTableVersion('sessions')).toBe(0);
+
+			reactiveDb.beginTransaction();
+			reactiveDb.db.createSession(makeSession('abort5'));
+			reactiveDb.db.createSession(makeSession('abort6'));
+			reactiveDb.db.createSession(makeSession('abort7'));
+			expect(reactiveDb.getTableVersion('sessions')).toBe(3);
+			reactiveDb.abortTransaction();
+
+			expect(reactiveDb.getTableVersion('sessions')).toBe(0);
+		});
+
+		test('versions are restored for multiple tables on abort', () => {
+			expect(reactiveDb.getTableVersion('sessions')).toBe(0);
+			expect(reactiveDb.getTableVersion('sdk_messages')).toBe(0);
+
+			reactiveDb.beginTransaction();
+			reactiveDb.db.createSession(makeSession('abort8'));
+			reactiveDb.notifyChange('sdk_messages');
+			reactiveDb.notifyChange('sdk_messages');
+			expect(reactiveDb.getTableVersion('sessions')).toBe(1);
+			expect(reactiveDb.getTableVersion('sdk_messages')).toBe(2);
+			reactiveDb.abortTransaction();
+
+			expect(reactiveDb.getTableVersion('sessions')).toBe(0);
+			expect(reactiveDb.getTableVersion('sdk_messages')).toBe(0);
+		});
+
+		test('pre-existing versions are preserved after abort', () => {
+			// Write outside of transaction to establish baseline
+			reactiveDb.db.createSession(makeSession('pre-abort1'));
+			expect(reactiveDb.getTableVersion('sessions')).toBe(1);
+
+			reactiveDb.beginTransaction();
+			reactiveDb.db.createSession(makeSession('abort9'));
+			reactiveDb.db.createSession(makeSession('abort10'));
+			expect(reactiveDb.getTableVersion('sessions')).toBe(3);
+			reactiveDb.abortTransaction();
+
+			// Should restore to 1 (pre-transaction baseline)
+			expect(reactiveDb.getTableVersion('sessions')).toBe(1);
+		});
+
+		test('aborted nested transaction does not restore versions (only outermost abort does)', () => {
+			reactiveDb.beginTransaction(); // depth=1, snapshot taken
+			reactiveDb.db.createSession(makeSession('nested-abort1'));
+
+			reactiveDb.beginTransaction(); // depth=2, no new snapshot
+			reactiveDb.db.createSession(makeSession('nested-abort2'));
+			reactiveDb.abortTransaction(); // depth=1, no restore
+
+			// Versions should still be incremented (only outermost abort restores)
+			expect(reactiveDb.getTableVersion('sessions')).toBe(2);
 		});
 	});
 
