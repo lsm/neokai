@@ -219,6 +219,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		myAgentName,
 		myAgentNameAliases,
 		mySessionId,
+		replyRoutingRegistry,
 	} = config;
 
 	const agentNameAliases = new Set(
@@ -954,6 +955,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			// --- Path A: no node_id — send to the Task Agent (auto-spawn if needed) ---
 			if (!args.node_id) {
 				try {
+					// Record reply route so task-agent replies go back to this session.
+					if (replyRoutingRegistry && mySessionId) {
+						replyRoutingRegistry.set(task.id, mySessionId);
+					}
 					await taskAgentManager.ensureTaskAgentSession(task.id);
 					await taskAgentManager.injectTaskAgentMessage(
 						task.id,
@@ -964,6 +969,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							body: args.message,
 							taskId: task.id,
 							taskNumber: task.taskNumber,
+							replyToSessionId: mySessionId,
 						}),
 						true
 					);
@@ -992,6 +998,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
+			// Record reply route so node-agent replies go back to this session.
+			if (replyRoutingRegistry && mySessionId) {
+				replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName);
+			}
+
 			// Attempt direct injection when the execution already has a live session.
 			if (resolved.agentSessionId) {
 				try {
@@ -1005,6 +1016,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							taskId: task.id,
 							taskNumber: task.taskNumber,
 							nodeId: resolved.agentName,
+							replyToSessionId: mySessionId,
 						}),
 						true
 					);
@@ -1054,6 +1066,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							taskId: task.id,
 							taskNumber: task.taskNumber,
 							nodeId: resolved.agentName,
+							replyToSessionId: mySessionId,
 						}),
 						true
 					);
@@ -1091,6 +1104,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						taskId: task.id,
 						taskNumber: task.taskNumber,
 						nodeId: resolved.agentName,
+						replyToSessionId: mySessionId,
 					}),
 				});
 				queuedMessageId = record.id;

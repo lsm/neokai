@@ -3180,6 +3180,10 @@ export class TaskAgentManager {
 			spaceAgentInjector: this.config.spaceAgentInjector,
 			taskAgentManager: this,
 			artifactRepo: this.config.artifactRepo,
+			replyRoutingLookup: () => {
+				const registry = this.config.replyRoutingRegistry;
+				return registry ? registry.get(taskId) : null;
+			},
 		});
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
@@ -3256,6 +3260,7 @@ export class TaskAgentManager {
 			myAgentName: 'task-agent',
 			mySessionId: sessionId,
 			auditLogRepo: this.auditLogRepo,
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 		rehydrateMcpServers['space-agent-tools'] =
 			rehydrateSpaceAgentMcpServer as unknown as McpServerConfig;
@@ -4318,6 +4323,7 @@ export class TaskAgentManager {
 					workflowNodeId: ctx.workflowNodeId,
 				});
 			},
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 	}
 
@@ -4409,6 +4415,12 @@ export class TaskAgentManager {
 				return { sessionId: ensuredTask.taskAgentSessionId ?? '' };
 			},
 			spaceAgentInjector: this.config.spaceAgentInjector,
+			// Wire reply routing so node-agent replies to space-agent route back
+			// to the originating ad-hoc member session instead of space:chat:.
+			replyRoutingLookup: (fromAgentName) => {
+				const registry = this.config.replyRoutingRegistry;
+				return registry ? registry.get(taskId, fromAgentName) : null;
+			},
 			// Wire up the pending-message queue so node agents can queue messages for
 			// peers that haven't spawned yet (declared but inactive). The queue is
 			// drained by flushPendingMessagesForTarget() when the target session activates.
