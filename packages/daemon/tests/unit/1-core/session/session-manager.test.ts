@@ -354,15 +354,18 @@ describe('SessionManager', () => {
 			sessionManager.registerSession(fakeAgentSession);
 			sessionManager.unregisterSession('room:1:task:2:abc');
 
-			// Mock process.kill to report PID 7000 as alive (signal 0 probe succeeds).
+			// Mock process.kill to throw EPERM for PID 7000 (exists but not signalable).
+			// A successful probe would remove the PID due to ambiguous identity.
 			const originalKill = process.kill;
+			const epermError = new Error('EPERM') as Error & { code: string };
+			epermError.code = 'EPERM';
 			// @ts-expect-error — overriding for test
 			process.kill = mock((pid: number, signal: number) => {
-				if (pid === 7000 && signal === 0) return;
+				if (pid === 7000 && signal === 0) throw epermError;
 				return originalKill(pid, signal);
 			});
 			try {
-				// PIDs should survive eviction — live as live, exited as exited.
+				// Exited PIDs preserved. Live PID kept as live on EPERM.
 				const split = sessionManager.getTrackedAgentRootPidsSplit();
 				expect(split.live).toContain(7000);
 				expect(split.exited).toContain(7001);
@@ -545,11 +548,15 @@ describe('SessionManager', () => {
 			sessionManager.registerSession(fakeAgentSession);
 			await sessionManager.interruptInMemorySession('session-evicted-live');
 
-			// Mock process.kill to report PID 8000 as alive.
+			// Mock process.kill to throw EPERM for PID 8000 (exists but not signalable).
+			// A successful probe removes the PID due to ambiguous identity, but
+			// EPERM keeps it as live.
 			const originalKill = process.kill;
+			const epermError = new Error('EPERM') as Error & { code: string };
+			epermError.code = 'EPERM';
 			// @ts-expect-error — overriding for test
 			process.kill = mock((pid: number, signal: number) => {
-				if (pid === 8000 && signal === 0) return;
+				if (pid === 8000 && signal === 0) throw epermError;
 				return originalKill(pid, signal);
 			});
 			try {
@@ -593,11 +600,13 @@ describe('SessionManager', () => {
 		sessionManager.registerSession(fakeAgentSession);
 		await sessionManager.interruptInMemorySession('session-promote-live');
 
-		// Mock process.kill to report PID 9001 as alive initially.
+		// Mock process.kill to throw EPERM for PID 9001 initially (keeps as live).
+		const epermError = new Error('EPERM') as Error & { code: string };
+		epermError.code = 'EPERM';
 		const originalKill = process.kill;
 		// @ts-expect-error — overriding for test
 		process.kill = mock((pid: number, signal: number) => {
-			if (pid === 9001 && signal === 0) return;
+			if (pid === 9001 && signal === 0) throw epermError;
 			return originalKill(pid, signal);
 		});
 
@@ -610,7 +619,9 @@ describe('SessionManager', () => {
 			// Now simulate the process exiting: mock process.kill(pid, 0) to throw
 			// @ts-expect-error — overriding for test
 			process.kill = mock((_pid: number, _signal: number) => {
-				throw new Error('ESRCH');
+				const esrchError = new Error('ESRCH') as Error & { code: string };
+				esrchError.code = 'ESRCH';
+				throw esrchError;
 			});
 
 			const after = sessionManager.getTrackedAgentRootPidsSplit();
@@ -669,6 +680,98 @@ describe('SessionManager', () => {
 			// an unrelated process), the eviction timestamp is too old.
 			expect(after.live).not.toContain(9999);
 			expect(after.exited).not.toContain(9999);
+		} finally {
+			process.kill = originalKill;
+		}
+	});
+
+	it('removes evicted live root on successful probe (PID identity ambiguous)', async () => {
+		const mockSession: Session = {
+			id: 'session-identity-ambiguous',
+			title: 'Identity Ambiguous',
+			workspacePath: '/test',
+			status: 'active',
+			config: {},
+			metadata: {},
+		};
+
+		const getSplit = mock(() => ({
+			live: [7777],
+			exited: [],
+		}));
+		const fakeAgentSession = {
+			getSessionData: mock(() => mockSession),
+			cleanup: mock(async () => {
+				getSplit.mockImplementation(() => ({
+					live: [7777],
+					exited: [],
+				}));
+			}),
+			getTrackedAgentRootPidsSplit: getSplit,
+		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+		sessionManager.registerSession(fakeAgentSession);
+		await sessionManager.interruptInMemorySession('session-identity-ambiguous');
+
+		// Mock process.kill to succeed — PID exists but identity is ambiguous.
+		const originalKill = process.kill;
+		// @ts-expect-error — overriding for test
+		process.kill = mock((_pid: number, _signal: number) => {});
+
+		try {
+			const split = sessionManager.getTrackedAgentRootPidsSplit();
+			// PID should be removed from both live and exited — we cannot
+			// verify it is the same process that was evicted.
+			expect(split.live).not.toContain(7777);
+			expect(split.exited).not.toContain(7777);
+		} finally {
+			process.kill = originalKill;
+		}
+	});
+
+	it('keeps evicted live root on EPERM (process exists but not signalable)', async () => {
+		const mockSession: Session = {
+			id: 'session-eperm',
+			title: 'EPERM Test',
+			workspacePath: '/test',
+			status: 'active',
+			config: {},
+			metadata: {},
+		};
+
+		const getSplit = mock(() => ({
+			live: [6666],
+			exited: [],
+		}));
+		const fakeAgentSession = {
+			getSessionData: mock(() => mockSession),
+			cleanup: mock(async () => {
+				getSplit.mockImplementation(() => ({
+					live: [6666],
+					exited: [],
+				}));
+			}),
+			getTrackedAgentRootPidsSplit: getSplit,
+		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+		sessionManager.registerSession(fakeAgentSession);
+		await sessionManager.interruptInMemorySession('session-eperm');
+
+		// Mock process.kill to throw EPERM — process exists but not signalable.
+		const originalKill = process.kill;
+		const epermError = new Error('EPERM') as Error & { code: string };
+		epermError.code = 'EPERM';
+		// @ts-expect-error — overriding for test
+		process.kill = mock((pid: number, signal: number) => {
+			if (pid === 6666 && signal === 0) throw epermError;
+			return originalKill(pid, signal);
+		});
+
+		try {
+			const split = sessionManager.getTrackedAgentRootPidsSplit();
+			// PID should remain as live — EPERM means the process exists.
+			expect(split.live).toContain(6666);
+			expect(split.exited).not.toContain(6666);
 		} finally {
 			process.kill = originalKill;
 		}

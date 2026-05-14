@@ -138,7 +138,8 @@ export async function cleanupSuspiciousProcesses(options?: {
 			if (
 				typeof snapshot.pgid === 'number' &&
 				Number.isFinite(snapshot.pgid) &&
-				snapshot.pgid > 0
+				snapshot.pgid > 1 &&
+				ownedPids.has(snapshot.pgid)
 			) {
 				try {
 					groupKiller(snapshot.pgid, 'SIGTERM');

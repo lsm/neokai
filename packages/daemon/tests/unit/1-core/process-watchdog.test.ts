@@ -139,6 +139,73 @@ describe('process-watchdog', () => {
 		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
 	});
 
+	test('rejects PGID 1 before issuing group SIGTERM', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 1, // PGID 1 = init — kill(-1, SIGTERM) targets everything
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill must NOT be called for PGID 1
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		// Individual PID kill still fires
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('skips group kill when PGID leader is not daemon-owned', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		// PID 500 is an external process group leader — not in the daemon tree.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 500, // PGID 500 is NOT an owned PID
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill must NOT be called — PGID leader (500) is not daemon-owned
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		// Individual PID kill still fires
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
 	test('does not kill short-lived bun test processes', async () => {
 		const killProcess = mock(() => {});
 

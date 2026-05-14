@@ -635,9 +635,13 @@ export class SessionManager {
 	}
 
 	private expireEvictedRoots(now = Date.now()): void {
-		// Promote evicted live roots that have exited since last check.
-		// Uses kill(pid, 0) (signal 0) which is a cheap existence probe —
-		// it does not affect the process but throws ESRCH if the PID is gone.
+		// Probe evicted live roots and transition their tracking state.
+		// kill(pid, 0) (signal 0) is a cheap existence probe that does not
+		// affect the process. Results:
+		//  - ESRCH: PID is gone → promote to exited for PGID orphan discovery.
+		//  - EPERM: PID exists but not signalable → keep as live.
+		//  - Success: PID exists but identity is ambiguous (could be reused)
+		//    → remove from live to prevent cross-process attribution.
 		for (const [pid, evictedAt] of this.evictedLiveRootPids) {
 			// Expire live roots that outlived the retention window.
 			// This prevents PID-reuse misattribution: if the OS recycles
@@ -649,13 +653,27 @@ export class SessionManager {
 			}
 			try {
 				process.kill(pid, 0);
-			} catch {
-				// PID no longer exists — promote to exited for the PGID-based
-				// orphan discovery window.
+				// PID exists but we cannot verify it is the same process that was
+				// evicted (PID reuse is possible). Treat ambiguous probes as
+				// non-owned: remove from live tracking without promoting to exited,
+				// avoiding cross-process attribution.
 				this.evictedLiveRootPids.delete(pid);
-				if (!this.evictedExitedRootPids.has(pid)) {
-					this.evictedExitedRootPids.set(pid, now);
+			} catch (error: unknown) {
+				if (
+					error &&
+					typeof error === 'object' &&
+					'code' in error &&
+					(error as { code: string }).code === 'ESRCH'
+				) {
+					// PID no longer exists — promote to exited for the PGID-based
+					// orphan discovery window.
+					this.evictedLiveRootPids.delete(pid);
+					if (!this.evictedExitedRootPids.has(pid)) {
+						this.evictedExitedRootPids.set(pid, now);
+					}
 				}
+				// EPERM or other errors: PID exists but is not signalable.
+				// Keep as live — the root is still alive, just restricted.
 			}
 		}
 		// Expire old exited roots past the retention window.
