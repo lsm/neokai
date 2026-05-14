@@ -8,20 +8,10 @@ import { parseArgs, getHelpText } from './src/cli-utils';
 import { startProdServer } from './src/prod-server-embedded';
 import { version } from './package.json';
 
-// Embed the Claude Agent SDK's native CLI binary into the compiled binary.
-// The { type: "file" } attribute tells Bun to include this file in its
-// virtual filesystem (/$bunfs/root/), making it accessible at runtime.
-// Without this, the SDK cannot find its CLI executable in bundled binaries.
-//
-// SDK ≥ 0.2.141 ships platform-specific native binaries instead of cli.js.
-// The build script (scripts/build-binary.ts) creates a symlink at
-// packages/daemon/.embedded-sdk-cli pointing to the native binary for the
-// current platform before invoking bun build --compile.
-//
-// @ts-ignore -- Bun-specific import attribute; file only exists during builds
-import embeddedSdkCliPath from '../daemon/.embedded-sdk-cli' with { type: 'file' };
-import { setEmbeddedCliPath } from '@neokai/daemon/sdk-cli-resolver';
-setEmbeddedCliPath(embeddedSdkCliPath);
+// The SDK CLI binary is no longer embedded in the compiled binary.
+// Instead, the runtime resolver (sdk-cli-resolver.ts) downloads it
+// on first use and caches it at ~/.neokai/sdk/. This keeps the
+// compiled binary ~66 MB instead of ~266 MB.
 
 // Handle uncaught errors to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {

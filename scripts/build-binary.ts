@@ -2,8 +2,10 @@
  * Orchestrates the full binary build pipeline:
  * 1. Build web frontend (Vite)
  * 2. Generate embedded assets module
- * 3. Prepare SDK CLI link for embedding
- * 4. Compile binary with bun build --compile
+ * 3. Compile binary with bun build --compile
+ *
+ * The SDK CLI binary is NOT embedded in the compiled binary — it's
+ * downloaded on first use at runtime (see sdk-cli-resolver.ts).
  *
  * Usage:
  *   bun run scripts/build-binary.ts                             # All platforms
@@ -11,7 +13,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -25,42 +27,6 @@ const ALL_TARGETS = [
 	'bun-windows-x64',
 ];
 
-/** Detect whether the current Linux system uses musl libc. */
-function isMusl(): boolean {
-	if (process.platform !== 'linux') return false;
-	for (const libDir of ['/lib', '/lib64']) {
-		try {
-			const files = readdirSync(libDir);
-			if (files.some((f) => f.startsWith('ld-musl'))) return true;
-		} catch {
-			// Directory doesn't exist or isn't readable
-		}
-	}
-	return false;
-}
-
-/** Extract the SDK version from the daemon package.json. */
-function getSdkVersion(): string {
-	const pkgPath = join(ROOT, 'packages', 'daemon', 'package.json');
-	const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-	const dep = pkg.dependencies?.['@anthropic-ai/claude-agent-sdk'];
-	if (!dep) throw new Error('SDK dependency not found in packages/daemon/package.json');
-	// Strip workspace: or npm: prefixes, keep semver
-	return dep.replace(/^(workspace:|npm:)/, '');
-}
-
-/**
- * Map a bun build target to the SDK platform package name.
- * E.g. "bun-darwin-arm64" → "@anthropic-ai/claude-agent-sdk-darwin-arm64"
- */
-function targetToSdkPackage(target: string): string {
-	const parts = target.replace('bun-', '').split('-');
-	const os = parts[0] === 'windows' ? 'win32' : parts[0];
-	const arch = parts[1];
-	const muslSuffix = parts[2] === 'musl' ? '-musl' : '';
-	return `@anthropic-ai/claude-agent-sdk-${os}-${arch}${muslSuffix}`;
-}
-
 // Parse --target argument
 const targetIdx = process.argv.indexOf('--target');
 const targetArg = targetIdx !== -1 ? process.argv[targetIdx + 1] : null;
@@ -71,8 +37,6 @@ if (targetArg && !ALL_TARGETS.includes(targetArg)) {
 	process.exit(1);
 }
 
-// Without --target, build all platforms (used by `make compile-all` / `make release`).
-// Cross-compile targets require their SDK platform package to be installed.
 const targets = targetArg ? [targetArg] : ALL_TARGETS;
 
 function run(cmd: string) {
@@ -90,25 +54,11 @@ run('bun run scripts/generate-embedded-assets.ts');
 // Step 3: Compile binaries
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
-const sdkVersion = getSdkVersion();
-
 for (const target of targets) {
 	const platformArch = target.replace('bun-', '');
 	const outputPath = join(OUTPUT_DIR, `kai-${platformArch}`);
-	const sdkPkg = targetToSdkPackage(target);
 
-	// Step 3a: Ensure the SDK platform package for this target is installed.
-	// bun install only installs optional deps for the host platform, so
-	// cross-compile targets need an explicit install.
-	console.log(`\nStep 3: Installing SDK package for ${target}...`);
-	run(`bun add -d ${sdkPkg}@${sdkVersion}`);
-
-	// Step 3b: Prepare SDK CLI link for this target
-	console.log(`Preparing SDK CLI link for ${target}...`);
-	run(`bun run scripts/prepare-sdk-cli-link.ts --target ${target}`);
-
-	// Step 3b: Compile
-	console.log(`Compiling binary for ${target}...`);
+	console.log(`\nStep 3: Compiling binary for ${target}...`);
 	run(`bun build --compile --target=${target} --outfile=${outputPath} packages/cli/prod-entry.ts`);
 	console.log(`  -> ${outputPath}`);
 }
