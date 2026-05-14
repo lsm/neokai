@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
+import {
+	formatAgentMessage,
+	extractReplyToSessionId,
+} from '../../../../src/lib/space/agent-message-envelope.ts';
 
 describe('formatAgentMessage', () => {
 	test('formats node to space-agent messages with task context and reply instructions', () => {
@@ -102,5 +105,34 @@ describe('formatAgentMessage', () => {
 			body: 'No reply routing',
 		});
 		expect(result2).not.toContain('<reply-routing');
+	});
+});
+
+describe('extractReplyToSessionId', () => {
+	test('extracts replyToSessionId from message envelope footer', () => {
+		const message = formatAgentMessage({
+			fromLevel: 'task-agent',
+			fromAgentName: 'task-agent',
+			toLevel: 'space-agent',
+			body: 'Queued message',
+			taskId: 'task-123',
+			taskNumber: 5,
+			replyToSessionId: 'session-adhoc-42',
+		});
+		expect(extractReplyToSessionId(message)).toBe('session-adhoc-42');
+	});
+
+	test('returns null when no reply-routing footer is present', () => {
+		const message = formatAgentMessage({
+			fromLevel: 'node-agent',
+			fromAgentName: 'coder',
+			toLevel: 'node-agent',
+			body: 'No routing',
+		});
+		expect(extractReplyToSessionId(message)).toBeNull();
+	});
+
+	test('returns null for empty string', () => {
+		expect(extractReplyToSessionId('')).toBeNull();
 	});
 });

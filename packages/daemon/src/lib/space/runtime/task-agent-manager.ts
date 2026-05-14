@@ -105,7 +105,11 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import { formatAgentMessage, type AgentMessageLevel } from '../agent-message-envelope';
+import {
+	formatAgentMessage,
+	extractReplyToSessionId,
+	type AgentMessageLevel,
+} from '../agent-message-envelope';
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
@@ -1810,8 +1814,12 @@ export class TaskAgentManager {
 				// Look up reply routing at flush time so queued messages retain
 				// their original reply-to target (ad-hoc member session) instead
 				// of always going to the canonical space:chat: session.
+				// Dual strategy: (1) in-memory registry (same-process retries),
+				// (2) extract from message envelope footer (survives daemon restart).
 				const registry = this.config.replyRoutingRegistry;
-				const replyTo = registry && row.taskId ? registry.get(row.taskId) : null;
+				const replyTo =
+					(registry && row.taskId ? registry.get(row.taskId) : null) ??
+					extractReplyToSessionId(message);
 				await inject(spaceId, message, replyTo);
 				repo.markDelivered(row.id, spaceChatSessionId);
 				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
