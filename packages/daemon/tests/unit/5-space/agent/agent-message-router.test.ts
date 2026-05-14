@@ -1653,3 +1653,149 @@ describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enq
 		expect(resumedAgents).toHaveLength(0);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: replyRoutingLookup — symmetric reply routing for ad-hoc sessions
+// ---------------------------------------------------------------------------
+
+describe('AgentMessageRouter: replyRoutingLookup routes space-agent replies to originating session', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('routes space-agent message to replyToSessionId when lookup returns a value', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+
+		const injected: Array<{ spaceId: string; message: string; replyTo?: string | null }> = [];
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			taskNumber: 42,
+			spaceAgentInjector: async (spaceId, message, replyTo) => {
+				injected.push({ spaceId, message, replyTo });
+			},
+			replyRoutingLookup: () => 'session-adhoc-member-1',
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'space-agent',
+			message: 'Blocked on decision',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: 'session-adhoc-member-1' },
+		]);
+		expect(injected).toHaveLength(1);
+		expect(injected[0].replyTo).toBe('session-adhoc-member-1');
+	});
+
+	test('routes space-agent message to default space:chat: when lookup returns null', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+
+		const injected: Array<{ spaceId: string; message: string; replyTo?: string | null }> = [];
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			taskNumber: 42,
+			spaceAgentInjector: async (spaceId, message, replyTo) => {
+				injected.push({ spaceId, message, replyTo });
+			},
+			replyRoutingLookup: () => null,
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'space-agent',
+			message: 'Default routing',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
+		]);
+		expect(injected).toHaveLength(1);
+		expect(injected[0].replyTo).toBeNull();
+	});
+
+	test('routes space-agent message to default space:chat: when no replyRoutingLookup provided', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+
+		const injected: Array<{ spaceId: string; message: string; replyTo?: string | null }> = [];
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			spaceAgentInjector: async (spaceId, message, replyTo) => {
+				injected.push({ spaceId, message, replyTo });
+			},
+			// No replyRoutingLookup — backward compat
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'space-agent',
+			message: 'No lookup configured',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
+		]);
+		expect(injected).toHaveLength(1);
+		expect(injected[0].replyTo).toBeNull();
+	});
+
+	test('passes sender agentName to replyRoutingLookup for per-node resolution', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+
+		const lookupCalls: Array<string | null | undefined> = [];
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			spaceAgentInjector: async () => {},
+			replyRoutingLookup: (agentName) => {
+				lookupCalls.push(agentName ?? null);
+				return agentName === 'coder' ? 'session-adhoc-coder' : null;
+			},
+		});
+
+		await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'space-agent',
+			message: 'Node-specific routing',
+		});
+
+		expect(lookupCalls).toEqual(['coder']);
+	});
+});
