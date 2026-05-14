@@ -89,7 +89,7 @@ interface WorkflowRunReopenedEvent {
 	kind: 'workflow_run_reopened';
 	spaceId: string;
 	runId: string;
-	fromStatus: 'done' | 'cancelled';
+	fromStatus: 'done' | 'cancelled' | 'blocked';
 	reason: string;
 	by: string;
 	timestamp: string;
@@ -361,7 +361,7 @@ export class ChannelRouter {
 
 		// Auto-reopen from terminal run statuses. The status machine permits
 		// done → in_progress and cancelled → in_progress.
-		if (run.status === 'done' || run.status === 'cancelled') {
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
 			this.evictRunCache(runId);
 			await this.reopenRun(
 				run.id,
@@ -495,7 +495,7 @@ export class ChannelRouter {
 
 		// Evict gate-open cache for terminal runs so canDeliver returns accurate
 		// results even when called before deliverMessage/onGateDataChanged.
-		if (run.status === 'done' || run.status === 'cancelled') {
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
 			this.evictRunCache(runId);
 		}
 
@@ -619,7 +619,7 @@ export class ChannelRouter {
 		// since the last call — the cache entries are no longer useful and would
 		// otherwise persist until the router is GC'd. activateNode (below) handles
 		// reopening and also evicts.
-		if (run.status === 'done' || run.status === 'cancelled') {
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
 			this.evictRunCache(runId);
 		}
 
@@ -791,7 +791,7 @@ export class ChannelRouter {
 		}
 
 		// Evict gate-open cache for terminal runs. Same rationale as deliverMessage.
-		if (run.status === 'done' || run.status === 'cancelled') {
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
 			this.evictRunCache(runId);
 		}
 
@@ -989,6 +989,13 @@ export class ChannelRouter {
 		// stale cache entry. This must apply to ALL channels, not just cyclic ones.
 		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
 		if (!gateDef) return true;
+
+		// Template-backed scripted gates must always re-evaluate because their
+		// scripts can change independently of workflow.updatedAt (via getBuiltInGateScript).
+		// Caching such gates would create a fail-open path where a once-open gate
+		// bypasses evaluation even after template script updates.
+		if (workflow.templateName && gateDef.script) return true;
+
 		if (!channelIsCyclic) return false;
 		return gateDef.resetOnCycle === true;
 	}
@@ -1386,7 +1393,7 @@ export class ChannelRouter {
 	}
 
 	/**
-	 * Transition a run from a terminal status (`done` or `cancelled`) back to
+	 * Transition a run from a terminal status (`done`, `cancelled`, or `blocked`) back to
 	 * `in_progress` and emit a `workflow_run_reopened` notification.
 	 *
 	 * Callers should only invoke this after confirming the parent task has
@@ -1394,7 +1401,7 @@ export class ChannelRouter {
 	 */
 	private async reopenRun(
 		runId: string,
-		fromStatus: 'done' | 'cancelled',
+		fromStatus: 'done' | 'cancelled' | 'blocked',
 		spaceId: string,
 		reason: string,
 		by: string

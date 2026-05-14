@@ -3650,6 +3650,10 @@ describe('ChannelRouter', () => {
 					[gate]
 				);
 
+				// Verify workflow has updatedAt timestamp
+				expect(workflow.updatedAt).toBeDefined();
+				expect(workflow.updatedAt).toBeGreaterThan(0);
+
 				const run = workflowRunRepo.createRun({
 					spaceId: SPACE_ID,
 					workflowId: workflow.id,
@@ -3782,7 +3786,7 @@ describe('ChannelRouter', () => {
 				expect(result.allowed).toBe(false);
 			});
 
-			test.skip('resetOnCycle: clears persisted gate-open state', async () => {
+			test('resetOnCycle: clears persisted gate-open state', async () => {
 				const gate: Gate = {
 					id: 'reset-gate',
 					fields: [
@@ -3796,8 +3800,13 @@ describe('ChannelRouter', () => {
 					resetOnCycle: true,
 				};
 				const channels: WorkflowChannel[] = [
-					{ id: 'ch-fwd', from: 'coder', to: 'planner' }, // forward channel (index 0)
-					{ id: 'ch-bwd', from: 'planner', to: 'coder', gateId: 'reset-gate' }, // cyclic (index 1)
+					{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node' }, // forward channel (index 0)
+					{
+						id: 'ch-bwd',
+						from: 'Planner Node',
+						to: 'Coder Node',
+						gateId: 'reset-gate',
+					}, // cyclic (index 1)
 				];
 				const workflow = buildWorkflowWithGates(
 					SPACE_ID,
@@ -3836,20 +3845,22 @@ describe('ChannelRouter', () => {
 					nodeExecutionRepo: new NodeExecutionRepository(db),
 				});
 
-				// Open gate, deliver on cyclic channel to cache it
+				// resetOnCycle gates should NOT be cached across cycle boundaries
+				// First traversal: open gate, deliver, then reset
 				gateDataRepo.set(run.id, 'reset-gate', { approved: true });
 				await router.deliverMessage(run.id, 'planner', 'coder', 'msg1');
 
-				// Verify persisted state exists
-				expect(gateOpenStateRepo.isOpen(run.id, 'reset-gate').open).toBe(true);
+				// Gate data should be reset to defaults (empty object for boolean fields)
+				const gateData1 = gateDataRepo.get(run.id, 'reset-gate');
+				expect(gateData1?.data).toEqual({});
 
-				// Traverse cyclic channel again — should reset gate data to defaults
-				gateDataRepo.set(run.id, 'reset-gate', { approved: true });
-				await router.deliverMessage(run.id, 'planner', 'coder', 'msg2');
+				// Persisted cache should NOT exist (resetOnCycle prevents caching)
+				expect(gateOpenStateRepo.isOpen(run.id, 'reset-gate').open).toBe(false);
 
-				// Gate data should be reset to defaults after cyclic traversal
-				const gateData = gateDataRepo.get(run.id, 'reset-gate');
-				expect(gateData?.data).toEqual({ approved: false });
+				// Second traversal: gate is now closed (data was reset)
+				await expect(
+					router.deliverMessage(run.id, 'planner', 'coder', 'msg2')
+				).rejects.toBeInstanceOf(ChannelGateBlockedError);
 			});
 
 			test('terminal run: clears persisted gate-open state', async () => {
