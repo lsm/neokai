@@ -48,8 +48,6 @@ import {
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { computeGateDefaults } from '@neokai/shared';
-import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -3508,10 +3506,9 @@ describe('ChannelRouter', () => {
 			expect(result2.allowed).toBe(false);
 		});
 
-		test('event bus subscription evicts cache on run completion', async () => {
-			const bus = new InternalEventBus<DaemonInternalEventMap>();
+		test('terminal run status evicts cache in deliverMessage', async () => {
 			const gate: Gate = {
-				id: 'bus-eviction-gate',
+				id: 'terminal-eviction-gate',
 				fields: [
 					{
 						name: 'approved',
@@ -3523,7 +3520,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'bus-eviction-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'terminal-eviction-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -3543,47 +3540,29 @@ describe('ChannelRouter', () => {
 			const run = workflowRunRepo.createRun({
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
-				title: 'Bus Eviction Test Run',
+				title: 'Terminal Eviction Test Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Create a router WITH an event bus
-			const busRouter = new ChannelRouter({
-				taskRepo,
-				workflowRunRepo,
-				workflowManager,
-				agentManager,
-				gateDataRepo,
-				channelCycleRepo,
-				db,
-				nodeExecutionRepo: new NodeExecutionRepository(db),
-				internalEventBus: bus,
-				subscribeToRunCompletion: true,
-			});
-
 			// Open gate, deliver to cache it
-			gateDataRepo.set(run.id, 'bus-eviction-gate', { approved: true });
-			await busRouter.deliverMessage(run.id, 'coder', 'planner', 'msg');
+			gateDataRepo.set(run.id, 'terminal-eviction-gate', { approved: true });
+			await router.deliverMessage(run.id, 'coder', 'planner', 'msg');
 
-			// Close the gate data — cache should still allow delivery
-			gateDataRepo.set(run.id, 'bus-eviction-gate', { approved: false });
-			const result1 = await busRouter.canDeliver(run.id, 'coder', 'planner');
+			// Verify cache is active: close gate, delivery still succeeds
+			gateDataRepo.set(run.id, 'terminal-eviction-gate', { approved: false });
+			const result1 = await router.canDeliver(run.id, 'coder', 'planner');
 			expect(result1.allowed).toBe(true);
 
-			// Simulate the run completing (the event SpaceRuntime would publish)
-			bus.publish('space.workflowRun.completed', {
-				sessionId: 'test-session',
-				spaceId: SPACE_ID,
-				runId: run.id,
-				status: 'done',
-				timestamp: new Date().toISOString(),
-			});
+			// Complete the run
+			workflowRunRepo.transitionStatus(run.id, 'done');
 
-			// The cache should have been evicted — canDeliver now re-evaluates
-			const result2 = await busRouter.canDeliver(run.id, 'coder', 'planner');
-			expect(result2.allowed).toBe(false);
-
-			busRouter.destroy();
+			// deliverMessage detects the terminal status, evicts the cache, then
+			// re-evaluates the gate. Since the gate is closed, it throws.
+			// Without the terminal-eviction, the stale cache would have allowed
+			// delivery to succeed.
+			expect(router.deliverMessage(run.id, 'coder', 'planner', 'msg after done')).rejects.toThrow(
+				ChannelGateBlockedError
+			);
 		});
 	});
 });

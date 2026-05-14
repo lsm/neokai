@@ -4368,10 +4368,6 @@ export class TaskAgentManager {
 			// that auto-reopens a terminal run still emits `workflow_run_reopened`
 			// into the Space Agent session.
 			internalEventBus: this.config.internalEventBus,
-			// This is a long-lived router (one per node-agent session) — opt in
-			// to event-bus-driven cache eviction for completed runs. The router
-			// is destroyed when the session is torn down.
-			subscribeToRunCompletion: true,
 			onGatePendingApproval: (runId, gateId) =>
 				this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
 		});
