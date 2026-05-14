@@ -248,7 +248,7 @@ describe('SessionManager', () => {
 			expect(result).toBeNull();
 		});
 
-		it('should return cached session', async () => {
+		it('should return cached session (loaded via getSessionAsync)', async () => {
 			const mockSession: Session = {
 				id: 'test-session-id',
 				title: 'Test',
@@ -259,7 +259,10 @@ describe('SessionManager', () => {
 			};
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
 
-			// First access loads and caches
+			// Load via getAsync first
+			await sessionManager.getSessionAsync('test-session-id');
+
+			// Now getSession should return the cached session
 			const result = sessionManager.getSession('test-session-id');
 
 			expect(result).not.toBeNull();
@@ -978,8 +981,8 @@ describe('SessionManager', () => {
 			};
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
 
-			// Access session to cache it
-			sessionManager.getSession('test-id');
+			// Load session into cache via getAsync
+			await sessionManager.getSessionAsync('test-id');
 
 			const result = await sessionManager.generateTitleAndRenameBranch('test-id', 'test message');
 
@@ -1000,8 +1003,8 @@ describe('SessionManager', () => {
 			};
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
 
-			// Access session to cache it
-			sessionManager.getSession('test-id');
+			// Load session into cache via getAsync
+			await sessionManager.getSessionAsync('test-id');
 
 			const result = await sessionManager.initializeSessionWorkspace('test-id', 'test message');
 
@@ -1072,7 +1075,7 @@ describe('SessionManager', () => {
 			const persistedSession = makePersistedSession();
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
 
-			const oldSession = sessionManager.getSession('test-id');
+			const oldSession = await sessionManager.getSessionAsync('test-id');
 			expect(oldSession).toBeInstanceOf(AgentSession);
 			const lifecycleResetSpy = mock(async () => ({ success: true }));
 			// biome-ignore lint: test mock access
@@ -1094,7 +1097,7 @@ describe('SessionManager', () => {
 			const persistedSession = makePersistedSession();
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
 
-			const oldSession = sessionManager.getSession('test-id');
+			const oldSession = await sessionManager.getSessionAsync('test-id');
 			expect(oldSession).toBeInstanceOf(AgentSession);
 			const cleanupSpy = spyOn(oldSession!, 'cleanup');
 
@@ -1137,7 +1140,7 @@ describe('SessionManager', () => {
 			});
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
 
-			const oldSession = sessionManager.getSession('test-id');
+			const oldSession = await sessionManager.getSessionAsync('test-id');
 			await oldSession!.resetQuery({ restartQuery: false, hardReset: true });
 
 			expect(mockDb.updateSession).toHaveBeenCalledWith(
@@ -1164,7 +1167,7 @@ describe('SessionManager', () => {
 			const persistedSession = makePersistedSession();
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
 
-			const oldSession = sessionManager.getSession('test-id');
+			const oldSession = await sessionManager.getSessionAsync('test-id');
 			const order: string[] = [];
 			const unregister = sessionManager.registerSessionResetSubscriber(async () => {
 				order.push('subscriber:start');
@@ -1205,7 +1208,7 @@ describe('SessionManager', () => {
 			const persistedSession = makePersistedSession();
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
 
-			const oldSession = sessionManager.getSession('test-id');
+			const oldSession = await sessionManager.getSessionAsync('test-id');
 			expect(oldSession).toBeInstanceOf(AgentSession);
 			(mockDb.getSession as ReturnType<typeof mock>).mockClear();
 			const replaySpy = spyOn(

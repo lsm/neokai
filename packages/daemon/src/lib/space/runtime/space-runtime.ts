@@ -3387,7 +3387,7 @@ export class SpaceRuntime {
 				// rather than rendering a permanently-frozen card. Best-effort:
 				// the AgentSession instance may already be gone from every map.
 				try {
-					const liveSession = tam.getAgentSessionById(execution.agentSessionId);
+					const liveSession = await tam.getAgentSessionById(execution.agentSessionId);
 					if (liveSession) {
 						await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
 					}
@@ -3464,7 +3464,7 @@ export class SpaceRuntime {
 
 				// Part D guard: spare sessions waiting for user input. The agent is
 				// not stuck — a human is.
-				const liveSession = tam.getAgentSessionById(execution.agentSessionId);
+				const liveSession = await tam.getAgentSessionById(execution.agentSessionId);
 				if (liveSession?.getProcessingState().status === 'waiting_for_input') {
 					skippedWaitingForInput++;
 					continue;

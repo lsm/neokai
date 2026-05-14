@@ -73,44 +73,33 @@ describe('SessionCache', () => {
 		it('should return null for non-existent session', () => {
 			const result = cache.get('nonexistent');
 			expect(result).toBeNull();
-			expect(mockLoadFromDB).toHaveBeenCalledWith('nonexistent');
+			// get() no longer loads from DB — only checks in-memory cache
+			expect(mockLoadFromDB).not.toHaveBeenCalled();
 		});
 
-		it('should load session from database on first access', () => {
+		it('should return null for uncached session (no DB loading)', () => {
 			const result = cache.get('test-session-id');
-
-			expect(mockLoadFromDB).toHaveBeenCalledWith('test-session-id');
-			expect(mockCreateAgentSession).toHaveBeenCalledWith(mockSession);
-			expect(result).toBe(mockAgentSession);
+			expect(result).toBeNull();
+			expect(mockLoadFromDB).not.toHaveBeenCalled();
+			expect(mockCreateAgentSession).not.toHaveBeenCalled();
 		});
 
-		it('should cache session after first load', () => {
-			// First access loads from DB
-			const result1 = cache.get('test-session-id');
-			expect(mockLoadFromDB).toHaveBeenCalledTimes(1);
+		it('should return cached session without hitting DB', async () => {
+			// Load via getAsync first
+			await cache.getAsync('test-session-id');
 
-			// Second access uses cache
-			const result2 = cache.get('test-session-id');
-			expect(mockLoadFromDB).toHaveBeenCalledTimes(1); // Still 1, not called again
-
-			expect(result1).toBe(result2);
-		});
-
-		it('should throw error if session is being loaded concurrently', async () => {
-			// Start async load
-			const loadPromise = cache.getAsync('test-session-id');
-
-			// Try sync access while async is in progress
-			expect(() => cache.get('test-session-id')).toThrow(
-				'Session test-session-id is being loaded. Use getAsync() for concurrent access.'
-			);
-
-			// Wait for async to complete
-			await loadPromise;
-
-			// Now sync access should work
+			// Now get() should return the cached session without DB call
+			(mockLoadFromDB as ReturnType<typeof mock>).mockClear();
 			const result = cache.get('test-session-id');
 			expect(result).toBe(mockAgentSession);
+			expect(mockLoadFromDB).not.toHaveBeenCalled();
+		});
+
+		it('should return session set via set() without DB call', () => {
+			cache.set('manual-id', mockAgentSession);
+			const result = cache.get('manual-id');
+			expect(result).toBe(mockAgentSession);
+			expect(mockLoadFromDB).not.toHaveBeenCalled();
 		});
 	});
 

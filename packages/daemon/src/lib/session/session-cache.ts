@@ -3,8 +3,11 @@
  *
  * In-memory session caching with lazy loading and race condition prevention:
  * - Map-based storage of AgentSession instances
- * - Lazy loading from database with locking to prevent duplicate SDK connections
+ * - Async lazy loading from database with locking to prevent duplicate SDK connections
  * - Cache invalidation on session deletion
+ *
+ * IMPORTANT: The synchronous `get()` only checks the in-memory map. It never
+ * loads from DB. Callers that need lazy-loading must use `getAsync()`.
  */
 
 import type { Session } from '@neokai/shared';
@@ -41,38 +44,14 @@ export class SessionCache {
 	) {}
 
 	/**
-	 * Get session synchronously (with lazy-loading race condition fix)
+	 * Get session synchronously — in-memory cache only.
 	 *
-	 * FIX: Prevents multiple simultaneous loads of the same session
-	 * which would create duplicate Claude API connections
-	 *
-	 * @throws Error if session is currently being loaded - use getAsync() instead
+	 * Returns the cached `AgentSession` if present, otherwise `null`.
+	 * Does NOT load from the database. Callers that need lazy-loading
+	 * must use `getAsync()` instead.
 	 */
 	get(sessionId: string): AgentSession | null {
-		// Check in-memory first
-		if (this.sessions.has(sessionId)) {
-			return this.sessions.get(sessionId)!;
-		}
-
-		// Check if load already in progress
-		const loadInProgress = this.sessionLoadLocks.get(sessionId);
-		if (loadInProgress) {
-			// Wait for the load to complete (this is sync, so we throw an error)
-			// Callers should use getAsync() for concurrent access
-			throw new Error(
-				`Session ${sessionId} is being loaded. Use getAsync() for concurrent access.`
-			);
-		}
-
-		// Load synchronously (for backward compatibility)
-		const session = this.loadFromDB(sessionId);
-		if (!session) return null;
-
-		// Create agent session
-		const agentSession = this.createAgentSession(session);
-		this.sessions.set(sessionId, agentSession);
-
-		return agentSession;
+		return this.sessions.get(sessionId) ?? null;
 	}
 
 	/**
