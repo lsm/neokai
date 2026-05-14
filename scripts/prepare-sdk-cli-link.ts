@@ -40,18 +40,19 @@ function isMusl(): boolean {
 }
 
 /**
- * Parse a bun build target (e.g. "bun-linux-x64") into platform/arch components.
- * Falls back to the host platform if no target is specified.
+ * Parse a bun build target (e.g. "bun-linux-x64", "bun-linux-x64-musl") into
+ * platform/arch components. Falls back to the host platform if no target is
+ * specified.
  */
 function parseTarget(target?: string): { os: string; arch: string; musl: boolean } {
 	if (target) {
-		// target format: "bun-{os}-{arch}"
+		// target format: "bun-{os}-{arch}[-musl]"
 		// Bun uses "windows" but the SDK packages use "win32"
 		const parts = target.replace('bun-', '').split('-');
 		const os = parts[0] === 'windows' ? 'win32' : parts[0]; // win32, darwin, linux
 		const arch = parts[1]; // x64, arm64
-		// For cross-compilation to Linux, assume glibc unless the host is musl
-		const musl = os === 'linux' && isMusl();
+		// Honor explicit -musl suffix in the target string
+		const musl = parts[2] === 'musl' || (os === 'linux' && isMusl());
 		return { os, arch, musl };
 	}
 	// Auto-detect from host

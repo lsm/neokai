@@ -6,12 +6,12 @@
  * 4. Compile binary with bun build --compile
  *
  * Usage:
- *   bun run scripts/build-binary.ts                             # Host platform
+ *   bun run scripts/build-binary.ts                             # All platforms
  *   bun run scripts/build-binary.ts --target bun-darwin-arm64   # Single target
  */
 
 import { execSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -25,12 +25,18 @@ const ALL_TARGETS = [
 	'bun-windows-x64',
 ];
 
-/** Detect the host platform's build target from process.platform/arch. */
-function getHostTarget(): string {
-	const os =
-		process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'windows' : 'linux';
-	const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-	return `bun-${os}-${arch}`;
+/** Detect whether the current Linux system uses musl libc. */
+function isMusl(): boolean {
+	if (process.platform !== 'linux') return false;
+	for (const libDir of ['/lib', '/lib64']) {
+		try {
+			const files = readdirSync(libDir);
+			if (files.some((f) => f.startsWith('ld-musl'))) return true;
+		} catch {
+			// Directory doesn't exist or isn't readable
+		}
+	}
+	return false;
 }
 
 // Parse --target argument
@@ -43,9 +49,9 @@ if (targetArg && !ALL_TARGETS.includes(targetArg)) {
 	process.exit(1);
 }
 
-// Default to the host platform only. Cross-compilation requires explicit
-// --target and the corresponding SDK platform package to be installed.
-const targets = targetArg ? [targetArg] : [getHostTarget()];
+// Without --target, build all platforms (used by `make compile-all` / `make release`).
+// Cross-compile targets require their SDK platform package to be installed.
+const targets = targetArg ? [targetArg] : ALL_TARGETS;
 
 function run(cmd: string) {
 	execSync(cmd, { cwd: ROOT, stdio: 'inherit' });
