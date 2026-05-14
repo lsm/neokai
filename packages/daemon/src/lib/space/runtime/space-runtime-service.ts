@@ -74,6 +74,10 @@ export interface SpaceRuntimeServiceConfig {
 	 */
 	gateDataRepo?: GateDataRepository;
 	/**
+	 * Optional gate open state repository for persisting gate-open cache across daemon restarts.
+	 */
+	gateOpenStateRepo?: import('../../../storage/repositories/gate-open-state-repository').GateOpenStateRepository;
+	/**
 	 * Optional pending message repository for queueing messages to not-yet-spawned
 	 * workflow node agents.
 	 */
@@ -1072,6 +1076,7 @@ export class SpaceRuntimeService {
 			agentManager: this.config.spaceAgentManager,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
+			gateOpenStateRepo: this.config.gateOpenStateRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 			workspacePath,
@@ -1133,6 +1138,7 @@ export class SpaceRuntimeService {
 			agentManager: this.config.spaceAgentManager,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
+			gateOpenStateRepo: this.config.gateOpenStateRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 			workspacePath,

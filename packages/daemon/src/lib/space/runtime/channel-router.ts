@@ -44,6 +44,7 @@ import type { NodeExecution } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { GateOpenStateRepository } from '../../../storage/repositories/gate-open-state-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import {
@@ -88,7 +89,7 @@ interface WorkflowRunReopenedEvent {
 	kind: 'workflow_run_reopened';
 	spaceId: string;
 	runId: string;
-	fromStatus: 'done' | 'cancelled';
+	fromStatus: 'done' | 'cancelled' | 'blocked';
 	reason: string;
 	by: string;
 	timestamp: string;
@@ -197,6 +198,13 @@ export interface ChannelRouterConfig {
 	 */
 	gateDataRepo?: GateDataRepository;
 	/**
+	 * Gate open state repository for persisting the gate-open cache across
+	 * daemon restarts. When provided, gate-open state is read from and written
+	 * to SQLite instead of the in-memory Map. When omitted, the in-memory Map
+	 * is used (suitable for tests and standalone contexts).
+	 */
+	gateOpenStateRepo?: GateOpenStateRepository;
+	/**
 	 * Channel cycle repository for per-channel iteration tracking.
 	 * Required when workflows contain cyclic (backward) channels.
 	 */
@@ -297,6 +305,15 @@ export class ChannelRouter {
 	 */
 	private readonly gateEvaluations = new Map<string, Promise<GateEvalResult>>();
 
+	/**
+	 * Fallback in-memory cache for gate-open state when `gateOpenStateRepo`
+	 * is not provided. Stores `workflow.updatedAt` for staleness detection.
+	 *
+	 * When `gateOpenStateRepo` is set, this field is unused — the repository
+	 * persists state across daemon restarts.
+	 */
+	private readonly openedGates = new Map<string, number>();
+
 	constructor(private readonly config: ChannelRouterConfig) {
 		this.scriptSemaphore = {
 			acquired: 0,
@@ -343,8 +360,9 @@ export class ChannelRouter {
 		}
 
 		// Auto-reopen from terminal run statuses. The status machine permits
-		// done → in_progress and cancelled → in_progress.
+		// done → in_progress and cancelled → in_progress (blocked requires explicit resume).
 		if (run.status === 'done' || run.status === 'cancelled') {
+			this.evictRunCache(runId);
 			await this.reopenRun(
 				run.id,
 				run.status,
@@ -475,6 +493,12 @@ export class ChannelRouter {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) throw new ActivationError(`Run not found: ${runId}`);
 
+		// Evict gate-open cache for terminal runs so canDeliver returns accurate
+		// results even when called before deliverMessage/onGateDataChanged.
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
+			this.evictRunCache(runId);
+		}
+
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 
@@ -485,8 +509,10 @@ export class ChannelRouter {
 		}
 		const { channel, index } = match;
 
+		const channelIsCyclic = this.isChannelCyclicByIndex(index, workflow);
+
 		// ── Per-channel cycle cap check ──────────────────────────────────────
-		if (this.isChannelCyclicByIndex(index, workflow)) {
+		if (channelIsCyclic) {
 			const maxCycles = channel.maxCycles ?? 5;
 			if (this.isCycleCapReached(runId, index, maxCycles)) {
 				return {
@@ -497,7 +523,20 @@ export class ChannelRouter {
 		}
 
 		// ── Gate condition evaluation ────────────────────────────────────────
+		// Cache optimization: skip re-evaluation when the gate was previously
+		// opened (by a prior deliverMessage or onGateDataChanged), unless cyclic
+		// with `resetOnCycle`. canDeliver does NOT write to the cache — it is a
+		// non-mutating probe and must remain side-effect free so that a UI
+		// readiness check cannot permanently cache a gate as open.
 		if (channel.gateId) {
+			const skipEval =
+				this.isGateCachedOpen(runId, channel.gateId, workflow) &&
+				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+
+			if (skipEval) {
+				return { allowed: true };
+			}
+
 			const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
 			return { allowed: gateResult.open, reason: gateResult.reason };
 		}
@@ -572,7 +611,16 @@ export class ChannelRouter {
 		// closure (which would falsely suggest the work could resume once the
 		// gate opens).
 		if (this.isParentTaskArchived(runId)) {
+			this.evictRunCache(runId);
 			throw new ActivationError(ARCHIVED_TASK_ERROR_MESSAGE);
+		}
+
+		// Evict gate-open cache for terminal runs. This covers runs that completed
+		// since the last call — the cache entries are no longer useful and would
+		// otherwise persist until the router is GC'd. activateNode (below) handles
+		// reopening and also evicts.
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
+			this.evictRunCache(runId);
 		}
 
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
@@ -625,14 +673,28 @@ export class ChannelRouter {
 		// target — otherwise the tick loop would spawn agent sessions for
 		// gates that have not yet opened (e.g. Task Dispatcher activating
 		// before all 4 reviewers approve in plan-approval-gate).
+		//
+		// Cache optimization: once a gate has evaluated to `open: true`, skip
+		// re-evaluation on subsequent messages. Exception: cyclic channels
+		// whose gate has `resetOnCycle: true` must always re-evaluate because
+		// their gate data is reset on each cycle traversal.
 		if (channel?.gateId) {
-			const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
-			if (!gateResult.open) {
-				throw new ChannelGateBlockedError(
-					gateResult.reason ??
-						`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
-					channel.gateId
-				);
+			const skipEval =
+				this.isGateCachedOpen(runId, channel.gateId, workflow) &&
+				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+
+			if (!skipEval) {
+				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+				if (gateResult.open) {
+					this.cacheGateOpened(runId, channel.gateId, workflow);
+				}
+				if (!gateResult.open) {
+					throw new ChannelGateBlockedError(
+						gateResult.reason ??
+							`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
+						channel.gateId
+					);
+				}
 			}
 		}
 
@@ -657,14 +719,26 @@ export class ChannelRouter {
 		// activation check (step 3) is still useful because it short-circuits
 		// the common case without creating pending executions; this second
 		// check is the correctness backstop.
+		//
+		// Cache optimization: same as step 3 — skip re-evaluation when the gate
+		// was previously opened, unless cyclic with `resetOnCycle`.
 		if (channel?.gateId) {
-			const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
-			if (!postActivationGate.open) {
-				throw new ChannelGateBlockedError(
-					postActivationGate.reason ??
-						`Gate "${channel.gateId}" closed during activation; blocking delivery from "${fromRole}" to "${toTarget}"`,
-					channel.gateId
-				);
+			const skipEval =
+				this.isGateCachedOpen(runId, channel.gateId, workflow) &&
+				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+
+			if (!skipEval) {
+				const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
+				if (postActivationGate.open) {
+					this.cacheGateOpened(runId, channel.gateId, workflow);
+				}
+				if (!postActivationGate.open) {
+					throw new ChannelGateBlockedError(
+						postActivationGate.reason ??
+							`Gate "${channel.gateId}" closed during activation; blocking delivery from "${fromRole}" to "${toTarget}"`,
+						channel.gateId
+					);
+				}
 			}
 		}
 
@@ -711,7 +785,15 @@ export class ChannelRouter {
 
 		// Archive is the only tombstone. Done / cancelled runs are reopened
 		// below when the gate re-evaluation opens a channel requiring activation.
-		if (this.isParentTaskArchived(runId)) return [];
+		if (this.isParentTaskArchived(runId)) {
+			this.evictRunCache(runId);
+			return [];
+		}
+
+		// Evict gate-open cache for terminal runs. Same rationale as deliverMessage.
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
+			this.evictRunCache(runId);
+		}
 
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) return [];
@@ -742,6 +824,9 @@ export class ChannelRouter {
 
 		// Evaluate the gate once (shared across all channels referencing it)
 		const gateResult = await this.evaluateGateById(runId, gateId, workflow);
+		if (gateResult.open) {
+			this.cacheGateOpened(runId, gateId, workflow);
+		}
 		if (!gateResult.open) {
 			// Notify caller when the gate is waiting for human approval. Only fires for
 			// external-approval gates — those with an `approved` field with no declared
@@ -837,6 +922,154 @@ export class ChannelRouter {
 		}
 
 		return activatedTasks;
+	}
+
+	// -------------------------------------------------------------------------
+	// Gate-open cache helpers
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Generate a fingerprint for gate-open cache invalidation.
+	 *
+	 * Combines workflow.updatedAt with a hash of the gate definition to create a
+	 * stronger fingerprint than just the millisecond timestamp. This ensures that
+	 * if a workflow is edited multiple times within the same millisecond (rapid
+	 * successive edits), the fingerprint still changes and the cache invalidates.
+	 *
+	 * Uses addition instead of bitwise shift to avoid 32-bit truncation issues in
+	 * JavaScript (bitwise ops are 32-bit, so `updatedAt << 32` would wrap around).
+	 *
+	 * @param workflow - The workflow containing the gate
+	 * @param gateId - The ID of the gate to fingerprint
+	 * @returns A number combining timestamp and gate definition hash
+	 */
+	private generateGateFingerprint(workflow: SpaceWorkflow, gateId: string): number {
+		// Find the gate definition
+		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
+		if (!gateDef) return workflow.updatedAt;
+
+		// Create a simple hash from the gate definition JSON
+		// This is a fast, non-cryptographic hash suitable for cache invalidation
+		const gateJson = JSON.stringify(gateDef);
+		let hash = 0;
+		for (let i = 0; i < gateJson.length; i++) {
+			hash = (hash << 5) - hash + gateJson.charCodeAt(i);
+			hash = hash & hash; // Convert to 32-bit integer
+		}
+
+		// Combine timestamp and hash using addition instead of bitwise shift
+		// to avoid 32-bit truncation (JavaScript bitwise ops are 32-bit).
+		// This creates a unique fingerprint that changes when either the workflow
+		// is updated OR the gate definition is edited.
+		return workflow.updatedAt + hash;
+	}
+
+	/** Build the cache key for a `(runId, gateId)` pair. */
+	private gateOpenKey(runId: string, gateId: string): string {
+		return `${runId}:${gateId}`;
+	}
+
+	/**
+	 * Returns true when the gate has previously evaluated to `open: true`
+	 * AND the workflow definition has not changed since the gate was cached.
+	 *
+	 * @param workflowUpdatedAt  The workflow's `updatedAt` timestamp. When the
+	 *   workflow is updated (e.g. gate conditions tightened), the timestamp
+	 *   changes and the cache entry is considered stale — the gate is
+	 *   re-evaluated against the new definition.
+	 */
+	private isGateCachedOpen(runId: string, gateId: string, workflow: SpaceWorkflow): boolean {
+		if (this.config.gateOpenStateRepo) {
+			const state = this.config.gateOpenStateRepo.isOpen(runId, gateId);
+			if (!state.open) return false;
+			// Compare against a stronger fingerprint that combines workflow.updatedAt
+			// with a hash of the gate definition, preventing cache hits after rapid edits
+			const expectedFingerprint = this.generateGateFingerprint(workflow, gateId);
+			if (state.workflowUpdatedAt !== undefined && state.workflowUpdatedAt !== expectedFingerprint)
+				return false;
+			return true;
+		}
+		// Fallback to in-memory Map when no repository is configured
+		const cached = this.openedGates.get(this.gateOpenKey(runId, gateId));
+		if (cached === undefined) return false;
+		const expectedFingerprint = this.generateGateFingerprint(workflow, gateId);
+		if (cached !== expectedFingerprint) return false;
+		return true;
+	}
+
+	/**
+	 * Mark a gate as having been opened, storing a fingerprint for staleness checks.
+	 *
+	 * The fingerprint combines `workflow.updatedAt` with a hash of the gate
+	 * definition, ensuring cache invalidation on both workflow updates AND
+	 * gate definition edits (even rapid successive edits within the same millisecond).
+	 */
+	private cacheGateOpened(runId: string, gateId: string, workflow: SpaceWorkflow): void {
+		const fingerprint = this.generateGateFingerprint(workflow, gateId);
+		if (this.config.gateOpenStateRepo) {
+			this.config.gateOpenStateRepo.markOpened(runId, gateId, fingerprint);
+			return;
+		}
+		// Fallback to in-memory Map when no repository is configured
+		this.openedGates.set(this.gateOpenKey(runId, gateId), fingerprint);
+	}
+
+	/**
+	 * Returns true when a gate's cached open state should be *ignored* for a
+	 * given delivery context — i.e. the gate must be re-evaluated.
+	 *
+	 * This is the case when:
+	 * - The channel is cyclic AND the gate has `resetOnCycle: true`.
+	 *
+	 * For non-cyclic channels or cyclic channels whose gate does not reset,
+	 * the cached state is authoritative.
+	 */
+	private mustReevaluateGate(
+		gateId: string,
+		channelIsCyclic: boolean,
+		workflow: SpaceWorkflow
+	): boolean {
+		// Check gate existence BEFORE the cyclic-channel shortcut — if the gate
+		// definition was removed from the workflow (e.g. by a workflow edit),
+		// force re-evaluation so the gate evaluator fails closed with
+		// "Gate not found" instead of silently allowing delivery based on a
+		// stale cache entry. This must apply to ALL channels, not just cyclic ones.
+		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
+		if (!gateDef) return true;
+
+		// Template-backed scripted gates must always re-evaluate because their
+		// scripts can change independently of workflow.updatedAt (via getBuiltInGateScript).
+		// Caching such gates would create a fail-open path where a once-open gate
+		// bypasses evaluation even after template script updates.
+		if (workflow.templateName && gateDef.script) return true;
+
+		if (!channelIsCyclic) return false;
+		return gateDef.resetOnCycle === true;
+	}
+
+	/**
+	 * Evict all cached gate-open entries for a given run.
+	 *
+	 * Called automatically when `deliverMessage` or `onGateDataChanged` detects
+	 * that the run has reached a terminal status (done/cancelled), when the
+	 * parent task is archived, or when a terminal run is reopened via
+	 * `activateNode`.
+	 *
+	 * Without this, the in-memory `openedGates` set retains entries for
+	 * completed runs until the owning ChannelRouter instance is garbage-collected
+	 * (which happens when the node-agent session ends).
+	 */
+	evictRunCache(runId: string): void {
+		if (this.config.gateOpenStateRepo) {
+			this.config.gateOpenStateRepo.clearOpenedByRun(runId);
+			return;
+		}
+		// Fallback to in-memory Map when no repository is configured
+		for (const [key] of this.openedGates) {
+			if (key.startsWith(`${runId}:`)) {
+				this.openedGates.delete(key);
+			}
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -1144,6 +1377,16 @@ export class ChannelRouter {
 
 		const cyclicGates = (workflow.gates ?? []).filter((g) => g.resetOnCycle);
 
+		// Clear cached open state for all gates that are about to be reset,
+		// so the next delivery re-evaluates them against the reset data.
+		for (const gate of cyclicGates) {
+			if (this.config.gateOpenStateRepo) {
+				this.config.gateOpenStateRepo.clearOpened(runId, gate.id);
+			} else {
+				this.openedGates.delete(this.gateOpenKey(runId, gate.id));
+			}
+		}
+
 		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {
 			const transaction = this.config.db.transaction(() => {
 				for (const gate of cyclicGates) {
@@ -1197,7 +1440,7 @@ export class ChannelRouter {
 	}
 
 	/**
-	 * Transition a run from a terminal status (`done` or `cancelled`) back to
+	 * Transition a run from a terminal status (`done`, `cancelled`, or `blocked`) back to
 	 * `in_progress` and emit a `workflow_run_reopened` notification.
 	 *
 	 * Callers should only invoke this after confirming the parent task has
@@ -1205,7 +1448,7 @@ export class ChannelRouter {
 	 */
 	private async reopenRun(
 		runId: string,
-		fromStatus: 'done' | 'cancelled',
+		fromStatus: 'done' | 'cancelled' | 'blocked',
 		spaceId: string,
 		reason: string,
 		by: string

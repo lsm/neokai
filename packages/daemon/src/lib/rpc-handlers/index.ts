@@ -56,6 +56,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceGitHubService } from '../github/space-github';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
+import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
@@ -259,8 +260,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
-	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
+	const gateOpenStateRepo = new GateOpenStateRepository(deps.db.getDatabase());
+	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(
+		deps.db.getDatabase(),
+		gateOpenStateRepo
+	);
 	const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
@@ -399,6 +404,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		nodeExecutionRepo,
 		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
+		gateOpenStateRepo,
 		channelCycleRepo,
 		sessionManager: deps.sessionManager,
 		internalEventBus: deps.internalEventBus,
@@ -498,6 +504,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		gateDataRepo,
+		gateOpenStateRepo,
 		channelCycleRepo,
 		messageHub: deps.messageHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
