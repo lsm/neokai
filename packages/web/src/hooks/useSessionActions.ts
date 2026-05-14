@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback } from 'preact/hooks';
+import { useSignalEffect } from '@preact/signals';
 import type { Session, ArchiveSessionResponse } from '@neokai/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { deleteSession, listSessions, archiveSession, resetSessionQuery } from '../lib/api-helpers';
@@ -57,7 +58,12 @@ export function useSessionActions({
 		null
 	);
 
-	const isConnected = connectionState.value === 'connected';
+	// Reactive connection state — bridged from signal via useSignalEffect so
+	// callbacks (handleResetAgent, handleExportChat) always see the live value.
+	const [isConnected, setIsConnected] = useState(connectionState.value === 'connected');
+	useSignalEffect(() => {
+		setIsConnected(connectionState.value === 'connected');
+	});
 
 	const handleDeleteSession = useCallback(async () => {
 		try {
