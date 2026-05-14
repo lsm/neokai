@@ -260,9 +260,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
-	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 	const gateOpenStateRepo = new GateOpenStateRepository(deps.db.getDatabase());
+	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(
+		deps.db.getDatabase(),
+		gateOpenStateRepo
+	);
 	const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());

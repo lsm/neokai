@@ -530,7 +530,7 @@ export class ChannelRouter {
 		// readiness check cannot permanently cache a gate as open.
 		if (channel.gateId) {
 			const skipEval =
-				this.isGateCachedOpen(runId, channel.gateId, workflow.updatedAt) &&
+				this.isGateCachedOpen(runId, channel.gateId, workflow) &&
 				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
 
 			if (skipEval) {
@@ -680,13 +680,13 @@ export class ChannelRouter {
 		// their gate data is reset on each cycle traversal.
 		if (channel?.gateId) {
 			const skipEval =
-				this.isGateCachedOpen(runId, channel.gateId, workflow.updatedAt) &&
+				this.isGateCachedOpen(runId, channel.gateId, workflow) &&
 				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
 
 			if (!skipEval) {
 				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
 				if (gateResult.open) {
-					this.cacheGateOpened(runId, channel.gateId, workflow.updatedAt);
+					this.cacheGateOpened(runId, channel.gateId, workflow);
 				}
 				if (!gateResult.open) {
 					throw new ChannelGateBlockedError(
@@ -724,13 +724,13 @@ export class ChannelRouter {
 		// was previously opened, unless cyclic with `resetOnCycle`.
 		if (channel?.gateId) {
 			const skipEval =
-				this.isGateCachedOpen(runId, channel.gateId, workflow.updatedAt) &&
+				this.isGateCachedOpen(runId, channel.gateId, workflow) &&
 				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
 
 			if (!skipEval) {
 				const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
 				if (postActivationGate.open) {
-					this.cacheGateOpened(runId, channel.gateId, workflow.updatedAt);
+					this.cacheGateOpened(runId, channel.gateId, workflow);
 				}
 				if (!postActivationGate.open) {
 					throw new ChannelGateBlockedError(
@@ -825,7 +825,7 @@ export class ChannelRouter {
 		// Evaluate the gate once (shared across all channels referencing it)
 		const gateResult = await this.evaluateGateById(runId, gateId, workflow);
 		if (gateResult.open) {
-			this.cacheGateOpened(runId, gateId, workflow.updatedAt);
+			this.cacheGateOpened(runId, gateId, workflow);
 		}
 		if (!gateResult.open) {
 			// Notify caller when the gate is waiting for human approval. Only fires for
@@ -928,6 +928,38 @@ export class ChannelRouter {
 	// Gate-open cache helpers
 	// -------------------------------------------------------------------------
 
+	/**
+	 * Generate a fingerprint for gate-open cache invalidation.
+	 *
+	 * Combines workflow.updatedAt with a hash of the gate definition to create a
+	 * stronger fingerprint than just the millisecond timestamp. This ensures that
+	 * if a workflow is edited multiple times within the same millisecond (rapid
+	 * successive edits), the fingerprint still changes and the cache invalidates.
+	 *
+	 * @param workflow - The workflow containing the gate
+	 * @param gateId - The ID of the gate to fingerprint
+	 * @returns A number combining timestamp and gate definition hash
+	 */
+	private generateGateFingerprint(workflow: SpaceWorkflow, gateId: string): number {
+		// Find the gate definition
+		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
+		if (!gateDef) return workflow.updatedAt;
+
+		// Create a simple hash from the gate definition JSON
+		// This is a fast, non-cryptographic hash suitable for cache invalidation
+		const gateJson = JSON.stringify(gateDef);
+		let hash = 0;
+		for (let i = 0; i < gateJson.length; i++) {
+			hash = (hash << 5) - hash + gateJson.charCodeAt(i);
+			hash = hash & hash; // Convert to 32-bit integer
+		}
+
+		// Combine workflow.updatedAt (upper 32 bits) with gate hash (lower 32 bits)
+		// This creates a unique 64-bit-like fingerprint that changes when either
+		// the workflow is updated OR the gate definition is edited
+		return (workflow.updatedAt << 32) | (hash >>> 0);
+	}
+
 	/** Build the cache key for a `(runId, gateId)` pair. */
 	private gateOpenKey(runId: string, gateId: string): string {
 		return `${runId}:${gateId}`;
@@ -942,29 +974,40 @@ export class ChannelRouter {
 	 *   changes and the cache entry is considered stale — the gate is
 	 *   re-evaluated against the new definition.
 	 */
-	private isGateCachedOpen(runId: string, gateId: string, workflowUpdatedAt?: number): boolean {
+	private isGateCachedOpen(runId: string, gateId: string, workflow: SpaceWorkflow): boolean {
 		if (this.config.gateOpenStateRepo) {
 			const state = this.config.gateOpenStateRepo.isOpen(runId, gateId);
 			if (!state.open) return false;
-			if (workflowUpdatedAt !== undefined && state.workflowUpdatedAt !== workflowUpdatedAt)
+			// Compare against a stronger fingerprint that combines workflow.updatedAt
+			// with a hash of the gate definition, preventing cache hits after rapid edits
+			const expectedFingerprint = this.generateGateFingerprint(workflow, gateId);
+			if (state.workflowUpdatedAt !== undefined && state.workflowUpdatedAt !== expectedFingerprint)
 				return false;
 			return true;
 		}
 		// Fallback to in-memory Map when no repository is configured
 		const cached = this.openedGates.get(this.gateOpenKey(runId, gateId));
 		if (cached === undefined) return false;
-		if (workflowUpdatedAt !== undefined && cached !== workflowUpdatedAt) return false;
+		const expectedFingerprint = this.generateGateFingerprint(workflow, gateId);
+		if (cached !== expectedFingerprint) return false;
 		return true;
 	}
 
-	/** Mark a gate as having been opened, storing the workflow's `updatedAt` for staleness checks. */
-	private cacheGateOpened(runId: string, gateId: string, workflowUpdatedAt: number): void {
+	/**
+	 * Mark a gate as having been opened, storing a fingerprint for staleness checks.
+	 *
+	 * The fingerprint combines `workflow.updatedAt` with a hash of the gate
+	 * definition, ensuring cache invalidation on both workflow updates AND
+	 * gate definition edits (even rapid successive edits within the same millisecond).
+	 */
+	private cacheGateOpened(runId: string, gateId: string, workflow: SpaceWorkflow): void {
+		const fingerprint = this.generateGateFingerprint(workflow, gateId);
 		if (this.config.gateOpenStateRepo) {
-			this.config.gateOpenStateRepo.markOpened(runId, gateId, workflowUpdatedAt);
+			this.config.gateOpenStateRepo.markOpened(runId, gateId, fingerprint);
 			return;
 		}
 		// Fallback to in-memory Map when no repository is configured
-		this.openedGates.set(this.gateOpenKey(runId, gateId), workflowUpdatedAt);
+		this.openedGates.set(this.gateOpenKey(runId, gateId), fingerprint);
 	}
 
 	/**

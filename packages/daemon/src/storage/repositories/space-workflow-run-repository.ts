@@ -14,6 +14,7 @@ import type {
 } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
+import type { GateOpenStateRepository } from './gate-open-state-repository';
 
 export interface UpdateWorkflowRunParams {
 	title?: string;
@@ -25,7 +26,10 @@ export interface UpdateWorkflowRunParams {
 }
 
 export class SpaceWorkflowRunRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private gateOpenStateRepo?: GateOpenStateRepository
+	) {}
 
 	/**
 	 * Create a new workflow run
@@ -198,7 +202,15 @@ export class SpaceWorkflowRunRepository {
 		const run = this.getRun(id);
 		if (!run) throw new Error(`WorkflowRun not found: ${id}`);
 		assertValidTransition(run.status, to, id);
-		return this.updateRun(id, { status: to })!;
+		const updated = this.updateRun(id, { status: to })!;
+
+		// Clear persisted gate-open state when transitioning to terminal status
+		// This prevents stale entries from accumulating for historical runs
+		if (this.gateOpenStateRepo && (to === 'done' || to === 'cancelled' || to === 'blocked')) {
+			this.gateOpenStateRepo.clearOpenedByRun(id);
+		}
+
+		return updated;
 	}
 
 	/**
