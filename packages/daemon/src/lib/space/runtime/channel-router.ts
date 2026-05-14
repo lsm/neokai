@@ -44,6 +44,7 @@ import type { NodeExecution } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { GateOpenStateRepository } from '../../../storage/repositories/gate-open-state-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import {
@@ -197,6 +198,13 @@ export interface ChannelRouterConfig {
 	 */
 	gateDataRepo?: GateDataRepository;
 	/**
+	 * Gate open state repository for persisting the gate-open cache across
+	 * daemon restarts. When provided, gate-open state is read from and written
+	 * to SQLite instead of the in-memory Map. When omitted, the in-memory Map
+	 * is used (suitable for tests and standalone contexts).
+	 */
+	gateOpenStateRepo?: GateOpenStateRepository;
+	/**
 	 * Channel cycle repository for per-channel iteration tracking.
 	 * Required when workflows contain cyclic (backward) channels.
 	 */
@@ -298,24 +306,11 @@ export class ChannelRouter {
 	private readonly gateEvaluations = new Map<string, Promise<GateEvalResult>>();
 
 	/**
-	 * Per-(runId, gateId) set tracking gates that have been opened at least once.
+	 * Fallback in-memory cache for gate-open state when `gateOpenStateRepo`
+	 * is not provided. Stores `workflow.updatedAt` for staleness detection.
 	 *
-	 * Once a gate evaluates to `open: true`, it is cached here so that subsequent
-	 * `deliverMessage` calls skip the (potentially expensive) re-evaluation — the
-	 * gate's purpose is to gate *activation*, and after that `canSend` topology
-	 * authorization controls messaging.
-	 *
-	 * Exceptions (always re-evaluate):
-	 * - Cyclic channels whose gate has `resetOnCycle: true` — these gates are
-	 *   explicitly reset each cycle to re-control activation.
-	 *
-	 * Lifecycle:
-	 * - Cleared for a gate when `incrementAndResetCyclicChannel` resets its data.
-	 * - Cleared for an entire run via `evictRunCache()` when `deliverMessage` or
-	 *   `onGateDataChanged` detects a terminal run status (done/cancelled), when
-	 *   the parent task is archived, or when a terminal run is reopened.
-	 * - On daemon restart the cache starts empty; the first call re-evaluates and
-	 *   repopulates.
+	 * When `gateOpenStateRepo` is set, this field is unused — the repository
+	 * persists state across daemon restarts.
 	 */
 	private readonly openedGates = new Map<string, number>();
 
@@ -948,6 +943,14 @@ export class ChannelRouter {
 	 *   re-evaluated against the new definition.
 	 */
 	private isGateCachedOpen(runId: string, gateId: string, workflowUpdatedAt?: number): boolean {
+		if (this.config.gateOpenStateRepo) {
+			const state = this.config.gateOpenStateRepo.isOpen(runId, gateId);
+			if (!state.open) return false;
+			if (workflowUpdatedAt !== undefined && state.workflowUpdatedAt !== workflowUpdatedAt)
+				return false;
+			return true;
+		}
+		// Fallback to in-memory Map when no repository is configured
 		const cached = this.openedGates.get(this.gateOpenKey(runId, gateId));
 		if (cached === undefined) return false;
 		if (workflowUpdatedAt !== undefined && cached !== workflowUpdatedAt) return false;
@@ -956,6 +959,11 @@ export class ChannelRouter {
 
 	/** Mark a gate as having been opened, storing the workflow's `updatedAt` for staleness checks. */
 	private cacheGateOpened(runId: string, gateId: string, workflowUpdatedAt: number): void {
+		if (this.config.gateOpenStateRepo) {
+			this.config.gateOpenStateRepo.markOpened(runId, gateId, workflowUpdatedAt);
+			return;
+		}
+		// Fallback to in-memory Map when no repository is configured
 		this.openedGates.set(this.gateOpenKey(runId, gateId), workflowUpdatedAt);
 	}
 
@@ -998,6 +1006,11 @@ export class ChannelRouter {
 	 * (which happens when the node-agent session ends).
 	 */
 	evictRunCache(runId: string): void {
+		if (this.config.gateOpenStateRepo) {
+			this.config.gateOpenStateRepo.clearOpenedByRun(runId);
+			return;
+		}
+		// Fallback to in-memory Map when no repository is configured
 		for (const [key] of this.openedGates) {
 			if (key.startsWith(`${runId}:`)) {
 				this.openedGates.delete(key);
@@ -1313,7 +1326,11 @@ export class ChannelRouter {
 		// Clear cached open state for all gates that are about to be reset,
 		// so the next delivery re-evaluates them against the reset data.
 		for (const gate of cyclicGates) {
-			this.openedGates.delete(this.gateOpenKey(runId, gate.id));
+			if (this.config.gateOpenStateRepo) {
+				this.config.gateOpenStateRepo.clearOpened(runId, gate.id);
+			} else {
+				this.openedGates.delete(this.gateOpenKey(runId, gate.id));
+			}
 		}
 
 		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {

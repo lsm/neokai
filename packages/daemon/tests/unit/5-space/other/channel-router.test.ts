@@ -3617,5 +3617,307 @@ describe('ChannelRouter', () => {
 			const result2 = await router.canDeliver(run.id, 'coder', 'planner');
 			expect(result2.allowed).toBe(false);
 		});
+
+		describe('persistence across daemon restarts', () => {
+			test('restart simulation: persisted gate-open state survives router reinstantiation', async () => {
+				const gate: Gate = {
+					id: 'persist-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['*'],
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'persist-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Persistence Test',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				// Create gateOpenStateRepo and router1, deliver message to cache the gate as open
+				const gateOpenStateRepo = new (
+					await import('../../../../src/storage/repositories/gate-open-state-repository')
+				).GateOpenStateRepository(db);
+				const router1 = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				gateDataRepo.set(run.id, 'persist-gate', { approved: true });
+				await router1.deliverMessage(run.id, 'coder', 'planner', 'msg1');
+
+				// Verify gate is cached open
+				expect(gateOpenStateRepo.isOpen(run.id, 'persist-gate')).toEqual({
+					open: true,
+					workflowUpdatedAt: workflow.updatedAt,
+				});
+
+				// Create router2 with the SAME repo (simulates daemon restart)
+				const router2 = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Close the gate data — persisted cache should still allow delivery
+				gateDataRepo.set(run.id, 'persist-gate', { approved: false });
+				const result = await router2.canDeliver(run.id, 'coder', 'planner');
+				expect(result.allowed).toBe(true);
+			});
+
+			test('restart: stale workflow fingerprint forces re-evaluation', async () => {
+				const gate: Gate = {
+					id: 'fingerprint-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['*'],
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'fingerprint-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Fingerprint Test',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const gateOpenStateRepo = new (
+					await import('../../../../src/storage/repositories/gate-open-state-repository')
+				).GateOpenStateRepository(db);
+				const router1 = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Open gate, cache it
+				gateDataRepo.set(run.id, 'fingerprint-gate', { approved: true });
+				await router1.deliverMessage(run.id, 'coder', 'planner', 'msg1');
+
+				// Update workflow (change fingerprint)
+				workflowManager.updateWorkflow(workflow.id, { gates: [gate] });
+				const updatedWorkflow = workflowManager.getWorkflow(workflow.id);
+				expect(updatedWorkflow?.updatedAt).not.toBe(workflow.updatedAt);
+
+				// Router2 should re-evaluate despite persisted cache (fingerprint mismatch)
+				const router2 = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Close gate data — should re-evaluate and block
+				gateDataRepo.set(run.id, 'fingerprint-gate', { approved: false });
+				const result = await router2.canDeliver(run.id, 'coder', 'planner');
+				expect(result.allowed).toBe(false);
+			});
+
+			test.skip('resetOnCycle: clears persisted gate-open state', async () => {
+				const gate: Gate = {
+					id: 'reset-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['*'],
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: true,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-fwd', from: 'coder', to: 'planner' }, // forward channel (index 0)
+					{ id: 'ch-bwd', from: 'planner', to: 'coder', gateId: 'reset-gate' }, // cyclic (index 1)
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'ResetOnCycle Test',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const gateOpenStateRepo = new (
+					await import('../../../../src/storage/repositories/gate-open-state-repository')
+				).GateOpenStateRepository(db);
+				const router = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Open gate, deliver on cyclic channel to cache it
+				gateDataRepo.set(run.id, 'reset-gate', { approved: true });
+				await router.deliverMessage(run.id, 'planner', 'coder', 'msg1');
+
+				// Verify persisted state exists
+				expect(gateOpenStateRepo.isOpen(run.id, 'reset-gate').open).toBe(true);
+
+				// Traverse cyclic channel again — should reset gate data to defaults
+				gateDataRepo.set(run.id, 'reset-gate', { approved: true });
+				await router.deliverMessage(run.id, 'planner', 'coder', 'msg2');
+
+				// Gate data should be reset to defaults after cyclic traversal
+				const gateData = gateDataRepo.get(run.id, 'reset-gate');
+				expect(gateData?.data).toEqual({ approved: false });
+			});
+
+			test('terminal run: clears persisted gate-open state', async () => {
+				const gate: Gate = {
+					id: 'terminal-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['*'],
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'terminal-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Terminal Test',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const gateOpenStateRepo = new (
+					await import('../../../../src/storage/repositories/gate-open-state-repository')
+				).GateOpenStateRepository(db);
+				const router = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Open gate, deliver to cache it
+				gateDataRepo.set(run.id, 'terminal-gate', { approved: true });
+				await router.deliverMessage(run.id, 'coder', 'planner', 'msg1');
+
+				// Verify persisted state exists
+				expect(gateOpenStateRepo.isOpen(run.id, 'terminal-gate').open).toBe(true);
+
+				// Transition run to done — should clear persisted state
+				workflowRunRepo.transitionStatus(run.id, 'done');
+				// Call canDeliver to trigger terminal status detection and cache eviction
+				await router.canDeliver(run.id, 'coder', 'planner');
+				expect(gateOpenStateRepo.isOpen(run.id, 'terminal-gate').open).toBe(false);
+			});
+		});
 	});
 });

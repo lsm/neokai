@@ -173,6 +173,8 @@ export interface TaskAgentManagerConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
 	gateDataRepo: GateDataRepository;
+	/** Gate open state repository — for persisting gate-open cache across daemon restarts */
+	gateOpenStateRepo?: import('../../../storage/repositories/gate-open-state-repository').GateOpenStateRepository;
 	/** Channel cycle repository — for per-channel cycle tracking in cyclic workflows */
 	channelCycleRepo: ChannelCycleRepository;
 	/** InternalEventBus<DaemonInternalEventMap> — event bus for session state change subscriptions */
@@ -2125,6 +2127,7 @@ export class TaskAgentManager {
 				agentManager: this.config.spaceAgentManager,
 				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				gateDataRepo: this.config.gateDataRepo,
+				gateOpenStateRepo: this.config.gateOpenStateRepo,
 				channelCycleRepo: this.config.channelCycleRepo,
 				db: this.config.db.getDatabase(),
 				// Mirror the canonical resolution used by spawn/rehydrate paths:
@@ -4355,6 +4358,7 @@ export class TaskAgentManager {
 			agentManager: this.config.spaceAgentManager,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
+			gateOpenStateRepo: this.config.gateOpenStateRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
 			workspacePath,
