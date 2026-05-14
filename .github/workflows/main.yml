@@ -742,6 +742,9 @@ jobs:
       - name: Generate embedded assets
         run: bun run scripts/generate-embedded-assets.ts
 
+      - name: Prepare SDK CLI link
+        run: bun run scripts/prepare-sdk-cli-link.ts --target bun-linux-x64
+
       - name: Compile binary
         run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/kai-linux-x64 packages/cli/prod-entry.ts
 

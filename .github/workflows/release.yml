@@ -170,6 +170,9 @@ jobs:
       - name: Generate embedded assets
         run: bun run scripts/generate-embedded-assets.ts
 
+      - name: Prepare SDK CLI link
+        run: bun run scripts/prepare-sdk-cli-link.ts --target ${{ matrix.target }}
+
       - name: Compile binary
         run: bun build --compile --target=${{ matrix.target }} --outfile=dist/bin/${{ matrix.binary }} packages/cli/prod-entry.ts
 
