@@ -116,8 +116,19 @@ export async function cleanupSuspiciousProcesses(options?: {
 						// Process group may have already exited.
 					}
 				});
+	// Quick emptiness check without shelling out to ps â avoids
+	// unnecessary load on idle daemons with no tracked roots.
+	const quickResult = options?.getRootPids
+		? options.getRootPids()
+		: { live: [] as number[], exited: [] as number[] };
+	const quickLive = [...quickResult.live];
+	const quickExited = [...quickResult.exited];
+	if (quickLive.length === 0 && quickExited.length === 0) return 0;
+
+	// Only shell out to ps if there are tracked roots to process.
 	const snapshots = await lister();
 
+	// Re-fetch with snapshot for accurate identity verification.
 	const rootResult = options?.getRootPids
 		? options.getRootPids(snapshots)
 		: { live: [] as number[], exited: [] as number[] };

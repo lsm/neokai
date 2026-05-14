@@ -621,16 +621,19 @@ export class SessionManager {
 	 */
 	private async preserveRootPids(agentSession: AgentSession): Promise<void> {
 		const split = agentSession.getTrackedAgentRootPidsSplit();
-		const now = Date.now();
 
 		// Capture process start times from a contemporaneous snapshot so
 		// the PID+startTime identity guard is effective from eviction time.
 		// Without this, a PID reused before the first watchdog poll would
 		// establish the wrong baseline identity.
+		// Note: `now` is captured AFTER listProcesses() returns to avoid
+		// skewing the startTime calculation when ps collection is slow.
 		let startTimeByPid = new Map<number, number>();
+		let now = Date.now();
 		if (split.live.length > 0) {
 			try {
 				const snapshot = await listProcesses();
+				now = Date.now(); // Re-capture after ps to avoid skew
 				for (const snap of snapshot) {
 					if (split.live.includes(snap.pid)) {
 						startTimeByPid.set(snap.pid, now - snap.elapsedSeconds * 1000);
