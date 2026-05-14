@@ -51,8 +51,10 @@ function parseTarget(target?: string): { os: string; arch: string; musl: boolean
 		const parts = target.replace('bun-', '').split('-');
 		const os = parts[0] === 'windows' ? 'win32' : parts[0]; // win32, darwin, linux
 		const arch = parts[1]; // x64, arm64
-		// Honor explicit -musl suffix in the target string
-		const musl = parts[2] === 'musl' || (os === 'linux' && isMusl());
+		// Explicit target is authoritative: only use -musl when the suffix
+		// is present in the target string. Host musl detection only applies
+		// to the auto-detect (no --target) path below.
+		const musl = parts[2] === 'musl';
 		return { os, arch, musl };
 	}
 	// Auto-detect from host

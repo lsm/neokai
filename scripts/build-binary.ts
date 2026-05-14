@@ -11,7 +11,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { mkdirSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -37,6 +37,28 @@ function isMusl(): boolean {
 		}
 	}
 	return false;
+}
+
+/** Extract the SDK version from the daemon package.json. */
+function getSdkVersion(): string {
+	const pkgPath = join(ROOT, 'packages', 'daemon', 'package.json');
+	const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+	const dep = pkg.dependencies?.['@anthropic-ai/claude-agent-sdk'];
+	if (!dep) throw new Error('SDK dependency not found in packages/daemon/package.json');
+	// Strip workspace: or npm: prefixes, keep semver
+	return dep.replace(/^(workspace:|npm:)/, '');
+}
+
+/**
+ * Map a bun build target to the SDK platform package name.
+ * E.g. "bun-darwin-arm64" → "@anthropic-ai/claude-agent-sdk-darwin-arm64"
+ */
+function targetToSdkPackage(target: string): string {
+	const parts = target.replace('bun-', '').split('-');
+	const os = parts[0] === 'windows' ? 'win32' : parts[0];
+	const arch = parts[1];
+	const muslSuffix = parts[2] === 'musl' ? '-musl' : '';
+	return `@anthropic-ai/claude-agent-sdk-${os}-${arch}${muslSuffix}`;
 }
 
 // Parse --target argument
@@ -68,12 +90,21 @@ run('bun run scripts/generate-embedded-assets.ts');
 // Step 3: Compile binaries
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
+const sdkVersion = getSdkVersion();
+
 for (const target of targets) {
 	const platformArch = target.replace('bun-', '');
 	const outputPath = join(OUTPUT_DIR, `kai-${platformArch}`);
+	const sdkPkg = targetToSdkPackage(target);
 
-	// Step 3a: Prepare SDK CLI link for this target
-	console.log(`\nStep 3: Preparing SDK CLI link for ${target}...`);
+	// Step 3a: Ensure the SDK platform package for this target is installed.
+	// bun install only installs optional deps for the host platform, so
+	// cross-compile targets need an explicit install.
+	console.log(`\nStep 3: Installing SDK package for ${target}...`);
+	run(`bun add -d ${sdkPkg}@${sdkVersion}`);
+
+	// Step 3b: Prepare SDK CLI link for this target
+	console.log(`Preparing SDK CLI link for ${target}...`);
 	run(`bun run scripts/prepare-sdk-cli-link.ts --target ${target}`);
 
 	// Step 3b: Compile
