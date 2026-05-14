@@ -189,9 +189,12 @@ describe('sdk-cli-resolver', () => {
 		let readFileSyncSpy: ReturnType<typeof spyOn>;
 		let writeFileSyncSpy: ReturnType<typeof spyOn>;
 		let renameSyncSpy: ReturnType<typeof spyOn>;
+		let originalReadFileSync: typeof fs.readFileSync;
 
 		beforeEach(() => {
 			_resetForTesting();
+			// Capture original before any mocking
+			originalReadFileSync = fs.readFileSync.bind(fs);
 			chmodSyncSpy = spyOn(fs, 'chmodSync').mockImplementation(() => {});
 			renameSyncSpy = spyOn(fs, 'renameSync').mockImplementation(() => {});
 			mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(
@@ -212,6 +215,7 @@ describe('sdk-cli-resolver', () => {
 
 		it('attempts download when node_modules and cache are empty', () => {
 			const originalExistsSync = fs.existsSync.bind(fs);
+			const originalExecSync = childProcess.execSync.bind(childProcess);
 
 			existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
 				const p = String(path);
@@ -227,7 +231,8 @@ describe('sdk-cli-resolver', () => {
 					registryCalled = true;
 					throw new Error('network error simulating registry failure');
 				}
-				throw new Error(`unexpected execSync: ${cmd}`);
+				// Pass through to original for non-registry commands
+				return originalExecSync(cmd);
 			});
 
 			const result = resolveSDKCliPath();
@@ -240,23 +245,26 @@ describe('sdk-cli-resolver', () => {
 			const originalExistsSync = fs.existsSync.bind(fs);
 			const binaryName = getCliBinaryName();
 
+			// Create a tarball that won't match the expected integrity
+			const tarData = createTarGzWithFile(`package/${binaryName}`, Buffer.from('fake'));
+			const expectedIntegrity = `sha512-${require('node:crypto').createHash('sha512').update(tarData).digest('base64')}`;
+
 			existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
 				const p = String(path);
 				if (p.includes('node_modules')) return false;
 				if (p.includes('.neokai/sdk')) return false;
+				if (p.endsWith('.tgz')) return true;
 				return originalExistsSync(p);
 			});
 
-			// readFileSync returns fake tarball data for sha512 computation
+			// readFileSync: return fake data for tarball (different from tarData → integrity mismatch)
 			readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
 				const p = String(path);
 				if (p.endsWith('.tgz')) {
-					return Buffer.from('fake-tarball-data-for-hash');
+					return Buffer.from('different-tarball-data');
 				}
-				if (p.endsWith('package.json')) {
-					throw new Error('ENOENT');
-				}
-				throw new Error(`unexpected readFileSync: ${p}`);
+				// Pass through to original for other files
+				return originalReadFileSync(p);
 			});
 
 			let registryFetched = false;
@@ -267,13 +275,11 @@ describe('sdk-cli-resolver', () => {
 					return JSON.stringify({
 						dist: {
 							tarball: `https://registry.npmjs.org/fake/-/fake.tgz`,
-							integrity: 'sha512-wronghash',
+							integrity: expectedIntegrity,
 						},
 					});
 				}
-				if (c.includes('curl') && c.includes('.tgz')) {
-					return '';
-				}
+				if (c.includes('curl')) return '';
 				throw new Error(`unexpected execSync: ${cmd}`);
 			});
 
@@ -298,7 +304,6 @@ describe('sdk-cli-resolver', () => {
 				const p = String(path);
 				if (p.includes('node_modules')) return false;
 				if (p.includes('.neokai/sdk')) return false;
-				// Simulate tarball exists after mocked curl download
 				if (p.endsWith('.tgz')) return true;
 				return originalExistsSync(p);
 			});
@@ -306,8 +311,8 @@ describe('sdk-cli-resolver', () => {
 			readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
 				const p = String(path);
 				if (p.endsWith('.tgz')) return tarData;
-				if (p.endsWith('package.json')) throw new Error('ENOENT');
-				throw new Error(`unexpected readFileSync: ${p}`);
+				// Pass through to original for other files
+				return originalReadFileSync(p);
 			});
 
 			writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(
@@ -329,7 +334,7 @@ describe('sdk-cli-resolver', () => {
 						},
 					});
 				}
-				if (c.includes('curl') && c.includes('.tgz')) return '';
+				if (c.includes('curl')) return '';
 				throw new Error(`unexpected execSync: ${cmd}`);
 			});
 
@@ -357,8 +362,7 @@ describe('sdk-cli-resolver', () => {
 			readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
 				const p = String(path);
 				if (p.endsWith('.tgz')) return tarData;
-				if (p.endsWith('package.json')) throw new Error('ENOENT');
-				throw new Error(`unexpected readFileSync: ${p}`);
+				return originalReadFileSync(p);
 			});
 
 			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
@@ -371,7 +375,7 @@ describe('sdk-cli-resolver', () => {
 						},
 					});
 				}
-				if (c.includes('curl') && c.includes('.tgz')) return '';
+				if (c.includes('curl')) return '';
 				throw new Error(`unexpected execSync: ${cmd}`);
 			});
 
