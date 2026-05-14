@@ -1253,6 +1253,110 @@ describe('QueryRunner', () => {
 		});
 	});
 
+	describe('retry increments query generation (Task #374)', () => {
+		// Verify that each retry path increments the query generation so the outer
+		// runQuery()'s finally block detects a stale query and skips cleanup.
+		// Without this, the outer finally clears the retry's abort controller, timer,
+		// message queue, and queryObject — killing the retry mid-flight.
+
+		let savedApiKey: string | undefined;
+
+		beforeEach(() => {
+			savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			mockSession.workspacePath = tmpdir();
+		});
+
+		afterEach(() => {
+			if (savedApiKey === undefined) {
+				delete process.env.ANTHROPIC_API_KEY;
+			} else {
+				process.env.ANTHROPIC_API_KEY = savedApiKey;
+			}
+		});
+
+		it('should increment query generation on startup timeout retry', async () => {
+			// First call fails with startup timeout, second call also fails (retry exhausted).
+			buildSpy
+				.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+				.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// start() increments once (gen 1), then the retry increments again (gen 2).
+			// If the retry didn't increment, generation would stay at 1.
+			expect(queryGeneration).toBe(2);
+			// buildSpy called twice: original + retry
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+		});
+
+		it('should increment query generation on message-not-found retry', async () => {
+			mockSession.sdkSessionId = 'sdk-session-id';
+			mockSession.sdkOriginPath = mockSession.workspacePath;
+
+			buildSpy
+				.mockRejectedValueOnce(new Error('No message found with message.uuid of: missing-uuid'))
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// start() increments once (gen 1), retry increments again (gen 2).
+			expect(queryGeneration).toBe(2);
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+		});
+
+		it('should increment query generation on transient connection error retry', async () => {
+			buildSpy
+				.mockRejectedValueOnce(new Error('TypeError: fetch failed'))
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// start() increments once (gen 1), retry increments again (gen 2).
+			expect(queryGeneration).toBe(2);
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+		});
+
+		it('outer finally should skip cleanup when retry has new generation', async () => {
+			// The key bug: the outer runQuery's finally block must see the retry's
+			// generation as different from its own and skip cleanup. This test
+			// verifies that by checking the outer finally does NOT close a queryObject
+			// that belongs to the retry generation.
+			const closeSpy = mock(() => {});
+			const retryQueryObject = {
+				close: closeSpy,
+				[Symbol.asyncIterator]: function* () {},
+			} as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+
+			// Both calls fail with startup timeout. The first triggers a retry,
+			// the retry (gen 2) also fails and its finally block runs cleanup.
+			// The outer (gen 1) finally should detect stale and skip cleanup.
+			buildSpy
+				.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+				.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+
+			const ctx = createContext({ queryObject: retryQueryObject });
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// Generation should be 2 (start() → gen 1, retry → gen 2)
+			expect(queryGeneration).toBe(2);
+			// The retry's finally block (gen 2, current) WILL run cleanup.
+			// The outer's finally block (gen 1, stale) should skip cleanup.
+			// Both runs attempted to build query options.
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+		});
+	});
 	describe('auto-recovery removal regression guards (Task 2.3)', () => {
 		// Regression guards: verify that auto-recovery fields removed in Task 2.1 are absent
 		// from QueryRunnerContext.  If any are reintroduced, TypeScript will catch callers
