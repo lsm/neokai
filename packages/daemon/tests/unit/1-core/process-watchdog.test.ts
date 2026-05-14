@@ -44,31 +44,27 @@ describe('process-watchdog', () => {
 		const killProcess = mock(() => {});
 		const killProcessGroup = mock(() => {});
 
+		// PID 200 was an exited root (group leader). PID 123 is a suspicious
+		// orphaned descendant still in PGID 200. Group kill is safe because
+		// PGID 200 is NOT a live root.
 		const killed = await cleanupSuspiciousProcesses({
 			listProcesses: async () => [
 				{
-					pid: 100,
-					ppid: 1,
-					pgid: 100,
-					elapsedSeconds: 20 * 60,
-					command: 'claude-code-sdk',
-				},
-				{
 					pid: 123,
-					ppid: 100,
-					pgid: 100,
+					ppid: 1,
+					pgid: 200,
 					elapsedSeconds: 16 * 60,
 					command: 'bun test tests/unit/leaky.test.ts',
 				},
 			],
 			killProcess,
 			killProcessGroup,
-			getRootPids: () => ({ live: [100], exited: [] }),
+			getRootPids: () => ({ live: [], exited: [200] }),
 		});
 
 		expect(killed).toBe(1);
 		// Group kill called with pgid before individual kill
-		expect(killProcessGroup).toHaveBeenCalledWith(100, 'SIGTERM');
+		expect(killProcessGroup).toHaveBeenCalledWith(200, 'SIGTERM');
 		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
 	});
 
@@ -110,31 +106,25 @@ describe('process-watchdog', () => {
 			throw new Error('group kill failed');
 		});
 
+		// PID 200 was an exited root (group leader). PID 123 is orphaned.
 		const killed = await cleanupSuspiciousProcesses({
 			listProcesses: async () => [
 				{
-					pid: 100,
-					ppid: 1,
-					pgid: 100,
-					elapsedSeconds: 20 * 60,
-					command: 'claude-code-sdk',
-				},
-				{
 					pid: 123,
-					ppid: 100,
-					pgid: 100,
+					ppid: 1,
+					pgid: 200,
 					elapsedSeconds: 16 * 60,
 					command: 'bun test tests/unit/leaky.test.ts',
 				},
 			],
 			killProcess,
 			killProcessGroup,
-			getRootPids: () => ({ live: [100], exited: [] }),
+			getRootPids: () => ({ live: [], exited: [200] }),
 		});
 
 		expect(killed).toBe(1);
 		// Group kill was attempted but threw
-		expect(killProcessGroup).toHaveBeenCalledWith(100, 'SIGTERM');
+		expect(killProcessGroup).toHaveBeenCalledWith(200, 'SIGTERM');
 		// Direct PID signal still ran despite group kill failure
 		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
 	});
@@ -203,6 +193,41 @@ describe('process-watchdog', () => {
 		// Group kill must NOT be called — PGID leader (500) is not daemon-owned
 		expect(killProcessGroup).not.toHaveBeenCalled();
 		// Individual PID kill still fires
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('skips group kill when PGID is a live daemon root (protects active session)', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		// PID 100 is the SDK root (live). PID 123 is a suspicious child with
+		// PGID 100 — same group as the root. Group kill would kill the agent.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 100, // Same PGID as the live SDK root
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill must NOT be called — PGID 100 is the live SDK root
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		// Individual PID kill still fires for the suspicious child
 		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
 	});
 

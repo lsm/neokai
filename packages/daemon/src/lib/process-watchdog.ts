@@ -133,13 +133,16 @@ export async function cleanupSuspiciousProcesses(options?: {
 		if (!threshold) continue;
 
 		try {
-			// Signal the entire process group first (reaches tool grandchildren
+			// Signal the process group first (reaches tool grandchildren
 			// that the parent may not have forwarded signals to).
+			// The PGID must be attributable to the daemon tree (owned or a
+			// tracked root) but NOT a live root (would kill the active session).
 			if (
 				typeof snapshot.pgid === 'number' &&
 				Number.isFinite(snapshot.pgid) &&
 				snapshot.pgid > 1 &&
-				ownedPids.has(snapshot.pgid)
+				!liveRoots.has(snapshot.pgid) &&
+				(ownedPids.has(snapshot.pgid) || exitedRoots.has(snapshot.pgid))
 			) {
 				try {
 					groupKiller(snapshot.pgid, 'SIGTERM');

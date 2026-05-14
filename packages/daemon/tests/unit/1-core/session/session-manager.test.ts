@@ -322,6 +322,7 @@ describe('SessionManager', () => {
 				getSessionData: mock(() => mockSession),
 				cleanup: mock(async () => {}),
 				getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
+				getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
@@ -349,23 +350,25 @@ describe('SessionManager', () => {
 					live: [7000],
 					exited: [7001],
 				})),
+				getExitedRootPidTimestamps: mock(() => {
+					const m = new Map<number, number>();
+					m.set(7001, Date.now() - 5 * 60 * 1000);
+					return m;
+				}),
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
 			sessionManager.unregisterSession('room:1:task:2:abc');
 
-			// Mock process.kill to throw EPERM for PID 7000 (exists but not signalable).
-			// A successful probe would remove the PID due to ambiguous identity.
+			// Mock process.kill to succeed for PID 7000 (process is alive).
 			const originalKill = process.kill;
-			const epermError = new Error('EPERM') as Error & { code: string };
-			epermError.code = 'EPERM';
 			// @ts-expect-error — overriding for test
 			process.kill = mock((pid: number, signal: number) => {
-				if (pid === 7000 && signal === 0) throw epermError;
+				if (pid === 7000 && signal === 0) return;
 				return originalKill(pid, signal);
 			});
 			try {
-				// Exited PIDs preserved. Live PID kept as live on EPERM.
+				// PIDs survive eviction — live as live, exited as exited.
 				const split = sessionManager.getTrackedAgentRootPidsSplit();
 				expect(split.live).toContain(7000);
 				expect(split.exited).toContain(7001);
@@ -497,6 +500,14 @@ describe('SessionManager', () => {
 					}));
 				}),
 				getTrackedAgentRootPidsSplit: getSplit,
+				getExitedRootPidTimestamps: mock(() => {
+					const m = new Map<number, number>();
+					// Before cleanup: 5001 and 5002 already exited
+					m.set(5001, Date.now() - 3 * 60 * 1000);
+					m.set(5002, Date.now() - 7 * 60 * 1000);
+					m.set(5000, Date.now() - 1 * 60 * 1000);
+					return m;
+				}),
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
@@ -543,20 +554,17 @@ describe('SessionManager', () => {
 					}));
 				}),
 				getTrackedAgentRootPidsSplit: getSplit,
+				getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
 			await sessionManager.interruptInMemorySession('session-evicted-live');
 
-			// Mock process.kill to throw EPERM for PID 8000 (exists but not signalable).
-			// A successful probe removes the PID due to ambiguous identity, but
-			// EPERM keeps it as live.
+			// Mock process.kill to succeed for PID 8000 (process is alive).
 			const originalKill = process.kill;
-			const epermError = new Error('EPERM') as Error & { code: string };
-			epermError.code = 'EPERM';
 			// @ts-expect-error — overriding for test
 			process.kill = mock((pid: number, signal: number) => {
-				if (pid === 8000 && signal === 0) throw epermError;
+				if (pid === 8000 && signal === 0) return;
 				return originalKill(pid, signal);
 			});
 			try {
@@ -595,18 +603,17 @@ describe('SessionManager', () => {
 				}));
 			}),
 			getTrackedAgentRootPidsSplit: getSplit,
+			getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);
 		await sessionManager.interruptInMemorySession('session-promote-live');
 
-		// Mock process.kill to throw EPERM for PID 9001 initially (keeps as live).
-		const epermError = new Error('EPERM') as Error & { code: string };
-		epermError.code = 'EPERM';
+		// Mock process.kill to succeed for PID 9001 (process is alive).
 		const originalKill = process.kill;
 		// @ts-expect-error — overriding for test
 		process.kill = mock((pid: number, signal: number) => {
-			if (pid === 9001 && signal === 0) throw epermError;
+			if (pid === 9001 && signal === 0) return;
 			return originalKill(pid, signal);
 		});
 
@@ -656,6 +663,7 @@ describe('SessionManager', () => {
 				}));
 			}),
 			getTrackedAgentRootPidsSplit: getSplit,
+			getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);
@@ -685,7 +693,7 @@ describe('SessionManager', () => {
 		}
 	});
 
-	it('removes evicted live root on successful probe (PID identity ambiguous)', async () => {
+	it('keeps evicted live root on successful liveness probe', async () => {
 		const mockSession: Session = {
 			id: 'session-identity-ambiguous',
 			title: 'Identity Ambiguous',
@@ -708,21 +716,22 @@ describe('SessionManager', () => {
 				}));
 			}),
 			getTrackedAgentRootPidsSplit: getSplit,
+			getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);
 		await sessionManager.interruptInMemorySession('session-identity-ambiguous');
 
-		// Mock process.kill to succeed — PID exists but identity is ambiguous.
+		// Mock process.kill to succeed — process is alive.
 		const originalKill = process.kill;
 		// @ts-expect-error — overriding for test
 		process.kill = mock((_pid: number, _signal: number) => {});
 
 		try {
 			const split = sessionManager.getTrackedAgentRootPidsSplit();
-			// PID should be removed from both live and exited — we cannot
-			// verify it is the same process that was evicted.
-			expect(split.live).not.toContain(7777);
+			// PID should remain as live — retention window handles eventual
+			// expiry; suspicious pattern filters guard against PID reuse.
+			expect(split.live).toContain(7777);
 			expect(split.exited).not.toContain(7777);
 		} finally {
 			process.kill = originalKill;
@@ -752,6 +761,7 @@ describe('SessionManager', () => {
 				}));
 			}),
 			getTrackedAgentRootPidsSplit: getSplit,
+			getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);

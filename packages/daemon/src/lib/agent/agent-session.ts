@@ -1294,6 +1294,16 @@ export class AgentSession
 		};
 	}
 
+	/**
+	 * Returns exit timestamps for recently-exited agent root PIDs.
+	 * Used by SessionManager to preserve accurate retention windows
+	 * when snapshots are transferred to the evicted-root maps.
+	 */
+	getExitedRootPidTimestamps(): Map<number, number> {
+		this.expireRecentlyExitedAgentRootPids();
+		return new Map(this.recentlyExitedAgentRootPids);
+	}
+
 	snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]> {
 		return [...this.trackedAgentProcesses];
 	}

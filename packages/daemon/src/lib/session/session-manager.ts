@@ -626,10 +626,13 @@ export class SessionManager {
 		for (const pid of split.live) {
 			if (!this.evictedLiveRootPids.has(pid)) this.evictedLiveRootPids.set(pid, now);
 		}
-		// Preserve exited PIDs with their actual exit timestamp.
-		for (const pid of split.exited) {
+		// Preserve exited PIDs with their actual exit timestamp from the
+		// AgentSession, not Date.now(), so the retention window reflects
+		// real process exit time rather than eviction time.
+		const exitTimestamps = agentSession.getExitedRootPidTimestamps();
+		for (const [pid, exitedAt] of exitTimestamps) {
 			if (!this.evictedExitedRootPids.has(pid)) {
-				this.evictedExitedRootPids.set(pid, now);
+				this.evictedExitedRootPids.set(pid, exitedAt);
 			}
 		}
 	}
@@ -641,7 +644,9 @@ export class SessionManager {
 		//  - ESRCH: PID is gone → promote to exited for PGID orphan discovery.
 		//  - EPERM: PID exists but not signalable → keep as live.
 		//  - Success: PID exists but identity is ambiguous (could be reused)
-		//    → remove from live to prevent cross-process attribution.
+		//  - Success: PID exists → keep as live (retention window handles
+		//    the rare case of PID reuse within the retention window).
+		//    eventual expiry; suspicious pattern filters guard against
 		for (const [pid, evictedAt] of this.evictedLiveRootPids) {
 			// Expire live roots that outlived the retention window.
 			// This prevents PID-reuse misattribution: if the OS recycles
@@ -653,11 +658,9 @@ export class SessionManager {
 			}
 			try {
 				process.kill(pid, 0);
-				// PID exists but we cannot verify it is the same process that was
-				// evicted (PID reuse is possible). Treat ambiguous probes as
-				// non-owned: remove from live tracking without promoting to exited,
-				// avoiding cross-process attribution.
-				this.evictedLiveRootPids.delete(pid);
+				// PID still exists — keep as live. PID reuse within the
+				// retention window is extremely rare on modern systems, and
+				// the suspicious pattern filters provide an additional safeguard.
 			} catch (error: unknown) {
 				if (
 					error &&
