@@ -498,6 +498,12 @@ export class ChannelRouter {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) throw new ActivationError(`Run not found: ${runId}`);
 
+		// Evict gate-open cache for terminal runs so canDeliver returns accurate
+		// results even when called before deliverMessage/onGateDataChanged.
+		if (run.status === 'done' || run.status === 'cancelled') {
+			this.evictRunCache(runId);
+		}
+
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 
