@@ -31,7 +31,7 @@ import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
-import type { ProcessSnapshot } from '../process-watchdog';
+import { listProcesses, type ProcessSnapshot } from '../process-watchdog';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
@@ -477,10 +477,10 @@ export class SessionManager {
 	 * Currently called by TaskAgentManager when a task agent session is torn down.
 	 * Space runtime callers will be added as that subsystem is wired up.
 	 */
-	unregisterSession(sessionId: string): void {
+	async unregisterSession(sessionId: string): Promise<void> {
 		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
 		if (agentSession) {
-			this.preserveRootPids(agentSession);
+			await this.preserveRootPids(agentSession);
 		}
 		this.sessionCache.remove(sessionId);
 	}
@@ -597,7 +597,7 @@ export class SessionManager {
 			// transitioned to exited with real exit timestamps. Any
 			// stubborn live roots that survive cleanup are preserved as
 			// live so the watchdog tracks them correctly.
-			this.preserveRootPids(agentSession);
+			await this.preserveRootPids(agentSession);
 		}
 		this.sessionCache.remove(sessionId);
 	}
@@ -619,15 +619,38 @@ export class SessionManager {
 	 * Exited PIDs are preserved with their actual exit timestamp for the
 	 * 15-minute retention window.
 	 */
-	private preserveRootPids(agentSession: AgentSession): void {
+	private async preserveRootPids(agentSession: AgentSession): Promise<void> {
 		const split = agentSession.getTrackedAgentRootPidsSplit();
 		const now = Date.now();
+
+		// Capture process start times from a contemporaneous snapshot so
+		// the PID+startTime identity guard is effective from eviction time.
+		// Without this, a PID reused before the first watchdog poll would
+		// establish the wrong baseline identity.
+		let startTimeByPid = new Map<number, number>();
+		if (split.live.length > 0) {
+			try {
+				const snapshot = await listProcesses();
+				for (const snap of snapshot) {
+					if (split.live.includes(snap.pid)) {
+						startTimeByPid.set(snap.pid, now - snap.elapsedSeconds * 1000);
+					}
+				}
+			} catch {
+				// Process listing failed â start times remain unknown.
+			}
+		}
+
 		// Preserve live PIDs as live so the watchdog can track them
 		// as live roots (not exited) while the process is still running.
-		// Store startTime as 0 (unknown) — populated on first snapshot-based probe.
+		// startTime is captured from the process snapshot above, or 0 if
+		// unavailable (will be populated on first snapshot-based probe).
 		for (const pid of split.live) {
 			if (!this.evictedLiveRootPids.has(pid))
-				this.evictedLiveRootPids.set(pid, { evictedAt: now, startTime: 0 });
+				this.evictedLiveRootPids.set(pid, {
+					evictedAt: now,
+					startTime: startTimeByPid.get(pid) ?? 0,
+				});
 		}
 		// Preserve exited PIDs with their actual exit timestamp from the
 		// AgentSession, not Date.now(), so the retention window reflects
@@ -651,6 +674,11 @@ export class SessionManager {
 				this.evictedLiveRootPids.delete(pid);
 				continue;
 			}
+
+			// Without a real snapshot we cannot reliably determine whether
+			// the process is still running or the PID was reused, so we skip
+			// live-root promotion to avoid false attribution.
+			if (snapshot.length === 0) continue;
 
 			const snap = snapshotByPid.get(pid);
 			if (!snap) {

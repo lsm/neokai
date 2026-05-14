@@ -326,7 +326,7 @@ describe('SessionManager', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
-			sessionManager.unregisterSession('room:1:task:2:xyz');
+			await sessionManager.unregisterSession('room:1:task:2:xyz');
 
 			// After unregister, getSession should return null (not in cache, not in DB)
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(null);
@@ -334,7 +334,7 @@ describe('SessionManager', () => {
 			expect(result).toBeNull();
 		});
 
-		it('unregisterSession preserves live and exited root PIDs for watchdog', () => {
+		it('unregisterSession preserves live and exited root PIDs for watchdog', async () => {
 			const mockSession: Session = {
 				id: 'room:1:task:2:abc',
 				title: 'Room Session',
@@ -358,7 +358,7 @@ describe('SessionManager', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
-			sessionManager.unregisterSession('room:1:task:2:abc');
+			await sessionManager.unregisterSession('room:1:task:2:abc');
 
 			// Pass snapshot with PID 7000 so snapshot-based identity
 			// verification confirms it as live (first probe captures startTime).
@@ -602,10 +602,47 @@ describe('SessionManager', () => {
 		expect(before.live).toContain(9001);
 		expect(before.exited).not.toContain(9001);
 
-		// Without snapshot, PID is not found in the process table â promoted to exited.
-		const after = sessionManager.getTrackedAgentRootPidsSplit();
+		// Pass snapshot without PID 9001 (process exited) â promoted to exited.
+		const otherSnapshot = [{ pid: 1, ppid: 0, pgid: 1, elapsedSeconds: 100, command: 'init' }];
+		const after = sessionManager.getTrackedAgentRootPidsSplit(otherSnapshot);
 		expect(after.live).not.toContain(9001);
 		expect(after.exited).toContain(9001);
+	});
+
+	it('skips live-root promotion when no snapshot is provided', async () => {
+		const mockSession: Session = {
+			id: 'session-no-snapshot',
+			title: 'No Snapshot',
+			workspacePath: '/test',
+			status: 'active',
+			config: {},
+			metadata: {},
+		};
+
+		const getSplit = mock(() => ({
+			live: [9002],
+			exited: [],
+		}));
+		const fakeAgentSession = {
+			getSessionData: mock(() => mockSession),
+			cleanup: mock(async () => {
+				getSplit.mockImplementation(() => ({
+					live: [9002],
+					exited: [],
+				}));
+			}),
+			getTrackedAgentRootPidsSplit: getSplit,
+			getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
+		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+		sessionManager.registerSession(fakeAgentSession);
+		await sessionManager.interruptInMemorySession('session-no-snapshot');
+
+		// Without a snapshot, the evicted live root stays live â no false
+		// promotion to exited when the process table is unavailable.
+		const split = sessionManager.getTrackedAgentRootPidsSplit();
+		expect(split.live).toContain(9002);
+		expect(split.exited).not.toContain(9002);
 	});
 
 	it('removes evicted live root past retention window (PID reuse safety)', async () => {
