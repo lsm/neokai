@@ -5,6 +5,7 @@
 import { describe, expect, it, beforeEach, afterEach, spyOn } from 'bun:test';
 import * as fs from 'node:fs';
 import * as childProcess from 'node:child_process';
+import * as zlib from 'node:zlib';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -126,14 +127,68 @@ describe('sdk-cli-resolver', () => {
 			expect(result).toBeDefined();
 			expect(result!).toContain('.neokai/sdk');
 		});
+
+		it('skips cache when file is empty or zero-size', () => {
+			const originalExistsSync = fs.existsSync.bind(fs);
+			const binaryName = getCliBinaryName();
+
+			lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) {
+					return { isFile: () => true, size: 0 } as unknown as fs.Stats;
+				}
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', path: p });
+			});
+
+			existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.includes('node_modules')) return false;
+				if (p.endsWith('/rg')) return false;
+				if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) return true;
+				return originalExistsSync(p);
+			});
+
+			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+				throw new Error('download also fails');
+			});
+
+			const result = resolveSDKCliPath();
+			expect(result).toBeUndefined();
+		});
+
+		it('skips cache when lstatSync throws', () => {
+			const originalExistsSync = fs.existsSync.bind(fs);
+			const binaryName = getCliBinaryName();
+
+			lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation(() => {
+				throw new Error('EACCES');
+			});
+
+			existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.includes('node_modules')) return false;
+				if (p.endsWith('/rg')) return false;
+				if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) return true;
+				return originalExistsSync(p);
+			});
+
+			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+				throw new Error('download also fails');
+			});
+
+			const result = resolveSDKCliPath();
+			expect(result).toBeUndefined();
+		});
 	});
 
 	describe('auto-download', () => {
 		let existsSyncSpy: ReturnType<typeof spyOn>;
 		let execSyncSpy: ReturnType<typeof spyOn>;
 		let mkdirSyncSpy: ReturnType<typeof spyOn>;
-		let renameSyncSpy: ReturnType<typeof spyOn>;
 		let chmodSyncSpy: ReturnType<typeof spyOn>;
+		let readFileSyncSpy: ReturnType<typeof spyOn>;
+		let writeFileSyncSpy: ReturnType<typeof spyOn>;
+		let renameSyncSpy: ReturnType<typeof spyOn>;
 
 		beforeEach(() => {
 			_resetForTesting();
@@ -142,6 +197,7 @@ describe('sdk-cli-resolver', () => {
 			mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(
 				() => undefined as unknown as string
 			);
+			writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 		});
 
 		afterEach(() => {
@@ -150,6 +206,8 @@ describe('sdk-cli-resolver', () => {
 			mkdirSyncSpy.mockRestore();
 			renameSyncSpy.mockRestore();
 			chmodSyncSpy.mockRestore();
+			readFileSyncSpy?.mockRestore();
+			writeFileSyncSpy.mockRestore();
 		});
 
 		it('attempts download when node_modules and cache are empty', () => {
@@ -162,19 +220,162 @@ describe('sdk-cli-resolver', () => {
 				return originalExistsSync(p);
 			});
 
-			let packCalled = false;
+			let registryCalled = false;
 			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
 				const c = String(cmd);
-				if (c.includes('npm pack')) {
-					packCalled = true;
-					throw new Error('network error simulating download failure');
+				if (c.includes('registry.npmjs.org')) {
+					registryCalled = true;
+					throw new Error('network error simulating registry failure');
 				}
 				throw new Error(`unexpected execSync: ${cmd}`);
 			});
 
 			const result = resolveSDKCliPath();
 
-			expect(packCalled).toBe(true);
+			expect(registryCalled).toBe(true);
+			expect(result).toBeUndefined();
+		});
+
+		it('verifies integrity hash before extracting', () => {
+			const originalExistsSync = fs.existsSync.bind(fs);
+			const binaryName = getCliBinaryName();
+
+			existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.includes('node_modules')) return false;
+				if (p.includes('.neokai/sdk')) return false;
+				return originalExistsSync(p);
+			});
+
+			// readFileSync returns fake tarball data for sha512 computation
+			readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.endsWith('.tgz')) {
+					return Buffer.from('fake-tarball-data-for-hash');
+				}
+				if (p.endsWith('package.json')) {
+					throw new Error('ENOENT');
+				}
+				throw new Error(`unexpected readFileSync: ${p}`);
+			});
+
+			let registryFetched = false;
+			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
+				const c = String(cmd);
+				if (c.includes('registry.npmjs.org')) {
+					registryFetched = true;
+					return JSON.stringify({
+						dist: {
+							tarball: `https://registry.npmjs.org/fake/-/fake.tgz`,
+							integrity: 'sha512-wronghash',
+						},
+					});
+				}
+				if (c.includes('curl') && c.includes('.tgz')) {
+					return '';
+				}
+				throw new Error(`unexpected execSync: ${cmd}`);
+			});
+
+			const result = resolveSDKCliPath();
+
+			expect(registryFetched).toBe(true);
+			// Integrity mismatch should cause failure
+			expect(result).toBeUndefined();
+		});
+
+		it('extracts binary with pure-JS tar parser when integrity matches', () => {
+			const originalExistsSync = fs.existsSync.bind(fs);
+			const binaryName = getCliBinaryName();
+
+			// Create a valid tar.gz in memory with the binary
+			const binaryContent = Buffer.from('#!/bin/bash\necho claude');
+			const tarData = createTarGzWithFile(`package/${binaryName}`, binaryContent);
+			const expectedIntegrity = `sha512-${require('node:crypto').createHash('sha512').update(tarData).digest('base64')}`;
+
+			let extractedContent: Buffer | undefined;
+			existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.includes('node_modules')) return false;
+				if (p.includes('.neokai/sdk')) return false;
+				// Simulate tarball exists after mocked curl download
+				if (p.endsWith('.tgz')) return true;
+				return originalExistsSync(p);
+			});
+
+			readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.endsWith('.tgz')) return tarData;
+				if (p.endsWith('package.json')) throw new Error('ENOENT');
+				throw new Error(`unexpected readFileSync: ${p}`);
+			});
+
+			writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(
+				(path: fs.PathLike, data: unknown) => {
+					const p = String(path);
+					if (p.endsWith(binaryName) && !p.includes('.neokai')) {
+						extractedContent = Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array);
+					}
+				}
+			);
+
+			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
+				const c = String(cmd);
+				if (c.includes('registry.npmjs.org')) {
+					return JSON.stringify({
+						dist: {
+							tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
+							integrity: expectedIntegrity,
+						},
+					});
+				}
+				if (c.includes('curl') && c.includes('.tgz')) return '';
+				throw new Error(`unexpected execSync: ${cmd}`);
+			});
+
+			const result = resolveSDKCliPath();
+
+			expect(result).toBeDefined();
+			expect(result!).toContain('.neokai/sdk');
+		});
+
+		it('fails when binary is missing from tarball', () => {
+			const originalExistsSync = fs.existsSync.bind(fs);
+
+			// Create a tar.gz without the expected binary
+			const tarData = createTarGzWithFile('package/other-file.txt', Buffer.from('hello'));
+			const expectedIntegrity = `sha512-${require('node:crypto').createHash('sha512').update(tarData).digest('base64')}`;
+
+			existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.includes('node_modules')) return false;
+				if (p.includes('.neokai/sdk')) return false;
+				if (p.endsWith('.tgz')) return true;
+				return originalExistsSync(p);
+			});
+
+			readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
+				const p = String(path);
+				if (p.endsWith('.tgz')) return tarData;
+				if (p.endsWith('package.json')) throw new Error('ENOENT');
+				throw new Error(`unexpected readFileSync: ${p}`);
+			});
+
+			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
+				const c = String(cmd);
+				if (c.includes('registry.npmjs.org')) {
+					return JSON.stringify({
+						dist: {
+							tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
+							integrity: expectedIntegrity,
+						},
+					});
+				}
+				if (c.includes('curl') && c.includes('.tgz')) return '';
+				throw new Error(`unexpected execSync: ${cmd}`);
+			});
+
+			const result = resolveSDKCliPath();
 			expect(result).toBeUndefined();
 		});
 	});
@@ -198,3 +399,60 @@ describe('sdk-cli-resolver', () => {
 		});
 	});
 });
+
+// ─── Test helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Create a valid gzip-compressed tar archive containing a single file.
+ * Used to test the pure-JS tar extraction without external dependencies.
+ */
+function createTarGzWithFile(fileName: string, content: Buffer): Buffer {
+	// Build tar header (512 bytes)
+	const header = Buffer.alloc(512, 0);
+
+	// File name (100 bytes)
+	header.write(fileName, 0, 'utf-8');
+
+	// File mode (8 bytes, octal)
+	header.write('0000644\0', 100, 'utf-8');
+
+	// UID (8 bytes, octal)
+	header.write('0000000\0', 108, 'utf-8');
+
+	// GID (8 bytes, octal)
+	header.write('0000000\0', 116, 'utf-8');
+
+	// File size (12 bytes, octal)
+	const sizeOctal = content.length.toString(8).padStart(11, '0') + '\0';
+	header.write(sizeOctal, 124, 'utf-8');
+
+	// Modification time (12 bytes, octal)
+	header.write('00000000000\0', 136, 'utf-8');
+
+	// Checksum placeholder (8 bytes of spaces)
+	header.write('        ', 148, 'utf-8');
+
+	// Type flag (1 byte) — regular file
+	header.write('0', 156, 'utf-8');
+
+	// Compute checksum (sum of all header bytes, with checksum field as spaces)
+	let checksum = 0;
+	for (let i = 0; i < 512; i++) {
+		checksum += header[i];
+	}
+	const checksumOctal = checksum.toString(8).padStart(6, '0') + '\0 ';
+	header.write(checksumOctal, 148, 'utf-8');
+
+	// Pad content to 512-byte boundary
+	const contentPadded = Buffer.alloc(Math.ceil(content.length / 512) * 512, 0);
+	content.copy(contentPadded);
+
+	// End-of-archive marker (two zero blocks)
+	const endMarker = Buffer.alloc(1024, 0);
+
+	// Concatenate: header + content + end marker
+	const tarData = Buffer.concat([header, contentPadded, endMarker]);
+
+	// Gzip compress
+	return zlib.gzipSync(tarData);
+}
