@@ -11,6 +11,13 @@ export interface FormatAgentMessageOptions {
 	taskNumber?: number | null;
 	/** Sender/target node agent name for reply routing. */
 	nodeId?: string | null;
+	/**
+	 * Session ID that should receive the reply when the target agent responds
+	 * via `send_message({ target: 'space-agent' })`. When set, the routing
+	 * layer delivers the reply to this session instead of the default
+	 * `space:chat:${spaceId}`. Null/undefined means "use default routing".
+	 */
+	replyToSessionId?: string | null;
 }
 
 function taskLabel(taskNumber?: number | null): string {
@@ -24,14 +31,31 @@ function replyTargetSuffix(options: FormatAgentMessageOptions): string {
 }
 
 /**
+ * Build the reply-routing metadata footer appended to messages that carry
+ * `replyToSessionId`. The footer is a machine-readable XML block that the
+ * routing layer parses when the receiving agent replies via
+ * `send_message({ target: 'space-agent' })`.
+ */
+function replyRoutingFooter(options: FormatAgentMessageOptions): string {
+	if (!options.replyToSessionId) return '';
+	return `\n\n<reply-routing replyToSessionId="${options.replyToSessionId}" />`;
+}
+
+/**
  * Format an inter-agent runtime message envelope.
  *
  * Agents pass only the raw body to their messaging tools; runtime delivery code
  * calls this helper immediately before injecting the message into the receiver's
  * session so the transcript records sender identity and concise reply guidance.
+ *
+ * When `replyToSessionId` is set, a `<reply-routing>` XML block is appended.
+ * The routing layer extracts this when the agent replies via
+ * `send_message({ target: 'space-agent' })` to deliver the reply back to the
+ * originating session instead of the default `space:chat:${spaceId}`.
  */
 export function formatAgentMessage(options: FormatAgentMessageOptions): string {
 	const body = options.body;
+	const footer = replyRoutingFooter(options);
 
 	if (options.toLevel === 'space-agent') {
 		const task = taskLabel(options.taskNumber);
@@ -47,20 +71,20 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
 	if (options.fromLevel === 'space-agent') {
 		return (
 			`─── Message from Space Agent ───\n\n` +
-			`${body}\n\n` +
+			`${body}${footer}\n\n` +
 			`─── Reply ───\n` +
 			`To reply, use: send_message with target "space-agent"`
 		);
 	}
 
 	if (options.fromLevel === 'node-agent' && options.toLevel === 'node-agent') {
-		return `─── Message from ${options.fromAgentName} ───\n\n${body}`;
+		return `─── Message from ${options.fromAgentName} ───\n\n${body}${footer}`;
 	}
 
 	if (options.fromLevel === 'node-agent' && options.toLevel === 'task-agent') {
 		return (
 			`─── Message from ${options.fromAgentName}${taskLabel(options.taskNumber)} ───\n\n` +
-			`${body}\n\n` +
+			`${body}${footer}\n\n` +
 			`─── Reply ───\n` +
 			`To reply, use: send_message with target "${options.fromAgentName}"`
 		);
@@ -69,11 +93,11 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
 	if (options.fromLevel === 'task-agent' && options.toLevel === 'node-agent') {
 		return (
 			`─── Message from task-agent${taskLabel(options.taskNumber)} ───\n\n` +
-			`${body}\n\n` +
+			`${body}${footer}\n\n` +
 			`─── Reply ───\n` +
 			`To reply, use: send_message with target "task-agent"`
 		);
 	}
 
-	return `─── Message from ${options.fromAgentName} ───\n\n${body}`;
+	return `─── Message from ${options.fromAgentName} ───\n\n${body}${footer}`;
 }

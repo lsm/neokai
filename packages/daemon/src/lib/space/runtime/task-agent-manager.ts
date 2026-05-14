@@ -92,6 +92,7 @@ import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-m
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { AgentMessageRouter } from './agent-message-router';
+import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
@@ -232,7 +233,11 @@ export interface TaskAgentManagerConfig {
 	 * Callback to inject a message into the Space Agent chat session for a space.
 	 * Used for Task Agent → Space Agent escalation via `send_message`.
 	 */
-	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
+	spaceAgentInjector?: (
+		spaceId: string,
+		message: string,
+		replyToSessionId?: string | null
+	) => Promise<void>;
 	/**
 	 * Schedule service — shared business logic for managing task schedules.
 	 * Injected into `space-agent-tools` so task agent sessions can create /
@@ -241,6 +246,11 @@ export interface TaskAgentManagerConfig {
 	 * registered.
 	 */
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
+	/**
+	 * Reply routing registry for symmetric message routing.
+	 * Shared between space-agent-tools (register) and task/node-agent-tools (lookup).
+	 */
+	replyRoutingRegistry?: ReplyRoutingRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -758,6 +768,10 @@ export class TaskAgentManager {
 				spaceAgentInjector: this.config.spaceAgentInjector,
 				taskAgentManager: this,
 				artifactRepo: this.config.artifactRepo,
+				replyRoutingLookup: () => {
+					const registry = this.config.replyRoutingRegistry;
+					return registry ? registry.get(taskId) : null;
+				},
 			});
 
 			// mergeRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`

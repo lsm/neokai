@@ -164,7 +164,11 @@ export interface TaskAgentToolsConfig {
 	 * When provided, `send_message({ target: 'space-agent', ... })` escalates
 	 * directly to the Space Agent without routing through a human.
 	 */
-	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
+	spaceAgentInjector?: (
+		spaceId: string,
+		message: string,
+		replyToSessionId?: string | null
+	) => Promise<void>;
 	/**
 	 * Optional observability hook — fired whenever a message is queued for
 	 * later delivery via `pendingMessageRepo`. Tests can capture this to
@@ -184,6 +188,13 @@ export interface TaskAgentToolsConfig {
 	 * Optional — when absent, artifact tools are not registered.
 	 */
 	artifactRepo?: WorkflowRunArtifactRepository;
+	/**
+	 * Optional lookup callback for reply-to-session routing.
+	 * When the Task Agent sends to 'space-agent', this callback is invoked to
+	 * determine whether the reply should go to a specific session (instead of
+	 * the default space:chat:\${spaceId}). Returns null for default routing.
+	 */
+	replyRoutingLookup?: () => string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +226,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		spaceAgentInjector,
 		onMessageQueued,
 		taskAgentManager,
+		replyRoutingLookup,
 	} = config;
 
 	const agentNameAliases = new Set(
@@ -734,6 +746,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				// --- Space Agent escalation path --------------------------------
 				if (targetAgentName === SPACE_AGENT_TARGET) {
 					if (spaceAgentInjector) {
+						// Check if this Task Agent should route its reply to a specific
+						// originating session (symmetric reply routing for ad-hoc members).
+						const replyTo = replyRoutingLookup ? replyRoutingLookup() : null;
 						try {
 							await spaceAgentInjector(
 								space.id,
@@ -744,11 +759,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 									body: message,
 									taskId,
 									taskNumber,
-								})
+								}),
+								replyTo
 							);
 							delivered.push({
 								agentName: targetAgentName,
-								sessionId: `space:chat:${space.id}`,
+								sessionId: replyTo || `space:chat:${space.id}`,
 							});
 						} catch (err) {
 							const errMsg = err instanceof Error ? err.message : String(err);

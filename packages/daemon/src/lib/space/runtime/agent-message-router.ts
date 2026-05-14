@@ -52,7 +52,11 @@ export interface AgentMessageRouterConfig {
 	 * Optional injector for routing messages to the Space Agent chat session.
 	 * Used when a node agent explicitly targets `space-agent`.
 	 */
-	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
+	spaceAgentInjector?: (
+		spaceId: string,
+		message: string,
+		replyToSessionId?: string | null
+	) => Promise<void>;
 	/** Space-scoped task number for message envelopes. */
 	taskNumber?: number | null;
 	/**
@@ -87,6 +91,13 @@ export interface AgentMessageRouterConfig {
 	 * Fires only for non-deduped enqueues (deduped = message already in queue).
 	 */
 	onMessageQueued?: (agentName: string) => void;
+	/**
+	 * Optional lookup callback for reply-to-session routing.
+	 * When a node agent sends to `space-agent`, this callback is invoked to
+	 * determine whether the reply should go to a specific session (instead of
+	 * the default `space:chat:${spaceId}`). Returns `null` for default routing.
+	 */
+	replyRoutingLookup?: (agentName?: string | null) => string | null;
 }
 
 export interface AgentMessageParams {
@@ -175,6 +186,7 @@ export class AgentMessageRouter {
 			taskNumber,
 			activateTargetSession,
 			onMessageQueued,
+			replyRoutingLookup,
 		} = this.config;
 
 		// --- Build channel resolver + slot-to-node translation map ---
@@ -461,6 +473,9 @@ export class AgentMessageRouter {
 					notFound.push(agentName);
 					continue;
 				}
+				// Check if this node agent should route its reply to a specific
+				// originating session (symmetric reply routing for ad-hoc members).
+				const replyTo = replyRoutingLookup ? replyRoutingLookup(fromAgentName) : null;
 				const envelopedMessage = formatAgentMessage({
 					fromLevel: 'node-agent',
 					fromAgentName,
@@ -471,13 +486,16 @@ export class AgentMessageRouter {
 					nodeId: fromAgentName,
 				});
 				try {
-					await spaceAgentInjector(spaceId, envelopedMessage);
-					delivered.push({ agentName, sessionId: `space:chat:${spaceId}` });
+					await spaceAgentInjector(spaceId, envelopedMessage, replyTo);
+					delivered.push({
+						agentName,
+						sessionId: replyTo || `space:chat:${spaceId}`,
+					});
 				} catch (err) {
 					const errMsg = err instanceof Error ? err.message : String(err);
 					failed.push({
 						agentName,
-						sessionId: `space:chat:${spaceId}`,
+						sessionId: replyTo || `space:chat:${spaceId}`,
 						error: errMsg,
 					});
 				}

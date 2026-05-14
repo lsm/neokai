@@ -32,6 +32,7 @@ import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
+import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
@@ -118,6 +119,12 @@ export interface SpaceRuntimeServiceConfig {
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	commandBus?: InternalCommandBus<DaemonCommandMap>;
 	externalEventStore?: ExternalEventStore;
+	/**
+	 * Reply routing registry for symmetric message routing.
+	 * Passed to space-agent-tools so member sessions can register their
+	 * session ID as the reply target when sending messages to task/node agents.
+	 */
+	replyRoutingRegistry?: ReplyRoutingRegistry;
 }
 
 export class SpaceRuntimeService {
@@ -775,6 +782,7 @@ export class SpaceRuntimeService {
 			mySessionId: session.id,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 
 		const additional: Record<string, McpServerConfig> = {
