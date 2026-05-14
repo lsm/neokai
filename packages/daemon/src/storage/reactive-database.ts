@@ -277,6 +277,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 	let transactionDepth = 0;
 	const pendingTables = new Set<string>();
 	const pendingTableScopes = new Map<string, TableChangeScope | null>();
+	let tableVersionsSnapshot: Record<string, number> | undefined;
 
 	function getVersion(table: string): number {
 		return tableVersions[table] ?? 0;
@@ -387,12 +388,16 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 			return getVersion(table);
 		},
 		beginTransaction(): void {
+			if (transactionDepth === 0) {
+				tableVersionsSnapshot = { ...tableVersions };
+			}
 			transactionDepth += 1;
 		},
 		commitTransaction(): void {
 			if (transactionDepth <= 0) return;
 			transactionDepth -= 1;
 			if (transactionDepth === 0) {
+				tableVersionsSnapshot = undefined;
 				flushPendingTables();
 			}
 		},
@@ -402,6 +407,17 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 			if (transactionDepth === 0) {
 				pendingTables.clear();
 				pendingTableScopes.clear();
+				// Restore tableVersions to pre-transaction state so that
+				// rolled-back writes don't permanently inflate the counters.
+				if (tableVersionsSnapshot) {
+					for (const key of Object.keys(tableVersions)) {
+						if (!(key in tableVersionsSnapshot)) {
+							delete tableVersions[key];
+						}
+					}
+					Object.assign(tableVersions, tableVersionsSnapshot);
+				}
+				tableVersionsSnapshot = undefined;
 			}
 		},
 		notifyChange(table: string): void {
