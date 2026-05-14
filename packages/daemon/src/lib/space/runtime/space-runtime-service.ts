@@ -131,6 +131,18 @@ export class SpaceRuntimeService {
 	private readonly nodeExecutionRepo: NodeExecutionRepository;
 	/** Audit log repository for MCP write operations. */
 	private readonly auditLogRepo: McpAuditLogRepository;
+	/**
+	 * Per-space ChannelRouter cache. Keyed by `spaceId`.
+	 *
+	 * Reusing a single ChannelRouter per space preserves the in-memory gate-open
+	 * cache (`openedGates`), the gate-evaluation coalescing map (`gateEvaluations`),
+	 * and the script concurrency semaphore (`scriptSemaphore`) across calls to
+	 * `notifyGateDataChanged()` and `activateWorkflowNode()`.
+	 *
+	 * Invalidated when the workflow definition for a space changes (detected via
+	 * `workflow.updatedAt` fingerprint) or when the daemon stops.
+	 */
+	private readonly channelRouterCache = new Map<string, ChannelRouter>();
 	/** Stores db-query server instances per space for cleanup on stop. */
 	private readonly spaceDbQueryServers = new Map<string, DbQueryMcpServer>();
 	/**
@@ -372,6 +384,10 @@ export class SpaceRuntimeService {
 		}
 		this.unsubscribers.length = 0;
 
+		// Clear the per-space ChannelRouter cache so stale instances with
+		// outdated workspace paths are not reused after stop/restart cycles.
+		this.channelRouterCache.clear();
+
 		// Close all db-query server connections to release read-only SQLite handles.
 		for (const [spaceId, server] of this.spaceDbQueryServers) {
 			try {
@@ -434,7 +450,9 @@ export class SpaceRuntimeService {
 
 		// When a workflow definition is updated, refresh gate poll timers for
 		// all active runs using that workflow so mid-run config changes are
-		// picked up without requiring a task restart.
+		// picked up without requiring a task restart. Also evict the per-space
+		// ChannelRouter cache so the next call builds a fresh router against
+		// the updated workflow definition.
 		const unsubWorkflowUpdated = internalEventBus.subscribe(
 			'spaceWorkflow.updated',
 			(event) => {
@@ -443,6 +461,13 @@ export class SpaceRuntimeService {
 				} catch (err) {
 					log.error(`Failed to refresh gate polls for workflow ${event.workflow.id}:`, err);
 				}
+				// Evict cached ChannelRouters for spaces that use this workflow.
+				// The router's in-memory gate-open cache is fingerprinted by
+				// workflow.updatedAt, so stale entries are technically safe to
+				// keep — but clearing ensures a fresh workspacePath resolution
+				// and prevents the cached router from holding references to
+				// an outdated workflow manager state.
+				this.evictChannelRoutersForWorkflow(event.workflow.id);
 			},
 			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
 		);
@@ -1049,8 +1074,9 @@ export class SpaceRuntimeService {
 	/**
 	 * Notify that gate data has changed for a given run/gate pair.
 	 *
-	 * Creates a temporary ChannelRouter and calls onGateDataChanged() to re-evaluate
-	 * all channels referencing the gate and lazily activate any newly-unblocked nodes.
+	 * Reuses the cached ChannelRouter for the space (keyed by spaceId) so that
+	 * the in-memory gate-open cache, evaluation coalescing map, and script
+	 * semaphore are preserved across calls.
 	 *
 	 * Used by the approveGate RPC handler and the writeGateData RPC handler to trigger
 	 * downstream node activation after gate data is written externally (i.e. without going
@@ -1060,41 +1086,7 @@ export class SpaceRuntimeService {
 	 */
 	async notifyGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
 		if (!this.config.gateDataRepo) return [];
-		// Resolve workspacePath from run → space for script gate evaluation.
-		const run = this.config.workflowRunRepo.getRun(runId);
-		let workspacePath: string | undefined;
-		if (run) {
-			const space = await this.config.spaceManager.getSpace(run.spaceId);
-			workspacePath = space?.workspacePath;
-		}
-		const spaceManager = this.config.spaceManager;
-		const taskAgentManager = this.taskAgentManager;
-		const router = new ChannelRouter({
-			taskRepo: this.config.taskRepo,
-			workflowRunRepo: this.config.workflowRunRepo,
-			workflowManager: this.config.spaceWorkflowManager,
-			agentManager: this.config.spaceAgentManager,
-			nodeExecutionRepo: this.nodeExecutionRepo,
-			gateDataRepo: this.config.gateDataRepo,
-			gateOpenStateRepo: this.config.gateOpenStateRepo,
-			channelCycleRepo: this.config.channelCycleRepo,
-			db: this.config.db,
-			workspacePath,
-			getSpaceAutonomyLevel: async (spaceId) => {
-				const s = await spaceManager.getSpace(spaceId);
-				return s?.autonomyLevel ?? 1;
-			},
-			isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
-			cancelSessionById: taskAgentManager
-				? (sid) => taskAgentManager.cancelBySessionId(sid)
-				: undefined,
-			// Forward the runtime's current sink so a gate-driven reopen still
-			// surfaces `workflow_run_reopened` to the Space Agent session.
-			// Forward the InternalEventBus so gate-driven reopens also publish
-			// typed `space.workflowRun.reopened` events for bus subscribers.
-			internalEventBus: this.config.internalEventBus,
-			onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
-		});
+		const router = await this.getChannelRouterForRun(runId);
 		return router.onGateDataChanged(runId, gateId);
 	}
 
@@ -1109,8 +1101,11 @@ export class SpaceRuntimeService {
 	/**
 	 * Lazily activate a workflow node.
 	 *
-	 * Builds a scoped ChannelRouter (same dependencies as `notifyGateDataChanged`)
-	 * and delegates to `ChannelRouter.activateNode()`, which either reuses an
+	 * Reuses the cached ChannelRouter for the space (keyed by spaceId) so that
+	 * the in-memory gate-open cache, evaluation coalescing map, and script
+	 * semaphore are preserved across calls.
+	 *
+	 * Delegates to `ChannelRouter.activateNode()`, which either reuses an
 	 * existing node_execution for cyclic re-entry (preserving `agentSessionId` so
 	 * history survives) or creates a pending execution for the tick loop to spawn.
 	 *
@@ -1123,12 +1118,35 @@ export class SpaceRuntimeService {
 				'activateWorkflowNode requires gateDataRepo to be configured on SpaceRuntimeService.'
 			);
 		}
+		const router = await this.getChannelRouterForRun(runId);
+		return router.activateNode(runId, nodeId);
+	}
+
+	/**
+	 * Get or create a cached ChannelRouter for the space associated with a run.
+	 *
+	 * The router is cached by `spaceId` so its in-memory gate-open cache,
+	 * gate-evaluation coalescing map, and script semaphore are reused across
+	 * calls. When no run or space can be resolved, a fresh (uncached) router
+	 * is returned as a fallback.
+	 */
+	private async getChannelRouterForRun(runId: string): Promise<ChannelRouter> {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		let workspacePath: string | undefined;
+		let spaceId: string | undefined;
 		if (run) {
+			spaceId = run.spaceId;
 			const space = await this.config.spaceManager.getSpace(run.spaceId);
 			workspacePath = space?.workspacePath;
 		}
+
+		// When we can resolve a spaceId, use the per-space cache.
+		if (spaceId) {
+			const cached = this.channelRouterCache.get(spaceId);
+			if (cached) return cached;
+		}
+
+		// Build a new router instance.
 		const spaceManager = this.config.spaceManager;
 		const taskAgentManager = this.taskAgentManager;
 		const router = new ChannelRouter({
@@ -1142,22 +1160,49 @@ export class SpaceRuntimeService {
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 			workspacePath,
-			getSpaceAutonomyLevel: async (spaceId) => {
-				const s = await spaceManager.getSpace(spaceId);
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await spaceManager.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
 			},
 			isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
 			cancelSessionById: taskAgentManager
 				? (sid) => taskAgentManager.cancelBySessionId(sid)
 				: undefined,
-			// Forward the runtime's current sink so activation-driven reopens of
-			// terminal runs still surface `workflow_run_reopened` to the Space
-			// Agent session (mirrors `notifyGateDataChanged` above).
-			// Forward the InternalEventBus so activation-driven reopens also publish
-			// typed `space.workflowRun.reopened` events for bus subscribers.
 			internalEventBus: this.config.internalEventBus,
+			onGatePendingApproval: (rId, gId) => this.handleGatePendingApproval(rId, gId),
 		});
-		return router.activateNode(runId, nodeId);
+
+		// Store in per-space cache for reuse.
+		if (spaceId) {
+			this.channelRouterCache.set(spaceId, router);
+		}
+
+		return router;
+	}
+
+	/**
+	 * Evict all cached ChannelRouter instances whose space uses the given workflow.
+	 *
+	 * Called when a workflow definition is updated so the next
+	 * `getChannelRouterForRun()` call builds a fresh router with the updated
+	 * workflow. This is conservative — not every space using the workflow may
+	 * have a cached router — but it ensures correctness without tracking which
+	 * spaces are actively using which workflows.
+	 */
+	private evictChannelRoutersForWorkflow(workflowId: string): void {
+		// Collect spaces that have runs (active or historical) using this
+		// workflow so their cached routers are rebuilt against the updated
+		// definition. A single workflow can be used across multiple spaces.
+		const runs = this.config.workflowRunRepo.listByWorkflow(workflowId);
+		if (runs.length === 0) {
+			// No runs found — clear the entire cache conservatively.
+			this.channelRouterCache.clear();
+			return;
+		}
+		const spaceIds = new Set(runs.map((r) => r.spaceId));
+		for (const sid of spaceIds) {
+			this.channelRouterCache.delete(sid);
+		}
 	}
 
 	/**
