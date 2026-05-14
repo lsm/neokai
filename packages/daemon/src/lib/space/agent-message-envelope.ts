@@ -62,9 +62,9 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
 		const taskId = options.taskId ? ` with task_id="${options.taskId}"` : '';
 		return (
 			`─── Message from ${options.fromAgentName}${task} ───\n\n` +
-			`${body}${footer}\n\n` +
+			`${body}\n\n` +
 			`─── Reply ───\n` +
-			`To reply, use: send_message_to_task${taskId}${replyTargetSuffix(options)}`
+			`To reply, use: send_message_to_task${taskId}${replyTargetSuffix(options)}${footer}`
 		);
 	}
 
@@ -106,8 +106,11 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
  * Extract `replyToSessionId` from a message envelope's `<reply-routing>` footer.
  * Returns `null` when the footer is absent (no routing metadata).
  * Used by the pending-message flush path to recover routing after daemon restart.
+ *
+ * Only matches the tag when it appears as a trailing footer (last non-whitespace
+ * content), preventing a forged tag in the message body from controlling routing.
  */
 export function extractReplyToSessionId(message: string): string | null {
-	const match = message.match(/<reply-routing replyToSessionId="([^"]+)" \/>/);
+	const match = message.match(/<reply-routing replyToSessionId="([^"]+)" \/>\s*$/);
 	return match ? match[1] : null;
 }

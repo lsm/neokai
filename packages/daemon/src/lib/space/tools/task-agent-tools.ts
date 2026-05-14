@@ -745,10 +745,10 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			for (const targetAgentName of targetAgentNames) {
 				// --- Space Agent escalation path --------------------------------
 				if (targetAgentName === SPACE_AGENT_TARGET) {
+					// Check if this Task Agent should route its reply to a specific
+					// originating session (symmetric reply routing for ad-hoc members).
+					const replyTo = replyRoutingLookup ? replyRoutingLookup() : null;
 					if (spaceAgentInjector) {
-						// Check if this Task Agent should route its reply to a specific
-						// originating session (symmetric reply routing for ad-hoc members).
-						const replyTo = replyRoutingLookup ? replyRoutingLookup() : null;
 						try {
 							await spaceAgentInjector(
 								space.id,
@@ -783,6 +783,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 										body: message,
 										taskId,
 										taskNumber,
+										replyToSessionId: replyTo,
 									}),
 									idempotencyKey,
 								});
@@ -816,6 +817,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 								body: message,
 								taskId,
 								taskNumber,
+								replyToSessionId: replyTo,
 							}),
 							idempotencyKey,
 						});
