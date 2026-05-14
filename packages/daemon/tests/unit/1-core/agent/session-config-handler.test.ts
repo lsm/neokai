@@ -21,15 +21,18 @@ describe('SessionConfigHandler', () => {
 	let mockSession: Session;
 	let mockDb: Database;
 	let mockDaemonHub: DaemonHub;
+	let updateSessionSpy: ReturnType<typeof mock>;
+	let emitSpy: ReturnType<typeof mock>;
 	const mockInternalEventBus = {
-		publish: emitSpy,
-		publishAsync: emitSpy,
+		get publish() {
+			return emitSpy;
+		},
+		get publishAsync() {
+			return emitSpy;
+		},
 		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
 	} as unknown as InternalEventBus<any>;
 	let mockSettingsManager: SettingsManager;
-
-	let updateSessionSpy: ReturnType<typeof mock>;
-	let emitSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		const sessionId = generateUUID();

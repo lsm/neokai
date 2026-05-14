@@ -48,6 +48,7 @@ import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { Logger } from '../../logger';
 import { formatAgentMessage } from '../agent-message-envelope';
+import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry';
 import { canTransition } from '../runtime/workflow-run-status-machine';
 const log = new Logger('space-agent-tools');
 
@@ -181,6 +182,13 @@ export interface SpaceAgentToolsConfig {
 	 * Optional — when absent, schedule tools are not registered.
 	 */
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
+	/**
+	 * Reply routing registry for symmetric message routing. When a member session
+	 * sends a message to a task/node agent, the registry records the sender's
+	 * session ID so that replies via 'space-agent' route back to the originating
+	 * session instead of the canonical space:chat: session.
+	 */
+	replyRoutingRegistry?: ReplyRoutingRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +219,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		myAgentName,
 		myAgentNameAliases,
 		mySessionId,
+		replyRoutingRegistry,
 	} = config;
 
 	const agentNameAliases = new Set(
@@ -946,6 +955,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			// --- Path A: no node_id — send to the Task Agent (auto-spawn if needed) ---
 			if (!args.node_id) {
 				try {
+					// Record reply route so task-agent replies go back to this session.
+					if (replyRoutingRegistry && mySessionId) {
+						replyRoutingRegistry.set(task.id, mySessionId);
+					}
 					await taskAgentManager.ensureTaskAgentSession(task.id);
 					await taskAgentManager.injectTaskAgentMessage(
 						task.id,
@@ -956,6 +969,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							body: args.message,
 							taskId: task.id,
 							taskNumber: task.taskNumber,
+							replyToSessionId: mySessionId,
 						}),
 						true
 					);
@@ -984,6 +998,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
+			// Record reply route so node-agent replies go back to this session.
+			if (replyRoutingRegistry && mySessionId) {
+				replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName);
+			}
+
 			// Attempt direct injection when the execution already has a live session.
 			if (resolved.agentSessionId) {
 				try {
@@ -997,6 +1016,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							taskId: task.id,
 							taskNumber: task.taskNumber,
 							nodeId: resolved.agentName,
+							replyToSessionId: mySessionId,
 						}),
 						true
 					);
@@ -1046,6 +1066,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							taskId: task.id,
 							taskNumber: task.taskNumber,
 							nodeId: resolved.agentName,
+							replyToSessionId: mySessionId,
 						}),
 						true
 					);
@@ -1083,6 +1104,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						taskId: task.id,
 						taskNumber: task.taskNumber,
 						nodeId: resolved.agentName,
+						replyToSessionId: mySessionId,
 					}),
 				});
 				queuedMessageId = record.id;
