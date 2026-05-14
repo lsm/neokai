@@ -78,4 +78,23 @@ describe('ReplyRoutingRegistry', () => {
 		registry.deleteByTask('task-1');
 		expect(registry.size).toBe(0);
 	});
+
+	test('purgeExpired removes stale entries without requiring get()', async () => {
+		const registry = new ReplyRoutingRegistry(100); // 100ms TTL
+		registry.set('task-1', 'session-a');
+		registry.set('task-2', 'session-b');
+		expect(registry.size).toBe(2);
+
+		// Wait for expiry
+		await new Promise((resolve) => setTimeout(resolve, 150));
+
+		// Entries are still in the map (not accessed via get)
+		expect(registry.size).toBe(2);
+
+		// Explicit purge removes them
+		registry.purgeExpired();
+		expect(registry.size).toBe(0);
+		expect(registry.get('task-1')).toBeNull();
+		expect(registry.get('task-2')).toBeNull();
+	});
 });

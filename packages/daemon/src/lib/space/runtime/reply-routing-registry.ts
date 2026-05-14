@@ -21,6 +21,7 @@ interface RoutingEntry {
 export class ReplyRoutingRegistry {
 	private readonly ttlMs: number;
 	private readonly entries = new Map<string, RoutingEntry>();
+	private writeCount = 0;
 
 	constructor(ttlMs = DEFAULT_TTL_MS) {
 		this.ttlMs = ttlMs;
@@ -41,6 +42,12 @@ export class ReplyRoutingRegistry {
 	set(taskId: string, replyToSessionId: string, agentName?: string | null): void {
 		const key = ReplyRoutingRegistry.key(taskId, agentName);
 		this.entries.set(key, { replyToSessionId, updatedAt: Date.now() });
+		this.writeCount++;
+		// Opportunistic purge: sweep expired entries every 100 writes to prevent
+		// unbounded growth from entries that are never looked up again.
+		if (this.writeCount % 100 === 0) {
+			this.purgeExpired();
+		}
 	}
 
 	/**
@@ -82,5 +89,20 @@ export class ReplyRoutingRegistry {
 	/** Expose current size for diagnostics / testing. */
 	get size(): number {
 		return this.entries.size;
+	}
+
+	/**
+	 * Remove all expired entries. Called opportunistically on write (every 100th
+	 * set) and can be called explicitly by the runtime (e.g. on task completion
+	 * sweeps). Keeps memory bounded in long-running daemons even when entries
+	 * are never looked up via `get`.
+	 */
+	purgeExpired(): void {
+		const now = Date.now();
+		for (const [key, entry] of this.entries) {
+			if (now - entry.updatedAt > this.ttlMs) {
+				this.entries.delete(key);
+			}
+		}
 	}
 }

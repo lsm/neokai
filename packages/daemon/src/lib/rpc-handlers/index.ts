@@ -477,8 +477,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		message: string,
 		replyToSessionId?: string | null
 	): Promise<void> => {
-		const sessionId = replyToSessionId || `space:chat:${spaceId}`;
-		const session = await sessionManagerRef.getSessionAsync(sessionId);
+		let sessionId = replyToSessionId || `space:chat:${spaceId}`;
+		let session = await sessionManagerRef.getSessionAsync(sessionId);
+		// Fallback: if the routed-to session no longer exists (e.g. ad-hoc member
+		// session ended), fall back to the canonical space chat session so the
+		// reply is not silently dropped.
+		if (!session && replyToSessionId) {
+			sessionId = `space:chat:${spaceId}`;
+			session = await sessionManagerRef.getSessionAsync(sessionId);
+		}
 		if (!session) {
 			throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
 		}
