@@ -360,8 +360,8 @@ export class ChannelRouter {
 		}
 
 		// Auto-reopen from terminal run statuses. The status machine permits
-		// done → in_progress and cancelled → in_progress.
-		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
+		// done → in_progress and cancelled → in_progress (blocked requires explicit resume).
+		if (run.status === 'done' || run.status === 'cancelled') {
 			this.evictRunCache(runId);
 			await this.reopenRun(
 				run.id,
@@ -936,6 +936,9 @@ export class ChannelRouter {
 	 * if a workflow is edited multiple times within the same millisecond (rapid
 	 * successive edits), the fingerprint still changes and the cache invalidates.
 	 *
+	 * Uses addition instead of bitwise shift to avoid 32-bit truncation issues in
+	 * JavaScript (bitwise ops are 32-bit, so `updatedAt << 32` would wrap around).
+	 *
 	 * @param workflow - The workflow containing the gate
 	 * @param gateId - The ID of the gate to fingerprint
 	 * @returns A number combining timestamp and gate definition hash
@@ -954,10 +957,11 @@ export class ChannelRouter {
 			hash = hash & hash; // Convert to 32-bit integer
 		}
 
-		// Combine workflow.updatedAt (upper 32 bits) with gate hash (lower 32 bits)
-		// This creates a unique 64-bit-like fingerprint that changes when either
-		// the workflow is updated OR the gate definition is edited
-		return (workflow.updatedAt << 32) | (hash >>> 0);
+		// Combine timestamp and hash using addition instead of bitwise shift
+		// to avoid 32-bit truncation (JavaScript bitwise ops are 32-bit).
+		// This creates a unique fingerprint that changes when either the workflow
+		// is updated OR the gate definition is edited.
+		return workflow.updatedAt + hash;
 	}
 
 	/** Build the cache key for a `(runId, gateId)` pair. */
