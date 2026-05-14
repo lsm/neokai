@@ -129,6 +129,38 @@ describe('process-watchdog', () => {
 		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
 	});
 
+	test('counts kill as success when group kill terminates the PID (ESRCH)', async () => {
+		const killProcess = mock(() => {
+			const err = new Error('ESRCH') as Error & { code: string };
+			err.code = 'ESRCH';
+			throw err;
+		});
+		const killProcessGroup = mock(() => {});
+
+		// PID 200 was an exited root (group leader). PID 123 is orphaned.
+		// The group kill terminates PID 123, so the individual kill gets ESRCH.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 123,
+					ppid: 1,
+					pgid: 200,
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [], exited: [200] }),
+		});
+
+		// ESRCH after group kill means the process was already terminated —
+		// counted as a successful cleanup.
+		expect(killed).toBe(1);
+		expect(killProcessGroup).toHaveBeenCalledWith(200, 'SIGTERM');
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
 	test('rejects PGID 1 before issuing group SIGTERM', async () => {
 		const killProcess = mock(() => {});
 		const killProcessGroup = mock(() => {});

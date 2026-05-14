@@ -16,7 +16,10 @@ export interface ProcessSnapshot {
 export type ProcessLister = () => Promise<ProcessSnapshot[]>;
 export type ProcessKiller = (pid: number, signal: NodeJS.Signals) => void;
 export type ProcessGroupKiller = (pgid: number, signal: NodeJS.Signals) => void;
-export type RootPidProvider = () => { live: Iterable<number>; exited: Iterable<number> };
+export type RootPidProvider = (snapshot?: ProcessSnapshot[]) => {
+	live: Iterable<number>;
+	exited: Iterable<number>;
+};
 
 const SUSPICIOUS_THRESHOLDS = [
 	{ pattern: /\bbun\s+test\b/, thresholdMs: 15 * 60 * 1000 },
@@ -113,14 +116,14 @@ export async function cleanupSuspiciousProcesses(options?: {
 						// Process group may have already exited.
 					}
 				});
+	const snapshots = await lister();
+
 	const rootResult = options?.getRootPids
-		? options.getRootPids()
+		? options.getRootPids(snapshots)
 		: { live: [] as number[], exited: [] as number[] };
 	const liveRoots = new Set(rootResult.live);
 	const exitedRoots = new Set(rootResult.exited);
 	if (liveRoots.size === 0 && exitedRoots.size === 0) return 0;
-
-	const snapshots = await lister();
 	const ownedPids = collectDescendantPids(snapshots, liveRoots, exitedRoots);
 	let killed = 0;
 
@@ -150,7 +153,22 @@ export async function cleanupSuspiciousProcesses(options?: {
 					// Group kill failed; fall through to direct PID signal.
 				}
 			}
-			killer(snapshot.pid, 'SIGTERM');
+			try {
+				killer(snapshot.pid, 'SIGTERM');
+			} catch (error: unknown) {
+				// ESRCH after group kill means the process was already terminated —
+				// count it as a successful cleanup rather than a failure.
+				if (
+					!(
+						error &&
+						typeof error === 'object' &&
+						'code' in error &&
+						(error as { code: string }).code === 'ESRCH'
+					)
+				) {
+					throw error;
+				}
+			}
 			killed++;
 			logger.warn(
 				`Killing suspicious daemon-owned long-running process pid=${snapshot.pid} ppid=${snapshot.ppid} ` +

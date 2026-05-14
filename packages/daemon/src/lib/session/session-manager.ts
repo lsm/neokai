@@ -31,6 +31,7 @@ import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
+import type { ProcessSnapshot } from '../process-watchdog';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
@@ -96,7 +97,7 @@ export class SessionManager {
 	 * 3. If a live root outlives the retention window it is removed,
 	 *    preventing PID-reuse misattribution for long-lived reused PIDs.
 	 */
-	private evictedLiveRootPids = new Map<number, number>();
+	private evictedLiveRootPids = new Map<number, { evictedAt: number; startTime: number }>();
 	private evictedExitedRootPids = new Map<number, number>();
 
 	// Extracted modules
@@ -438,8 +439,8 @@ export class SessionManager {
 		}
 	}
 
-	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
-		this.expireEvictedRoots();
+	getTrackedAgentRootPidsSplit(snapshot?: ProcessSnapshot[]): { live: number[]; exited: number[] } {
+		this.expireEvictedRoots(snapshot);
 		const live: number[] = [];
 		const exited: number[] = [];
 		// Collect from sessions still in the cache.
@@ -623,62 +624,59 @@ export class SessionManager {
 		const now = Date.now();
 		// Preserve live PIDs as live so the watchdog can track them
 		// as live roots (not exited) while the process is still running.
+		// Store startTime as 0 (unknown) — populated on first snapshot-based probe.
 		for (const pid of split.live) {
-			if (!this.evictedLiveRootPids.has(pid)) this.evictedLiveRootPids.set(pid, now);
+			if (!this.evictedLiveRootPids.has(pid))
+				this.evictedLiveRootPids.set(pid, { evictedAt: now, startTime: 0 });
 		}
 		// Preserve exited PIDs with their actual exit timestamp from the
 		// AgentSession, not Date.now(), so the retention window reflects
 		// real process exit time rather than eviction time.
 		const exitTimestamps = agentSession.getExitedRootPidTimestamps();
+		// Always update the exit timestamp so reused PIDs that exit
+		// again get the latest exit time (Fix P2: stale timestamp on re-preservation).
 		for (const [pid, exitedAt] of exitTimestamps) {
-			if (!this.evictedExitedRootPids.has(pid)) {
-				this.evictedExitedRootPids.set(pid, exitedAt);
-			}
+			this.evictedExitedRootPids.set(pid, exitedAt);
 		}
 	}
 
-	private expireEvictedRoots(now = Date.now()): void {
-		// Probe evicted live roots and transition their tracking state.
-		// kill(pid, 0) (signal 0) is a cheap existence probe that does not
-		// affect the process. Results:
-		//  - ESRCH: PID is gone → promote to exited for PGID orphan discovery.
-		//  - EPERM: PID exists but not signalable → keep as live.
-		//  - Success: PID exists but identity is ambiguous (could be reused)
-		//  - Success: PID exists → keep as live (retention window handles
-		//    the rare case of PID reuse within the retention window).
-		//    eventual expiry; suspicious pattern filters guard against
-		for (const [pid, evictedAt] of this.evictedLiveRootPids) {
-			// Expire live roots that outlived the retention window.
-			// This prevents PID-reuse misattribution: if the OS recycles
-			// an old daemon root PID, the watchdog would incorrectly
-			// traverse from the unrelated process and kill its children.
-			if (now - evictedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
+	private expireEvictedRoots(snapshot: ProcessSnapshot[] = [], now = Date.now()): void {
+		// Build PID → snapshot lookup for identity verification.
+		const snapshotByPid = new Map<number, ProcessSnapshot>();
+		for (const snap of snapshot) snapshotByPid.set(snap.pid, snap);
+
+		for (const [pid, meta] of this.evictedLiveRootPids) {
+			// Expire entries past the retention window regardless.
+			if (now - meta.evictedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
 				this.evictedLiveRootPids.delete(pid);
 				continue;
 			}
-			try {
-				process.kill(pid, 0);
-				// PID still exists — keep as live. PID reuse within the
-				// retention window is extremely rare on modern systems, and
-				// the suspicious pattern filters provide an additional safeguard.
-			} catch (error: unknown) {
-				if (
-					error &&
-					typeof error === 'object' &&
-					'code' in error &&
-					(error as { code: string }).code === 'ESRCH'
-				) {
-					// PID no longer exists — promote to exited for the PGID-based
-					// orphan discovery window.
-					this.evictedLiveRootPids.delete(pid);
-					if (!this.evictedExitedRootPids.has(pid)) {
-						this.evictedExitedRootPids.set(pid, now);
-					}
+
+			const snap = snapshotByPid.get(pid);
+			if (!snap) {
+				// PID absent from snapshot → process exited.
+				// Promote to exited for PGID-based orphan discovery.
+				this.evictedLiveRootPids.delete(pid);
+				if (!this.evictedExitedRootPids.has(pid)) {
+					this.evictedExitedRootPids.set(pid, now);
 				}
-				// EPERM or other errors: PID exists but is not signalable.
-				// Keep as live — the root is still alive, just restricted.
+				continue;
 			}
+
+			// PID exists in snapshot — verify identity via start time.
+			const currentStartTime = now - snap.elapsedSeconds * 1000;
+			if (meta.startTime === 0) {
+				// First snapshot-based probe: capture start time.
+				meta.startTime = currentStartTime;
+			} else if (Math.abs(currentStartTime - meta.startTime) > 1000) {
+				// Start time changed by >1s → PID was reused by a different process.
+				// Remove to prevent cross-process attribution.
+				this.evictedLiveRootPids.delete(pid);
+				continue;
+			}
+			// Identity verified — keep as live.
 		}
+
 		// Expire old exited roots past the retention window.
 		for (const [pid, exitedAt] of this.evictedExitedRootPids) {
 			if (now - exitedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {
