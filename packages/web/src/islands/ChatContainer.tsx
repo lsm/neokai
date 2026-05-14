@@ -848,7 +848,12 @@ export default function ChatContainer({
 	// ========================================
 	// Connection Check
 	// ========================================
-	const isConnected = connectionState.value === 'connected';
+	// Reactive connection state — bridged from signal via useSignalEffect so
+	// the value stays live across disconnect/reconnect cycles.
+	const [isConnected, setIsConnected] = useState(connectionState.value === 'connected');
+	useSignalEffect(() => {
+		setIsConnected(connectionState.value === 'connected');
+	});
 
 	// ========================================
 	// Handlers

@@ -18,6 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
+import { useSignalEffect } from '@preact/signals';
 import type { ModelInfo } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
@@ -288,10 +289,14 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
 	}, [sessionId]);
 
 	// Load when connected and on session change.
-	// connectionState.value triggers a retry when the WebSocket connects
+	// Reactive connection state — bridged from signal via useSignalEffect so
+	// the useEffect dependency actually changes when the WebSocket connects
 	// after mount (e.g. fresh page load where ChatContainer renders before
 	// the hub is ready).
-	const isConnected = connectionState.value === 'connected';
+	const [isConnected, setIsConnected] = useState(connectionState.value === 'connected');
+	useSignalEffect(() => {
+		setIsConnected(connectionState.value === 'connected');
+	});
 	useEffect(() => {
 		if (isConnected) {
 			loadModelInfo();

@@ -27,8 +27,8 @@
  * ```
  */
 
-import { useCallback, useEffect, useRef } from 'preact/hooks';
-import { useComputed } from '@preact/signals';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useSignalEffect } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { ConnectionNotReadyError } from '../lib/errors';
@@ -203,9 +203,19 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 	// Track active subscriptions for cleanup
 	const subscriptionsRef = useRef<Array<() => void>>([]);
 
-	// Computed reactive connection state
-	const isConnected = useComputed(() => connectionState.value === 'connected');
-	const state = useComputed(() => connectionState.value);
+	// Reactive connection state — bridged from signal into component state via
+	// useSignalEffect so that consumers receive a value that triggers re-renders.
+	// Previously used useComputed, but the .value dereference in the return
+	// statement froze both values to whatever they were at render time, causing
+	// cascading staleness in every downstream consumer.
+	const [isConnected, setIsConnected] = useState(connectionState.value === 'connected');
+	const [state, setState] = useState(connectionState.value);
+
+	useSignalEffect(() => {
+		const current = connectionState.value;
+		setIsConnected(current === 'connected');
+		setState(current);
+	});
 
 	// Connection state tracking (for debug mode)
 	useEffect(() => {
@@ -445,8 +455,8 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 	}, []);
 
 	return {
-		isConnected: isConnected.value,
-		state: state.value,
+		isConnected,
+		state,
 		getHub,
 		request,
 		onEvent,

@@ -11,6 +11,8 @@
 
 import type { Session, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
+import { useSignalEffect } from '@preact/signals';
+import { useState } from 'preact/hooks';
 import { borderColors } from '../lib/design-tokens';
 import { formatTokens } from '../lib/utils';
 import { connectionState } from '../lib/state';
@@ -63,7 +65,12 @@ export function ChatHeader({
 	readonly = false,
 	onBack,
 }: ChatHeaderProps) {
-	const isConnected = connectionState.value === 'connected';
+	// Reactive connection state — bridged from signal via useSignalEffect so
+	// the dropdown and action buttons update live across reconnects.
+	const [isConnected, setIsConnected] = useState(connectionState.value === 'connected');
+	useSignalEffect(() => {
+		setIsConnected(connectionState.value === 'connected');
+	});
 
 	const getHeaderActions = () => {
 		const actions: Array<
