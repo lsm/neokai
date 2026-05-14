@@ -8,14 +8,18 @@ import { parseArgs, getHelpText } from './src/cli-utils';
 import { startProdServer } from './src/prod-server-embedded';
 import { version } from './package.json';
 
-// Embed the Claude Agent SDK's CLI into the compiled binary.
+// Embed the Claude Agent SDK's native CLI binary into the compiled binary.
 // The { type: "file" } attribute tells Bun to include this file in its
 // virtual filesystem (/$bunfs/root/), making it accessible at runtime.
 // Without this, the SDK cannot find its CLI executable in bundled binaries.
-// @ts-ignore -- Bun-specific import attribute
-import embeddedSdkCliPath from '../daemon/node_modules/@anthropic-ai/claude-agent-sdk/cli.js' with {
-	type: 'file',
-};
+//
+// SDK ≥ 0.2.141 ships platform-specific native binaries instead of cli.js.
+// The build script (scripts/build-binary.ts) creates a symlink at
+// packages/daemon/.embedded-sdk-cli pointing to the native binary for the
+// current platform before invoking bun build --compile.
+//
+// @ts-ignore -- Bun-specific import attribute; file only exists during builds
+import embeddedSdkCliPath from '../daemon/.embedded-sdk-cli' with { type: 'file' };
 import { setEmbeddedCliPath } from '@neokai/daemon/sdk-cli-resolver';
 setEmbeddedCliPath(embeddedSdkCliPath);
 

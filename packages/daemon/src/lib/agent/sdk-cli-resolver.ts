@@ -16,6 +16,7 @@ import {
 	existsSync,
 	lstatSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	unlinkSync,
 	writeFileSync,
@@ -29,24 +30,46 @@ import { createHash } from 'node:crypto';
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
 /**
- * Platform suffix for the SDK's native CLI binary package.
- * Follows the naming convention: `@anthropic-ai/claude-agent-sdk-{os}-{arch}`
+ * Detect whether the current Linux system uses musl libc (Alpine, etc.)
+ * instead of glibc. Checks for the musl dynamic linker in /lib and /lib64.
  */
-function getPlatformPackageName(): string | undefined {
+function isMusl(): boolean {
+	if (process.platform !== 'linux') return false;
+	// Check for musl dynamic linker
+	for (const libDir of ['/lib', '/lib64']) {
+		try {
+			const files = readdirSync(libDir);
+			if (files.some((f) => f.startsWith('ld-musl'))) return true;
+		} catch {
+			// Directory doesn't exist or isn't readable
+		}
+	}
+	return false;
+}
+
+/**
+ * Platform suffix for the SDK's native CLI binary package.
+ * Follows the naming convention: `@anthropic-ai/claude-agent-sdk-{os}-{arch}[-musl]`
+ * @public Exported for use by build scripts.
+ */
+export function getPlatformPackageName(): string | undefined {
 	const { platform, arch } = process;
 	if (platform === 'win32' && arch === 'x64') return `${SDK_PACKAGE}-win32-x64`;
 	if (platform === 'win32' && arch === 'arm64') return `${SDK_PACKAGE}-win32-arm64`;
 	if (platform === 'darwin' && arch === 'x64') return `${SDK_PACKAGE}-darwin-x64`;
 	if (platform === 'darwin' && arch === 'arm64') return `${SDK_PACKAGE}-darwin-arm64`;
-	if (platform === 'linux' && arch === 'x64') return `${SDK_PACKAGE}-linux-x64`;
-	if (platform === 'linux' && arch === 'arm64') return `${SDK_PACKAGE}-linux-arm64`;
+	if (platform === 'linux' && arch === 'x64')
+		return isMusl() ? `${SDK_PACKAGE}-linux-x64-musl` : `${SDK_PACKAGE}-linux-x64`;
+	if (platform === 'linux' && arch === 'arm64')
+		return isMusl() ? `${SDK_PACKAGE}-linux-arm64-musl` : `${SDK_PACKAGE}-linux-arm64`;
 	return undefined;
 }
 
 /**
  * Native CLI binary name (platform-dependent).
+ * @public Exported for use by build scripts.
  */
-function getCliBinaryName(): string {
+export function getCliBinaryName(): string {
 	return process.platform === 'win32' ? 'claude.exe' : 'claude';
 }
 
