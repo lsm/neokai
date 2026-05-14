@@ -3564,5 +3564,58 @@ describe('ChannelRouter', () => {
 				router.deliverMessage(run.id, 'coder', 'planner', 'msg after done')
 			).rejects.toThrow(ChannelGateBlockedError);
 		});
+
+		test('canDeliver evicts cache on terminal run and returns accurate result', async () => {
+			const gate: Gate = {
+				id: 'candeliver-terminal-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'candeliver-terminal-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'canDeliver Terminal Test',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open gate, deliver to cache it
+			gateDataRepo.set(run.id, 'candeliver-terminal-gate', { approved: true });
+			await router.deliverMessage(run.id, 'coder', 'planner', 'msg');
+
+			// Close the gate — cache still allows delivery
+			gateDataRepo.set(run.id, 'candeliver-terminal-gate', { approved: false });
+			const result1 = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result1.allowed).toBe(true);
+
+			// Complete the run — canDeliver should evict cache and re-evaluate
+			workflowRunRepo.transitionStatus(run.id, 'done');
+			const result2 = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result2.allowed).toBe(false);
+		});
 	});
 });
