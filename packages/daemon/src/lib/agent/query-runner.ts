@@ -686,10 +686,16 @@ export class QueryRunner {
 					this.ctx.resetProcessExitedPromise();
 				}
 
+				// Increment the query generation so the outer runQuery()'s finally block
+				// detects a stale query (old generation) and skips cleanup. Without this,
+				// the outer finally sees the same generation, runs cleanup (abort
+				// controller, timer, queue, queryObject), and kills the retry mid-flight.
+				const retryGeneration = this.ctx.incrementQueryGeneration();
+
 				// Use `return await` so this call's finally{} runs only after the retry
 				// completes. Otherwise finally{} would race the retry and can tear down
 				// shared state (queue/controller/queryObject) while it is still running.
-				return await this.runQuery(queryGeneration, true);
+				return await this.runQuery(retryGeneration, true);
 			}
 			if (isMessageNotFound && !isRetry && !this.ctx.isCleaningUp()) {
 				// Consume the stale resumeSessionAt before retrying. The for-await loop
@@ -718,7 +724,9 @@ export class QueryRunner {
 					this.ctx.resetProcessExitedPromise();
 				}
 
-				return await this.runQuery(queryGeneration, true);
+				// Increment generation so outer finally detects stale query (see startup timeout retry).
+				const msgRetryGeneration = this.ctx.incrementQueryGeneration();
+				return await this.runQuery(msgRetryGeneration, true);
 			}
 
 			// Auto-retry once on transient connection errors (mid-stream HTTP drop).
@@ -776,7 +784,9 @@ export class QueryRunner {
 					this.ctx.resetProcessExitedPromise();
 				}
 
-				return await this.runQuery(queryGeneration, true);
+				// Increment generation so outer finally detects stale query (see startup timeout retry).
+				const connRetryGeneration = this.ctx.incrementQueryGeneration();
+				return await this.runQuery(connRetryGeneration, true);
 			}
 
 			// Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
