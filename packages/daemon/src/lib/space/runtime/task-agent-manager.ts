@@ -1807,7 +1807,12 @@ export class TaskAgentManager {
 						taskId: row.taskId,
 					});
 			try {
-				await inject(spaceId, message);
+				// Look up reply routing at flush time so queued messages retain
+				// their original reply-to target (ad-hoc member session) instead
+				// of always going to the canonical space:chat: session.
+				const registry = this.config.replyRoutingRegistry;
+				const replyTo = registry && row.taskId ? registry.get(row.taskId) : null;
+				await inject(spaceId, message, replyTo);
 				repo.markDelivered(row.id, spaceChatSessionId);
 				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
 			} catch (err) {
