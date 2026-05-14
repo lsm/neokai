@@ -141,6 +141,9 @@ describe('QueryLifecycleManager', () => {
 				mockContext.queryPromise = Promise.resolve();
 			},
 			processExitedPromise: null,
+			resetProcessExitedPromise: mock(() => {
+				mockContext.processExitedPromise = null;
+			}),
 			startupTimeoutTimer: null,
 			queryAbortController: null,
 			terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,

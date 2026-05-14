@@ -779,6 +779,56 @@ describe('SessionManager', () => {
 		expect(second.exited).not.toContain(6666);
 	});
 
+	it('refreshes evictedAt and startTime on same-PID re-eviction before watchdog poll', async () => {
+		const mockSession: Session = {
+			id: 'session-reevict',
+			title: 'Re-Evict',
+			workspacePath: '/test',
+			status: 'active',
+			config: {},
+			metadata: {},
+		};
+
+		const getSplit1 = mock(() => ({
+			live: [5555],
+			exited: [],
+		}));
+		const fakeAgentSession1 = {
+			getSessionData: mock(() => mockSession),
+			cleanup: mock(async () => {}),
+			getTrackedAgentRootPidsSplit: getSplit1,
+			getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
+		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+		sessionManager.registerSession(fakeAgentSession1);
+		await sessionManager.unregisterSession('session-reevict');
+
+		// First eviction establishes evictedAt and startTime for PID 5555
+		const first = sessionManager.getTrackedAgentRootPidsSplit([]);
+		expect(first.live).toContain(5555);
+
+		// Re-register the same PID via a new session eviction (PID reused by
+		// a new daemon-owned session before the watchdog observed it).
+		const getSplit2 = mock(() => ({
+			live: [5555],
+			exited: [],
+		}));
+		const fakeAgentSession2 = {
+			getSessionData: mock(() => ({ ...mockSession, id: 'session-reevict-2' })),
+			cleanup: mock(async () => {}),
+			getTrackedAgentRootPidsSplit: getSplit2,
+			getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
+		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+		sessionManager.registerSession(fakeAgentSession2);
+		await sessionManager.unregisterSession('session-reevict-2');
+
+		// After re-eviction, PID 5555 should still be tracked as live with
+		// refreshed evictedAt (retention window restarts from now).
+		const second = sessionManager.getTrackedAgentRootPidsSplit([]);
+		expect(second.live).toContain(5555);
+	});
+
 	describe('getActiveSessions', () => {
 		it('should return count from sessionCache', () => {
 			expect(sessionManager.getActiveSessions()).toBe(0);

@@ -646,11 +646,19 @@ export class SessionManager {
 		// startTime is captured from the process snapshot above, or 0 if
 		// unavailable (will be populated on first snapshot-based probe).
 		for (const pid of split.live) {
-			if (!this.evictedLiveRootPids.has(pid))
+			const newStartTime = startTimeByPid.get(pid) ?? 0;
+			const existing = this.evictedLiveRootPids.get(pid);
+			if (existing) {
+				// Refresh metadata on re-eviction so the retention window
+				// restarts from the latest eviction and startTime is current.
+				existing.evictedAt = now;
+				if (newStartTime !== 0) existing.startTime = newStartTime;
+			} else {
 				this.evictedLiveRootPids.set(pid, {
 					evictedAt: now,
-					startTime: startTimeByPid.get(pid) ?? 0,
+					startTime: newStartTime,
 				});
+			}
 		}
 		// Preserve exited PIDs with their actual exit timestamp from the
 		// AgentSession, not Date.now(), so the retention window reflects
@@ -685,9 +693,9 @@ export class SessionManager {
 				// PID absent from snapshot → process exited.
 				// Promote to exited for PGID-based orphan discovery.
 				this.evictedLiveRootPids.delete(pid);
-				if (!this.evictedExitedRootPids.has(pid)) {
-					this.evictedExitedRootPids.set(pid, now);
-				}
+				// Always overwrite with latest exit time so reused PIDs
+				// that exit again get the full retention window.
+				this.evictedExitedRootPids.set(pid, now);
 				continue;
 			}
 

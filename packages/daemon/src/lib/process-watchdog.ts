@@ -125,6 +125,11 @@ export async function cleanupSuspiciousProcesses(options?: {
 	const exitedRoots = new Set(rootResult.exited);
 	if (liveRoots.size === 0 && exitedRoots.size === 0) return 0;
 	const ownedPids = collectDescendantPids(snapshots, liveRoots, exitedRoots);
+	// Set of PIDs present in the current snapshot â used to detect PID reuse.
+	// An exited root whose PGID appears in this set has been reused by an
+	// unrelated process; group-signaling it would kill non-daemon processes.
+	const snapshotPids = new Set<number>();
+	for (const snap of snapshots) snapshotPids.add(snap.pid);
 	let killed = 0;
 
 	for (const snapshot of snapshots) {
@@ -145,7 +150,8 @@ export async function cleanupSuspiciousProcesses(options?: {
 				Number.isFinite(snapshot.pgid) &&
 				snapshot.pgid > 1 &&
 				!liveRoots.has(snapshot.pgid) &&
-				(ownedPids.has(snapshot.pgid) || exitedRoots.has(snapshot.pgid))
+				(ownedPids.has(snapshot.pgid) ||
+					(exitedRoots.has(snapshot.pgid) && !snapshotPids.has(snapshot.pgid)))
 			) {
 				try {
 					groupKiller(snapshot.pgid, 'SIGTERM');

@@ -1395,6 +1395,17 @@ export class AgentSession
 			exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
 	}
 
+	/**
+	 * Clear processExitedPromise and any stale no-PID exit promises.
+	 * Called when retry paths time out and abandon the current wait.
+	 * Without this, unresolved no-PID promises accumulate and block
+	 * future teardown waits for processes that were already abandoned.
+	 */
+	resetProcessExitedPromise(): void {
+		this.noPidExitPromises.length = 0;
+		this.processExitedPromise = null;
+	}
+
 	private expireRecentlyExitedAgentRootPids(now = Date.now()): void {
 		for (const [pid, exitedAt] of this.recentlyExitedAgentRootPids) {
 			if (now - exitedAt > RECENTLY_EXITED_ROOT_PID_RETENTION_MS) {

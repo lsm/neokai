@@ -399,6 +399,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 			queryPromise: null,
 			firstMessageReceived: true,
 			processExitedPromise: null,
+			resetProcessExitedPromise: mock(() => {}),
 			startupTimeoutTimer: null,
 			queryAbortController: null,
 			terminateTrackedAgentProcesses: mock(() => {}),

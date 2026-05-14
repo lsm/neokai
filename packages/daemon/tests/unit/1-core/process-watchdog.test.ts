@@ -228,6 +228,49 @@ describe('process-watchdog', () => {
 		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
 	});
 
+	test('skips group kill when exited root PGID is reused by an unrelated process', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		// PID 300 was an exited root but has been reused by an unrelated process.
+		// The suspicious child (PID 123) has PGID 300, but signaling that group
+		// would kill the unrelated process that now leads PGID 300.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 300, // PGID 300 is in exitedRoots but also in snapshot (reused)
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+				{
+					pid: 300,
+					ppid: 1,
+					pgid: 300, // Reused PID â now leads an unrelated process group
+					elapsedSeconds: 30,
+					command: 'unrelated-browser',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [300] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill must NOT be called â PGID 300 is reused by an unrelated process.
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		// Individual PID kill still fires for the suspicious child
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
 	test('skips group kill when PGID is a live daemon root (protects active session)', async () => {
 		const killProcess = mock(() => {});
 		const killProcessGroup = mock(() => {});

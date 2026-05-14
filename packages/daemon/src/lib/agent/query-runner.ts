@@ -123,6 +123,8 @@ export interface QueryRunnerContext {
 	originalEnvVars: OriginalEnvVars;
 	/** Resolves when tracked SDK subprocesses exit. Set by QueryRunner via spawnClaudeCodeProcess wrapper. */
 	processExitedPromise: Promise<void> | null;
+	/** Clear processExitedPromise and any stale no-PID exit promises. */
+	resetProcessExitedPromise(): void;
 	trackAgentProcess(proc: TrackedAgentProcess): void;
 	snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]>;
 	// Methods for state coordination
@@ -681,7 +683,7 @@ export class QueryRunner {
 						exitPromise,
 						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
 					]);
-					this.ctx.processExitedPromise = null;
+					this.ctx.resetProcessExitedPromise();
 				}
 
 				// Use `return await` so this call's finally{} runs only after the retry
@@ -713,7 +715,7 @@ export class QueryRunner {
 						exitPromise,
 						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
 					]);
-					this.ctx.processExitedPromise = null;
+					this.ctx.resetProcessExitedPromise();
 				}
 
 				return await this.runQuery(queryGeneration, true);
@@ -771,7 +773,7 @@ export class QueryRunner {
 						exitPromise,
 						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
 					]);
-					this.ctx.processExitedPromise = null;
+					this.ctx.resetProcessExitedPromise();
 				}
 
 				return await this.runQuery(queryGeneration, true);
@@ -921,7 +923,7 @@ export class QueryRunner {
 				// previous generation being observed by stop() after a restart: without
 				// this clear, a future stop() call on a new query could snapshot a stale
 				// resolved promise and skip the real wait for the new subprocess's exit.
-				this.ctx.processExitedPromise = null;
+				this.ctx.resetProcessExitedPromise();
 
 				messageQueue.stop();
 
