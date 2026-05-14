@@ -170,6 +170,12 @@ jobs:
       - name: Generate embedded assets
         run: bun run scripts/generate-embedded-assets.ts
 
+      - name: Install cross-compile SDK binary
+        if: matrix.target == 'bun-linux-arm64'
+        run: |
+          SDK_VER=$(node -p "require('./packages/daemon/package.json').dependencies['@anthropic-ai/claude-agent-sdk']")
+          bun add -d "@anthropic-ai/claude-agent-sdk-linux-arm64@${SDK_VER}"
+
       - name: Prepare SDK CLI link
         run: bun run scripts/prepare-sdk-cli-link.ts --target ${{ matrix.target }}
 

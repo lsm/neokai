@@ -46,8 +46,9 @@ function isMusl(): boolean {
 function parseTarget(target?: string): { os: string; arch: string; musl: boolean } {
 	if (target) {
 		// target format: "bun-{os}-{arch}"
+		// Bun uses "windows" but the SDK packages use "win32"
 		const parts = target.replace('bun-', '').split('-');
-		const os = parts[0]; // darwin, linux, windows
+		const os = parts[0] === 'windows' ? 'win32' : parts[0]; // win32, darwin, linux
 		const arch = parts[1]; // x64, arm64
 		// For cross-compilation to Linux, assume glibc unless the host is musl
 		const musl = os === 'linux' && isMusl();
@@ -55,8 +56,11 @@ function parseTarget(target?: string): { os: string; arch: string; musl: boolean
 	}
 	// Auto-detect from host
 	const { platform, arch: hostArch } = process;
-	const os = platform === 'win32' ? 'windows' : platform === 'darwin' ? 'darwin' : 'linux';
-	return { os, arch: hostArch, musl: platform === 'linux' && isMusl() };
+	return {
+		os: platform === 'win32' ? 'win32' : platform,
+		arch: hostArch,
+		musl: platform === 'linux' && isMusl(),
+	};
 }
 
 /**
@@ -75,7 +79,7 @@ function getSdkPlatformPackage(os: string, arch: string, musl: boolean): string 
  * is invoked from.
  */
 function resolveSdkBinary(os: string, arch: string, musl: boolean): string | undefined {
-	const binaryName = os === 'windows' ? 'claude.exe' : 'claude';
+	const binaryName = os === 'win32' ? 'claude.exe' : 'claude';
 	const pkgName = getSdkPlatformPackage(os, arch, musl);
 
 	// Strategy 1: Use createRequire from daemon package to resolve SDK,
