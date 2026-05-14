@@ -650,9 +650,12 @@ export class SessionManager {
 			const existing = this.evictedLiveRootPids.get(pid);
 			if (existing) {
 				// Refresh metadata on re-eviction so the retention window
-				// restarts from the latest eviction and startTime is current.
+				// restarts from the latest eviction. Always reset startTime
+				// since this PID comes from a live AgentSession and is
+				// authoritative — stale prior-generation startTime would
+				// cause false reuse detection on the next watchdog poll.
 				existing.evictedAt = now;
-				if (newStartTime !== 0) existing.startTime = newStartTime;
+				existing.startTime = newStartTime;
 			} else {
 				this.evictedLiveRootPids.set(pid, {
 					evictedAt: now,
