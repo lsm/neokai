@@ -646,20 +646,23 @@ export class SessionManager {
 
 		// Preserve live PIDs as live so the watchdog can track them
 		// as live roots (not exited) while the process is still running.
-		// startTime is captured from the process snapshot above, or 0 if
-		// unavailable (will be populated on first snapshot-based probe).
+		// Only preserve when we have a valid identity baseline (startTime
+		// from the process snapshot). Without it, expireEvictedRoots cannot
+		// distinguish the real root from a reused PID, risking cross-process
+		// attribution and kills.
 		for (const pid of split.live) {
 			const newStartTime = startTimeByPid.get(pid) ?? 0;
 			const existing = this.evictedLiveRootPids.get(pid);
 			if (existing) {
-				// Refresh metadata on re-eviction so the retention window
-				// restarts from the latest eviction. Always reset startTime
-				// since this PID comes from a live AgentSession and is
-				// authoritative — stale prior-generation startTime would
-				// cause false reuse detection on the next watchdog poll.
+				// Refresh retention window on re-eviction. Only update startTime
+				// when we have a valid baseline — a stale prior-generation
+				// startTime is better than 0 (unknown), which would disable
+				// identity verification until the next watchdog poll.
 				existing.evictedAt = now;
-				existing.startTime = newStartTime;
-			} else {
+				if (newStartTime !== 0) {
+					existing.startTime = newStartTime;
+				}
+			} else if (newStartTime !== 0) {
 				this.evictedLiveRootPids.set(pid, {
 					evictedAt: now,
 					startTime: newStartTime,
@@ -706,11 +709,10 @@ export class SessionManager {
 			}
 
 			// PID exists in snapshot — verify identity via start time.
+			// (startTime is always > 0 because preserveRootPids skips
+			// entries without a valid identity baseline.)
 			const currentStartTime = now - snap.elapsedSeconds * 1000;
-			if (meta.startTime === 0) {
-				// First snapshot-based probe: capture start time.
-				meta.startTime = currentStartTime;
-			} else if (Math.abs(currentStartTime - meta.startTime) > 1000) {
+			if (Math.abs(currentStartTime - meta.startTime) > 1000) {
 				// Start time changed by >1s → PID was reused by a different process.
 				// Remove to prevent cross-process attribution.
 				this.evictedLiveRootPids.delete(pid);

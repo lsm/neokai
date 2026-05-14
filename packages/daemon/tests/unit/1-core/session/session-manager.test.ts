@@ -8,6 +8,8 @@
 import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
 import { SessionManager, CleanupState } from '../../../../src/lib/session/session-manager';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import * as processWatchdog from '../../../../src/lib/process-watchdog';
+import type { ProcessSnapshot } from '../../../../src/lib/process-watchdog';
 import type { Database } from '../../../../src/storage/database';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
@@ -28,6 +30,7 @@ describe('SessionManager', () => {
 	let mockJobProcessor: JobQueueProcessor;
 	let config: Record<string, unknown>;
 	let eventHandlers: Map<string, (...args: unknown[]) => unknown>;
+	let listProcessesSpy: ReturnType<typeof spyOn>;
 
 	beforeEach(() => {
 		eventHandlers = new Map();
@@ -141,9 +144,13 @@ describe('SessionManager', () => {
 			undefined, // skillsManager
 			undefined // appMcpServerRepo
 		);
+		// Default: listProcesses returns empty array (no test PIDs in process table).
+		// Tests with live PIDs override this to include their fake PIDs.
+		listProcessesSpy = spyOn(processWatchdog, 'listProcesses').mockResolvedValue([]);
 	});
 
 	afterEach(async () => {
+		listProcessesSpy?.mockRestore();
 		// Ensure cleanup after each test
 		try {
 			await sessionManager.cleanup();
@@ -358,6 +365,9 @@ describe('SessionManager', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
+			listProcessesSpy.mockResolvedValue([
+				{ pid: 7000, ppid: 1, pgid: 7000, elapsedSeconds: 60, command: 'live-root' },
+			]);
 			await sessionManager.unregisterSession('room:1:task:2:abc');
 
 			// Pass snapshot with PID 7000 so snapshot-based identity
@@ -551,6 +561,9 @@ describe('SessionManager', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 			sessionManager.registerSession(fakeAgentSession);
+			listProcessesSpy.mockResolvedValue([
+				{ pid: 8000, ppid: 1, pgid: 8000, elapsedSeconds: 60, command: 'live-root' },
+			]);
 			await sessionManager.interruptInMemorySession('session-evicted-live');
 
 			// Pass snapshot with PID 8000 so snapshot-based identity
@@ -592,6 +605,9 @@ describe('SessionManager', () => {
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);
+		listProcessesSpy.mockResolvedValue([
+			{ pid: 9001, ppid: 1, pgid: 9001, elapsedSeconds: 60, command: 'live-root' },
+		]);
 		await sessionManager.interruptInMemorySession('session-promote-live');
 
 		// Pass snapshot with PID 9001 so identity is verified as live.
@@ -636,6 +652,9 @@ describe('SessionManager', () => {
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);
+		listProcessesSpy.mockResolvedValue([
+			{ pid: 9002, ppid: 1, pgid: 9002, elapsedSeconds: 60, command: 'live-root' },
+		]);
 		await sessionManager.interruptInMemorySession('session-no-snapshot');
 
 		// Without a snapshot, the evicted live root stays live â no false
@@ -672,6 +691,9 @@ describe('SessionManager', () => {
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);
+		listProcessesSpy.mockResolvedValue([
+			{ pid: 9999, ppid: 1, pgid: 9999, elapsedSeconds: 60, command: 'live-root' },
+		]);
 		await sessionManager.interruptInMemorySession('session-reuse-safety');
 
 		const RETENTION_MS = 15 * 60 * 1000;
@@ -720,6 +742,9 @@ describe('SessionManager', () => {
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);
+		listProcessesSpy.mockResolvedValue([
+			{ pid: 7777, ppid: 1, pgid: 7777, elapsedSeconds: 60, command: 'live-root' },
+		]);
 		await sessionManager.interruptInMemorySession('session-identity-verified');
 
 		// Pass snapshot with PID 7777 â first probe captures startTime,
@@ -759,6 +784,9 @@ describe('SessionManager', () => {
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession);
+		listProcessesSpy.mockResolvedValue([
+			{ pid: 6666, ppid: 1, pgid: 6666, elapsedSeconds: 60, command: 'original-process' },
+		]);
 		await sessionManager.interruptInMemorySession('session-pid-reuse');
 
 		// First snapshot: PID 6666 with 60s elapsed â captures startTime.
@@ -801,6 +829,9 @@ describe('SessionManager', () => {
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession1);
+		listProcessesSpy.mockResolvedValue([
+			{ pid: 5555, ppid: 1, pgid: 5555, elapsedSeconds: 60, command: 'live-root' },
+		]);
 		await sessionManager.unregisterSession('session-reevict');
 
 		// First eviction establishes evictedAt and startTime for PID 5555
@@ -821,12 +852,48 @@ describe('SessionManager', () => {
 		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
 		sessionManager.registerSession(fakeAgentSession2);
+		listProcessesSpy.mockResolvedValue([
+			{ pid: 5555, ppid: 1, pgid: 5555, elapsedSeconds: 60, command: 'live-root' },
+		]);
 		await sessionManager.unregisterSession('session-reevict-2');
 
 		// After re-eviction, PID 5555 should still be tracked as live with
 		// refreshed evictedAt (retention window restarts from now).
 		const second = sessionManager.getTrackedAgentRootPidsSplit([]);
 		expect(second.live).toContain(5555);
+	});
+
+	it('skips live-root preservation when identity baseline is unknown (listProcesses fails)', async () => {
+		const mockSession: Session = {
+			id: 'session-no-identity',
+			title: 'No Identity',
+			workspacePath: '/test',
+			status: 'active',
+			config: {},
+			metadata: {},
+		};
+
+		const getSplit = mock(() => ({
+			live: [4321],
+			exited: [],
+		}));
+		const fakeAgentSession = {
+			getSessionData: mock(() => mockSession),
+			cleanup: mock(async () => {}),
+			getTrackedAgentRootPidsSplit: getSplit,
+			getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
+		} as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+
+		sessionManager.registerSession(fakeAgentSession);
+		// listProcesses returns empty — PID 4321 not found, no identity baseline.
+		// The default beforeEach mock already returns [].
+		await sessionManager.interruptInMemorySession('session-no-identity');
+
+		// PID 4321 should NOT be tracked as live because no startTime
+		// baseline was captured (cannot verify identity against reuse).
+		const split = sessionManager.getTrackedAgentRootPidsSplit([]);
+		expect(split.live).not.toContain(4321);
+		expect(split.exited).not.toContain(4321);
 	});
 
 	describe('getActiveSessions', () => {
