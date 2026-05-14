@@ -390,6 +390,188 @@ describe('AgentSession', () => {
 		});
 	});
 
+	describe('no-PID process tracking', () => {
+		function createAgentSession(): AgentSession {
+			const mockSession: Session = {
+				id: `test-session-nopid-${Math.random()}`,
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {},
+			} as Session;
+
+			const mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+				getUserMessages: mock(() => []),
+				getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+				deleteMessagesAfter: mock(() => 0),
+				deleteMessagesAtAndAfter: mock(() => 0),
+				getUserMessageByUuid: mock(() => undefined),
+				countMessagesAfter: mock(() => 0),
+				getMessagesByStatus: mock(() => []),
+				updateMessage: mock(() => {}),
+				getSDKMessageCount: mock(() => 0),
+			} as unknown as Database;
+
+			return new AgentSession(
+				mockSession,
+				mockDb,
+				{} as MessageHub,
+				{
+					publish: mock(async () => {}),
+					publishAsync: mock(() => {}),
+					subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+				} as unknown as InternalEventBus<any>,
+				mock(async () => 'test-api-key')
+			);
+		}
+
+		it('preserves existing processExitedPromise when tracking a no-PID process', async () => {
+			const agentSession = createAgentSession();
+
+			// Track a numeric-PID process first
+			const numericProc = {
+				pid: 500,
+				once: mock((_event: string, _handler: () => void) => numericProc),
+				kill: mock(() => true),
+			};
+			agentSession.trackAgentProcess(numericProc as never);
+			const existingPromise = agentSession.processExitedPromise;
+			expect(existingPromise).not.toBeNull();
+
+			// Track a no-PID process — should NOT overwrite processExitedPromise
+			const noPidProc = {
+				once: mock((_event: string, _handler: () => void) => noPidProc),
+				kill: mock(() => true),
+			};
+			agentSession.trackAgentProcess(noPidProc as never);
+			const updatedPromise = agentSession.processExitedPromise;
+
+			// processExitedPromise should still be set (not null) and should
+			// aggregate both the numeric-PID and no-PID exit promises
+			expect(updatedPromise).not.toBeNull();
+			// It should be a new promise (aggregated), not the same reference
+			expect(updatedPromise).not.toBe(existingPromise);
+		});
+
+		it('aggregates no-PID exit promise with existing numeric-PID promises', async () => {
+			const agentSession = createAgentSession();
+
+			// Track a numeric-PID process
+			let exitHandler1: (() => void) | null = null;
+			const proc1 = {
+				pid: 600,
+				once: mock((_event: string, handler: () => void) => {
+					exitHandler1 = handler;
+					return proc1;
+				}),
+				kill: mock(() => true),
+			};
+			agentSession.trackAgentProcess(proc1 as never);
+
+			// Track a no-PID process
+			let exitHandlerNoPid: (() => void) | null = null;
+			const noPidProc = {
+				once: mock((_event: string, handler: () => void) => {
+					exitHandlerNoPid = handler;
+					return noPidProc;
+				}),
+				kill: mock(() => true),
+			};
+			agentSession.trackAgentProcess(noPidProc as never);
+
+			const promise = agentSession.processExitedPromise;
+			expect(promise).not.toBeNull();
+
+			// Resolve the numeric-PID process — promise should NOT resolve yet
+			// because the no-PID promise is still pending
+			exitHandler1?.();
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			// Resolve the no-PID process
+			exitHandlerNoPid?.();
+			await expect(promise).resolves.toBeUndefined();
+		});
+
+		it('no-PID-first then numeric-PID keeps no-PID promise in aggregation', async () => {
+			const agentSession = createAgentSession();
+
+			// Track a no-PID process first
+			let noPidExitHandler: (() => void) | null = null;
+			const noPidProc = {
+				once: mock((_event: string, handler: () => void) => {
+					noPidExitHandler = handler;
+					return noPidProc;
+				}),
+				kill: mock(() => true),
+			};
+			agentSession.trackAgentProcess(noPidProc as never);
+
+			// Now track a numeric-PID process — updateProcessExitedPromise must
+			// still include the pending no-PID promise.
+			let numericExitHandler: (() => void) | null = null;
+			const numericProc = {
+				pid: 700,
+				once: mock((_event: string, handler: () => void) => {
+					numericExitHandler = handler;
+					return numericProc;
+				}),
+				kill: mock(() => true),
+			};
+			agentSession.trackAgentProcess(numericProc as never);
+
+			const promise = agentSession.processExitedPromise;
+			expect(promise).not.toBeNull();
+
+			// Resolve the numeric process — promise should NOT resolve yet
+			numericExitHandler?.();
+			await new Promise((resolve) => setTimeout(resolve, 5));
+
+			// Now resolve the no-PID process
+			noPidExitHandler?.();
+			await expect(promise).resolves.toBeUndefined();
+		});
+
+		it('multiple no-PID processes are all aggregated', async () => {
+			const agentSession = createAgentSession();
+
+			const exitHandlers: (() => void)[] = [];
+			const createNoPidProc = () => {
+				const proc = {
+					once: mock((_event: string, handler: () => void) => {
+						exitHandlers.push(handler);
+						return proc;
+					}),
+					kill: mock(() => true),
+				};
+				return proc;
+			};
+
+			agentSession.trackAgentProcess(createNoPidProc() as never);
+			agentSession.trackAgentProcess(createNoPidProc() as never);
+			agentSession.trackAgentProcess(createNoPidProc() as never);
+
+			const promise = agentSession.processExitedPromise;
+			expect(promise).not.toBeNull();
+
+			// Resolve first two — promise should still be pending
+			exitHandlers[0]();
+			exitHandlers[1]();
+			await new Promise((resolve) => setTimeout(resolve, 5));
+
+			// Resolve the last one
+			exitHandlers[2]();
+			await expect(promise).resolves.toBeUndefined();
+		});
+	});
+
 	describe('component initialization', () => {
 		let mockSession: Session;
 		let mockDb: Database;

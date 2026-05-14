@@ -53,7 +53,11 @@ import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from 
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
 import { NeoAgentManager } from './lib/neo/neo-agent-manager';
-import { cleanupSuspiciousProcesses, ProcessWatchdog } from './lib/process-watchdog';
+import {
+	cleanupSuspiciousProcesses,
+	ProcessWatchdog,
+	type ProcessSnapshot,
+} from './lib/process-watchdog';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -197,11 +201,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	let taskAgentManager: TaskAgentManager | null = null;
 	const processWatchdog = new ProcessWatchdog(undefined, () =>
 		cleanupSuspiciousProcesses({
-			getRootPids: () => {
+			getRootPids: (snapshot?: ProcessSnapshot[]) => {
 				const live: number[] = [];
 				const exited: number[] = [];
 				if (sessionManager) {
-					const split = sessionManager.getTrackedAgentRootPidsSplit();
+					const split = sessionManager.getTrackedAgentRootPidsSplit(snapshot);
 					live.push(...split.live);
 					exited.push(...split.exited);
 				}
