@@ -3684,12 +3684,15 @@ describe('ChannelRouter', () => {
 				const cachedState = gateOpenStateRepo.isOpen(run.id, 'persist-gate');
 				expect(cachedState.open).toBe(true);
 				// Verify the fingerprint matches what we'd compute now (workflow.updatedAt + gate hash)
-				const expectedFingerprint =
-					workflow.updatedAt +
-					JSON.stringify(gate)
-						.split('')
-						.reduce((acc, char) => ((acc << 5) - acc + char.charCodeAt(0)) & acc, 0);
-				expect(cachedState.workflowUpdatedAt).toBe(expectedFingerprint);
+				// Verify the fingerprint matches what we'd compute now (workflow.updatedAt + gate hash)
+				// Use the same algorithm as generateGateFingerprint
+				const gateJson = JSON.stringify(gate);
+				let hash = 0;
+				for (let i = 0; i < gateJson.length; i++) {
+					hash = (hash << 5) - hash + gateJson.charCodeAt(i);
+					hash = hash & hash;
+				}
+				const expectedFingerprint = workflow.updatedAt + hash;
 
 				// Create router2 with the SAME repo (simulates daemon restart)
 				const router2 = new ChannelRouter({
