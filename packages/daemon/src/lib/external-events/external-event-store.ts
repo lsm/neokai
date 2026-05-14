@@ -446,6 +446,41 @@ export class ExternalEventStore {
 		return rows.map(deliveryRowToRecord);
 	}
 
+	/** List published source events that have no registered delivery rows. */
+	listPublishedEventsWithoutDeliveries(): ExternalEventRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT e.* FROM space_external_events e
+				 WHERE e.state = 'published'
+				   AND NOT EXISTS (
+				     SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = e.id
+				   )
+				 ORDER BY e.updated_at, e.id`
+			)
+			.all() as ExternalEventRow[];
+		return rows.map(rowToRecord);
+	}
+
+	/** List retryable pending delivery rows, optionally scoped to a workflow run. */
+	listPendingDeliveries(workflowRunId?: string): ExternalEventDeliveryRecord[] {
+		const rows = workflowRunId
+			? (this.db
+					.prepare(
+						`SELECT * FROM space_external_event_deliveries
+						 WHERE state = 'pending' AND workflow_run_id = ?
+						 ORDER BY updated_at, delivery_key`
+					)
+					.all(workflowRunId) as ExternalEventDeliveryRow[])
+			: (this.db
+					.prepare(
+						`SELECT * FROM space_external_event_deliveries
+						 WHERE state = 'pending'
+						 ORDER BY updated_at, delivery_key`
+					)
+					.all() as ExternalEventDeliveryRow[]);
+		return rows.map(deliveryRowToRecord);
+	}
+
 	getDelivery(eventId: string, deliveryKey: string): ExternalEventDeliveryRecord | null {
 		const row = this.db
 			.prepare(

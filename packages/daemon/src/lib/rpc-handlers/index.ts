@@ -10,6 +10,8 @@ import { generateUUID } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { DaemonCommandMap, InternalCommandBus } from '../internal-command-bus';
+import type { ExternalEventStore } from '../external-events/external-event-store';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
@@ -105,6 +107,8 @@ export interface RPCHandlerDependencies {
 	config: Config;
 	/** Semantic internal event bus for daemon domain events. */
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+	commandBus: InternalCommandBus<DaemonCommandMap>;
+	externalEventStore: ExternalEventStore;
 	db: Database;
 	gitHubService?: GitHubService;
 	spaceGitHubService: SpaceGitHubService;
@@ -401,6 +405,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		artifactRepo,
 		pendingMessageRepo,
 		scheduleService,
+		commandBus: deps.commandBus,
+		externalEventStore: deps.externalEventStore,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -507,6 +513,24 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceAgentInjector,
 		scheduleService,
 		internalEventBus: deps.internalEventBus,
+	});
+
+	deps.commandBus.register('agent.message.inject', async (command) => {
+		if (!taskAgentManager) {
+			return { ok: false, error: 'TaskAgentManager unavailable' };
+		}
+		try {
+			await taskAgentManager.injectSubSessionMessage(
+				command.sessionId,
+				command.message,
+				true,
+				undefined,
+				command.deliveryMode ?? 'immediate'
+			);
+			return { ok: true };
+		} catch (err) {
+			return { ok: false, error: err };
+		}
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn

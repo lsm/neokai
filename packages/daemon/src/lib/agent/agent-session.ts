@@ -98,7 +98,7 @@ import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
 
-const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
+export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
 /**
  * AgentSessionInit - Configuration for creating a new AgentSession
@@ -300,6 +300,8 @@ export class AgentSession
 	processExitedPromise: Promise<void> | null = null;
 	private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
 	private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
+	/** Durable no-PID exit promises — retained until resolved so updateProcessExitedPromise() never drops them. */
+	private noPidExitPromises: Promise<void>[] = [];
 	private recentlyExitedAgentRootPids = new Map<number, number>();
 	private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -1243,9 +1245,19 @@ export class AgentSession
 	trackAgentProcess(proc: TrackedAgentProcess): void {
 		const pid = proc.pid;
 		if (typeof pid !== 'number' || pid <= 0) {
-			this.processExitedPromise = new Promise<void>((resolve) => {
-				proc.once('exit', () => resolve());
+			// Store no-PID promises in a durable collection so
+			// updateProcessExitedPromise() includes them on every rebuild
+			// (e.g. when a later numeric-PID process is tracked).
+			const noPidExitPromise = new Promise<void>((resolve) => {
+				proc.once('exit', () => {
+					// Self-clean from the durable collection once resolved.
+					const idx = this.noPidExitPromises.indexOf(noPidExitPromise);
+					if (idx >= 0) this.noPidExitPromises.splice(idx, 1);
+					resolve();
+				});
 			});
+			this.noPidExitPromises.push(noPidExitPromise);
+			this.updateProcessExitedPromise();
 			return;
 		}
 
@@ -1280,6 +1292,16 @@ export class AgentSession
 			live: [...this.trackedAgentProcesses.keys()],
 			exited: [...this.recentlyExitedAgentRootPids.keys()],
 		};
+	}
+
+	/**
+	 * Returns exit timestamps for recently-exited agent root PIDs.
+	 * Used by SessionManager to preserve accurate retention windows
+	 * when snapshots are transferred to the evicted-root maps.
+	 */
+	getExitedRootPidTimestamps(): Map<number, number> {
+		this.expireRecentlyExitedAgentRootPids();
+		return new Map(this.recentlyExitedAgentRootPids);
 	}
 
 	snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]> {
@@ -1365,9 +1387,23 @@ export class AgentSession
 	}
 
 	private updateProcessExitedPromise(): void {
-		const exitPromises = [...this.trackedAgentProcessExitPromises.values()];
+		const exitPromises = [
+			...this.trackedAgentProcessExitPromises.values(),
+			...this.noPidExitPromises,
+		];
 		this.processExitedPromise =
 			exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
+	}
+
+	/**
+	 * Clear processExitedPromise and any stale no-PID exit promises.
+	 * Called when retry paths time out and abandon the current wait.
+	 * Without this, unresolved no-PID promises accumulate and block
+	 * future teardown waits for processes that were already abandoned.
+	 */
+	resetProcessExitedPromise(): void {
+		this.noPidExitPromises.length = 0;
+		this.processExitedPromise = null;
 	}
 
 	private expireRecentlyExitedAgentRootPids(now = Date.now()): void {

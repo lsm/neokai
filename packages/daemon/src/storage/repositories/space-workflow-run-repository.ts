@@ -75,6 +75,14 @@ export class SpaceWorkflowRunRepository {
 		return rows.map((r) => this.rowToRun(r));
 	}
 
+	listByWorkflow(workflowId: string): SpaceWorkflowRun[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM space_workflow_runs WHERE workflow_id = ? ORDER BY created_at DESC`
+		);
+		const rows = stmt.all(workflowId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToRun(r));
+	}
+
 	/**
 	 * List in-progress workflow runs for a space.
 	 *
