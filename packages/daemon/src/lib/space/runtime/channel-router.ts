@@ -317,7 +317,7 @@ export class ChannelRouter {
 	 * - On daemon restart the cache starts empty; the first call re-evaluates and
 	 *   repopulates.
 	 */
-	private readonly openedGates = new Set<string>();
+	private readonly openedGates = new Map<string, number>();
 
 	constructor(private readonly config: ChannelRouterConfig) {
 		this.scriptSemaphore = {
@@ -529,7 +529,7 @@ export class ChannelRouter {
 		// readiness check cannot permanently cache a gate as open.
 		if (channel.gateId) {
 			const skipEval =
-				this.isGateCachedOpen(runId, channel.gateId) &&
+				this.isGateCachedOpen(runId, channel.gateId, workflow.updatedAt) &&
 				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
 
 			if (skipEval) {
@@ -679,13 +679,13 @@ export class ChannelRouter {
 		// their gate data is reset on each cycle traversal.
 		if (channel?.gateId) {
 			const skipEval =
-				this.isGateCachedOpen(runId, channel.gateId) &&
+				this.isGateCachedOpen(runId, channel.gateId, workflow.updatedAt) &&
 				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
 
 			if (!skipEval) {
 				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
 				if (gateResult.open) {
-					this.cacheGateOpened(runId, channel.gateId);
+					this.cacheGateOpened(runId, channel.gateId, workflow.updatedAt);
 				}
 				if (!gateResult.open) {
 					throw new ChannelGateBlockedError(
@@ -723,13 +723,13 @@ export class ChannelRouter {
 		// was previously opened, unless cyclic with `resetOnCycle`.
 		if (channel?.gateId) {
 			const skipEval =
-				this.isGateCachedOpen(runId, channel.gateId) &&
+				this.isGateCachedOpen(runId, channel.gateId, workflow.updatedAt) &&
 				!this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
 
 			if (!skipEval) {
 				const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
 				if (postActivationGate.open) {
-					this.cacheGateOpened(runId, channel.gateId);
+					this.cacheGateOpened(runId, channel.gateId, workflow.updatedAt);
 				}
 				if (!postActivationGate.open) {
 					throw new ChannelGateBlockedError(
@@ -824,7 +824,7 @@ export class ChannelRouter {
 		// Evaluate the gate once (shared across all channels referencing it)
 		const gateResult = await this.evaluateGateById(runId, gateId, workflow);
 		if (gateResult.open) {
-			this.cacheGateOpened(runId, gateId);
+			this.cacheGateOpened(runId, gateId, workflow.updatedAt);
 		}
 		if (!gateResult.open) {
 			// Notify caller when the gate is waiting for human approval. Only fires for
@@ -932,14 +932,25 @@ export class ChannelRouter {
 		return `${runId}:${gateId}`;
 	}
 
-	/** Returns true when the gate has previously evaluated to `open: true`. */
-	private isGateCachedOpen(runId: string, gateId: string): boolean {
-		return this.openedGates.has(this.gateOpenKey(runId, gateId));
+	/**
+	 * Returns true when the gate has previously evaluated to `open: true`
+	 * AND the workflow definition has not changed since the gate was cached.
+	 *
+	 * @param workflowUpdatedAt  The workflow's `updatedAt` timestamp. When the
+	 *   workflow is updated (e.g. gate conditions tightened), the timestamp
+	 *   changes and the cache entry is considered stale — the gate is
+	 *   re-evaluated against the new definition.
+	 */
+	private isGateCachedOpen(runId: string, gateId: string, workflowUpdatedAt?: number): boolean {
+		const cached = this.openedGates.get(this.gateOpenKey(runId, gateId));
+		if (cached === undefined) return false;
+		if (workflowUpdatedAt !== undefined && cached !== workflowUpdatedAt) return false;
+		return true;
 	}
 
-	/** Mark a gate as having been opened at least once. */
-	private cacheGateOpened(runId: string, gateId: string): void {
-		this.openedGates.add(this.gateOpenKey(runId, gateId));
+	/** Mark a gate as having been opened, storing the workflow's `updatedAt` for staleness checks. */
+	private cacheGateOpened(runId: string, gateId: string, workflowUpdatedAt: number): void {
+		this.openedGates.set(this.gateOpenKey(runId, gateId), workflowUpdatedAt);
 	}
 
 	/**
@@ -981,7 +992,7 @@ export class ChannelRouter {
 	 * (which happens when the node-agent session ends).
 	 */
 	evictRunCache(runId: string): void {
-		for (const key of this.openedGates) {
+		for (const [key] of this.openedGates) {
 			if (key.startsWith(`${runId}:`)) {
 				this.openedGates.delete(key);
 			}

@@ -3560,9 +3560,9 @@ describe('ChannelRouter', () => {
 			// re-evaluates the gate. Since the gate is closed, it throws.
 			// Without the terminal-eviction, the stale cache would have allowed
 			// delivery to succeed.
-			expect(router.deliverMessage(run.id, 'coder', 'planner', 'msg after done')).rejects.toThrow(
-				ChannelGateBlockedError
-			);
+			await expect(
+				router.deliverMessage(run.id, 'coder', 'planner', 'msg after done')
+			).rejects.toThrow(ChannelGateBlockedError);
 		});
 	});
 });
