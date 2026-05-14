@@ -877,6 +877,7 @@ export class SpaceRuntimeService {
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.

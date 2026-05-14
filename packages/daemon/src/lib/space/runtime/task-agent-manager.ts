@@ -851,6 +851,7 @@ export class TaskAgentManager {
 				myAgentName: 'task-agent',
 				mySessionId: sessionId,
 				auditLogRepo: this.auditLogRepo,
+				replyRoutingRegistry: this.config.replyRoutingRegistry,
 			});
 			taskMcpServers['space-agent-tools'] = spaceAgentMcpServer as unknown as McpServerConfig;
 
@@ -1814,12 +1815,15 @@ export class TaskAgentManager {
 				// Look up reply routing at flush time so queued messages retain
 				// their original reply-to target (ad-hoc member session) instead
 				// of always going to the canonical space:chat: session.
-				// Dual strategy: (1) in-memory registry (same-process retries),
-				// (2) extract from message envelope footer (survives daemon restart).
+				// Dual strategy: (1) extract from message envelope footer (per-message,
+				//     immutable, survives daemon restart),
+				// (2) in-memory registry (fallback for older rows without footer).
+				// Footer takes priority to prevent a newer sender from overwriting
+				// the routing of a previously queued message.
 				const registry = this.config.replyRoutingRegistry;
 				const replyTo =
-					(registry && row.taskId ? registry.get(row.taskId) : null) ??
-					extractReplyToSessionId(message);
+					extractReplyToSessionId(message) ??
+					(registry && row.taskId ? registry.get(row.taskId) : null);
 				await inject(spaceId, message, replyTo);
 				repo.markDelivered(row.id, spaceChatSessionId);
 				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
