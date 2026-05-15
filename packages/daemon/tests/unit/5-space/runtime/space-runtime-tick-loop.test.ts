@@ -878,6 +878,65 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			);
 		});
 
+		test('does not treat restart notice injection failure as spawn failure', async () => {
+			const injected: Array<{ sessionId: string; message: string }> = [];
+			const cancelled: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: (sessionId) => sessionId !== 'session:restart-notice-failed:new',
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId, message) => {
+					injected.push({ sessionId, message });
+					if (message.includes('[Runtime session recovery]')) {
+						throw new Error('notice write failed');
+					}
+					return `runtime-nag:${sessionId}:${injected.length}`;
+				},
+				restartStuckSubSession: async () => {},
+				cancelBySessionId: (sessionId) => {
+					cancelled.push(sessionId);
+				},
+				spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+					const exec = execution as { id: string };
+					const sessionId = 'session:restart-notice-failed:new';
+					nodeExecutionRepo.update(exec.id, {
+						status: 'in_progress',
+						agentSessionId: sessionId,
+						startedAt: Date.now(),
+						completedAt: null,
+					});
+					return sessionId;
+				},
+			});
+			const rt = new SpaceRuntime(
+				buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 0 })
+			);
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:restart-notice-failed',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			saveAssistantMessage('session:restart-notice-failed', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+			await rt.executeTick();
+			await rt.executeTick();
+			await Promise.resolve();
+
+			expect(cancelled).toEqual([]);
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+			expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe(
+				'session:restart-notice-failed:new'
+			);
+			expect(injected.some((entry) => entry.message.includes('[Runtime session recovery]'))).toBe(
+				true
+			);
+		});
+
 		test('waits for nag grace before restarting a still-stale live session', async () => {
 			const restarted: string[] = [];
 			const injected: Array<{ sessionId: string; message: string }> = [];

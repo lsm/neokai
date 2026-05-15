@@ -3924,7 +3924,11 @@ export class SpaceRuntime {
 							});
 							const restartNotice = this.consumeAgentRestartNotice(runId, execution);
 							if (restartNotice) {
-								await tam.injectRuntimeRecoveryMessage(sessionId, restartNotice);
+								void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
+									log.warn(
+										`SpaceRuntime: failed to deliver restart recovery notice to session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+									);
+								});
 							}
 						} catch (err) {
 							if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
