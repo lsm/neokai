@@ -119,7 +119,7 @@ describe('useAutoScroll', () => {
 
 	describe('scrollToBottom', () => {
 		it('should scroll the container to its scrollHeight with instant behavior by default', () => {
-			const { containerRef, endRef, scrollToMock, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef, scrollToMock } = createMockRefs();
 
 			const { result } = renderHook(() =>
 				useAutoScroll({
@@ -134,12 +134,13 @@ describe('useAutoScroll', () => {
 				result.current.scrollToBottom();
 			});
 
-			expect(scrollToMock).toHaveBeenCalledWith({ top: 1000, behavior: 'instant' });
+			// Instant path uses direct property assignment, not scrollTo().
+			expect(scrollToMock).not.toHaveBeenCalled();
 			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should scroll the container to its scrollHeight with smooth behavior when specified', () => {
-			const { containerRef, endRef, scrollToMock, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef, scrollToMock } = createMockRefs();
 
 			const { result } = renderHook(() =>
 				useAutoScroll({
@@ -180,7 +181,7 @@ describe('useAutoScroll', () => {
 
 	describe('auto-scroll behavior', () => {
 		it('should scroll on initial load when messages arrive', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			// Start with isInitialLoad=true and 0 messages
 			const { rerender } = renderHook(
@@ -200,7 +201,7 @@ describe('useAutoScroll', () => {
 			// Rerender with messages arriving
 			rerender({ messageCount: 5, isInitialLoad: true });
 
-			expect(scrollIntoViewMock).toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should NOT force-scroll on initial load when enabled=false (deep-link case)', () => {
@@ -208,7 +209,7 @@ describe('useAutoScroll', () => {
 			// `useScrollToMessage` hook), it sets `enabled: false` so the
 			// initial-load forced scroll-to-bottom does not race with — and
 			// override — the deep-link `scrollIntoView`.
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, isInitialLoad, enabled }) =>
@@ -226,11 +227,11 @@ describe('useAutoScroll', () => {
 
 			// Messages arrive while disabled — should NOT force scroll.
 			rerender({ messageCount: 5, isInitialLoad: true, enabled: false });
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(0);
 		});
 
 		it('should scroll when new messages arrive and enabled', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount }) =>
@@ -246,16 +247,14 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			scrollIntoViewMock.mockClear();
-
 			// Add new message
 			rerender({ messageCount: 6 });
 
-			expect(scrollIntoViewMock).toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should not scroll when new messages arrive but disabled', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount }) =>
@@ -271,16 +270,18 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			scrollIntoViewMock.mockClear();
+			// Initial mount-scroll already fired (messageCount > 0 on first render).
+			const baselineScroll = containerRef.current!.scrollTop;
 
 			// Add new message
 			rerender({ messageCount: 6 });
 
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+			// scrollTop should not have changed (no auto-scroll when disabled).
+			expect(containerRef.current!.scrollTop).toBe(baselineScroll);
 		});
 
 		it('should not scroll when loading older messages', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, loadingOlder }) =>
@@ -297,16 +298,17 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			scrollIntoViewMock.mockClear();
+			// loadingOlder=true suppresses auto-scroll, including mount scroll.
+			// scrollTop stays at 0 because the mount-scroll is blocked.
+			expect(containerRef.current!.scrollTop).toBe(0);
 
-			// Add messages while loading older
+			// Add messages while loading older — still no scroll.
 			rerender({ messageCount: 10, loadingOlder: true });
-
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(0);
 		});
 
 		it('should not auto-scroll when loadingOlder transitions from true to false', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, loadingOlder }) =>
@@ -323,17 +325,17 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			scrollIntoViewMock.mockClear();
+			// Initial mount-scroll already fired.
+			const baselineScroll = containerRef.current!.scrollTop;
 
 			// Start loading older — message count increases as hidden messages are revealed
 			rerender({ messageCount: 55, loadingOlder: true });
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
 
 			// Finish loading older — message count stays at 55, loadingOlder flips to false.
 			// This should NOT trigger auto-scroll because the count increase came from
 			// revealing older messages, not from genuinely new messages.
 			rerender({ messageCount: 55, loadingOlder: false });
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(baselineScroll);
 		});
 
 		it('should not auto-scroll across a load-older transition where messageCount also increases', () => {
@@ -346,7 +348,7 @@ describe('useAutoScroll', () => {
 			// clobbering ChatContainer's scroll-position restore. The
 			// loadingOlder-tracker therefore also runs as a useLayoutEffect
 			// declared first.
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, loadingOlder }) =>
@@ -363,16 +365,16 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			scrollIntoViewMock.mockClear();
+			// Initial mount-scroll already fired.
+			const baselineScroll = containerRef.current!.scrollTop;
 
 			// User clicks "Load more" — loadingOlder flips on first.
 			rerender({ messageCount: 200, loadingOlder: true });
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
 
 			// Older messages prepended AND loadingOlder cleared in the same
 			// render (post-await batching): messageCount jumps from 200 → 250.
 			rerender({ messageCount: 250, loadingOlder: false });
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(baselineScroll);
 		});
 
 		it('should scroll on first non-empty messageCount even when isInitialLoad is already false', () => {
@@ -383,7 +385,7 @@ describe('useAutoScroll', () => {
 			// The hook must still scroll on this first non-empty render —
 			// otherwise the user lands somewhere mid-conversation instead of
 			// at the latest messages.
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, isInitialLoad }) =>
@@ -403,13 +405,11 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			scrollIntoViewMock.mockClear();
-
 			// Messages arrive in the next render. Even though isInitialLoad
 			// stays false, the hook should scroll because this is the first
 			// non-empty messageCount on this mount.
 			rerender({ messageCount: 12, isInitialLoad: false });
-			expect(scrollIntoViewMock).toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should scroll on first non-empty messageCount even when enabled is false', () => {
@@ -417,7 +417,7 @@ describe('useAutoScroll', () => {
 			// auto-scroll-on-new-content. The user's autoScroll preference
 			// only governs SUBSEQUENT scrolling, mirroring the existing
 			// initial-load behavior.
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount }) =>
@@ -433,20 +433,16 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			scrollIntoViewMock.mockClear();
-
 			rerender({ messageCount: 8 });
-			expect(scrollIntoViewMock).toHaveBeenCalled();
-
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Subsequent new content with enabled=false must NOT scroll.
 			rerender({ messageCount: 9 });
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should only scroll once on mount, even after multiple message updates', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount }) =>
@@ -462,16 +458,12 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			scrollIntoViewMock.mockClear();
-
 			rerender({ messageCount: 5 });
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Re-renders with same messageCount: should not re-scroll.
 			rerender({ messageCount: 5 });
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should scroll to bottom on task switch without remount (messageCount N → 0 → M)', () => {
@@ -480,7 +472,7 @@ describe('useAutoScroll', () => {
 			// stays true from the previous task. When rows are cleared (messageCount→0)
 			// and then repopulated from the new task (messageCount→M), the hook must
 			// still scroll to the bottom via the hasNewContent path.
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, isInitialLoad }) =>
@@ -498,8 +490,7 @@ describe('useAutoScroll', () => {
 			);
 
 			// Initial mount-scroll fires (messageCount > 0 on first render)
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Task B: rows cleared, loading starts (isInitialLoad=true)
 			rerender({ messageCount: 0, isInitialLoad: true });
@@ -508,14 +499,14 @@ describe('useAutoScroll', () => {
 			rerender({ messageCount: 15, isInitialLoad: false });
 
 			// Should have scrolled for the new task's content
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should scroll to bottom on task switch when new task has fewer messages', () => {
 			// Edge case: switching from a task with many messages to one with fewer.
 			// The hasNewContent path checks messageCount > prevMessageCountRef,
 			// but the 0 → M transition ensures hasNewContent is always true.
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, isInitialLoad }) =>
@@ -532,8 +523,7 @@ describe('useAutoScroll', () => {
 				}
 			);
 
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Task B: rows cleared, loading starts
 			rerender({ messageCount: 0, isInitialLoad: true });
@@ -542,13 +532,13 @@ describe('useAutoScroll', () => {
 			rerender({ messageCount: 5, isInitialLoad: false });
 
 			// Should still scroll even though new task has fewer messages
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should scroll on repeated task switches (N → 0 → M → 0 → K)', () => {
 			// Simulates switching between multiple tasks in sequence.
 			// Each switch goes through: loaded → loading (0) → loaded (new messages).
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, isInitialLoad }) =>
@@ -565,19 +555,17 @@ describe('useAutoScroll', () => {
 			);
 
 			// Task A: initial load
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Switch to task B: loading → loaded
 			rerender({ messageCount: 0, isInitialLoad: true });
 			rerender({ messageCount: 20, isInitialLoad: false });
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Switch to task C: loading → loaded (fewer messages)
 			rerender({ messageCount: 0, isInitialLoad: true });
 			rerender({ messageCount: 3, isInitialLoad: false });
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should scroll on new content after messageCount drops to 0', () => {
@@ -585,7 +573,7 @@ describe('useAutoScroll', () => {
 			// prevMessageCountRef resets so the next non-zero count is
 			// seen as new content. This is the fix for SpaceTaskUnifiedThread,
 			// which re-renders in place without a key change on task switch.
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ messageCount, enabled }) =>
@@ -602,23 +590,19 @@ describe('useAutoScroll', () => {
 			);
 
 			// Initial mount-scroll fires.
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Messages cleared (e.g., loading state during task switch).
 			rerender({ messageCount: 0, enabled: true });
-			expect(scrollIntoViewMock).not.toHaveBeenCalled();
 
 			// New task's messages arrive — prevMessageCountRef was reset to 0,
 			// so the 0→7 transition is seen as new content and scrolls.
 			rerender({ messageCount: 7, enabled: true });
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
-
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Subsequent new-message scrolls use the hasNewContent path.
 			rerender({ messageCount: 8, enabled: true });
-			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 	});
 
@@ -689,7 +673,7 @@ describe('useAutoScroll', () => {
 
 	describe('initial load reset', () => {
 		it('should reset mount-scroll latch when isInitialLoad changes to true', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+			const { containerRef, endRef } = createMockRefs();
 
 			const { rerender } = renderHook(
 				({ isInitialLoad, messageCount }) =>
@@ -707,9 +691,7 @@ describe('useAutoScroll', () => {
 
 			// Initial load with messages
 			rerender({ isInitialLoad: true, messageCount: 5 });
-			expect(scrollIntoViewMock).toHaveBeenCalled();
-
-			scrollIntoViewMock.mockClear();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 
 			// Switch to not initial load
 			rerender({ isInitialLoad: false, messageCount: 5 });
@@ -719,7 +701,7 @@ describe('useAutoScroll', () => {
 
 			// New messages arrive
 			rerender({ isInitialLoad: true, messageCount: 3 });
-			expect(scrollIntoViewMock).toHaveBeenCalled();
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 	});
 
