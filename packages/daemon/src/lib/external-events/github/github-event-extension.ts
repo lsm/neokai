@@ -3,11 +3,9 @@ import type { MessageHub } from '@neokai/shared';
 import { Logger } from '../../logger';
 import { verifySignature } from '../../github/webhook-handler';
 import type {
-	ExternalEventExtensionConfigStore,
 	ExternalEventExtensionContext,
 	HttpExternalEventExtension,
 	RpcExternalEventExtension,
-	SpaceExternalEventSourceConfig,
 } from '../types';
 import {
 	normalizeGitHubPollingRow,
@@ -25,7 +23,6 @@ const DEFAULT_POLL_INTERVAL_MS = 60_000;
 
 interface GitHubEventExtensionOptions {
 	pollIntervalMs?: number;
-	onWatchedReposChanged?: () => void;
 }
 
 export class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEventExtension {
@@ -73,7 +70,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			if (!params.spaceId) throw new Error('spaceId is required');
 			this.repo.setRepoEnabled(params.spaceId, true);
 			await this.persistSpaceConfig(context, params.spaceId);
-			this.options.onWatchedReposChanged?.();
 			context.onSourceConfigChanged({
 				source: this.sourceId,
 				spaceId: params.spaceId,
@@ -88,7 +84,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			if (!params.spaceId) throw new Error('spaceId is required');
 			this.repo.setRepoEnabled(params.spaceId, false);
 			await this.persistSpaceConfig(context, params.spaceId);
-			this.options.onWatchedReposChanged?.();
 			context.onSourceConfigChanged({
 				source: this.sourceId,
 				spaceId: params.spaceId,
@@ -121,7 +116,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 				enabled: params.enabled,
 			});
 			await this.persistSpaceConfig(context, watchedRepo.spaceId);
-			this.options.onWatchedReposChanged?.();
 			context.onSourceConfigChanged({
 				source: this.sourceId,
 				spaceId: watchedRepo.spaceId,
@@ -395,48 +389,4 @@ async function assertRpcConfigEnabled(
 	if (!global.globallyEnabled || !global.capabilities.rpcConfig) {
 		throw new Error('GitHub RPC configuration capability is disabled');
 	}
-}
-
-export class StaticExternalEventExtensionConfigStore implements ExternalEventExtensionConfigStore {
-	constructor(
-		private readonly options: { globallyEnabled?: boolean; webhooks?: boolean; polling?: boolean }
-	) {}
-
-	async getGlobalConfig(source: string) {
-		return {
-			source,
-			globallyEnabled: this.options.globallyEnabled ?? true,
-			capabilities: {
-				webhooks: this.options.webhooks ?? true,
-				polling: this.options.polling ?? true,
-				rpcConfig: true,
-			},
-			settings: {},
-		};
-	}
-
-	async getSpaceConfig(
-		spaceId: string,
-		source: string
-	): Promise<SpaceExternalEventSourceConfig | null> {
-		return { spaceId, source, enabled: true, settings: {} };
-	}
-
-	async listEnabledSpaces(_source: string): Promise<SpaceExternalEventSourceConfig[]> {
-		// The static store has no DB-backed per-space source table yet. Returning an
-		// empty list intentionally lets GitHubEventExtension fall back to watched-repo
-		// rows as the source of enabled spaces for the migration period.
-		return [];
-	}
-
-	async setGlobalConfig(
-		_source: string,
-		_config: Awaited<ReturnType<ExternalEventExtensionConfigStore['getGlobalConfig']>>
-	): Promise<void> {}
-
-	async setSpaceConfig(
-		_spaceId: string,
-		_source: string,
-		_config: SpaceExternalEventSourceConfig
-	): Promise<void> {}
 }
