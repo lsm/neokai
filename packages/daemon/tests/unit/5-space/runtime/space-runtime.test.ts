@@ -20,6 +20,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -52,7 +53,8 @@ function makeDb(): BunDatabase {
 		origin TEXT,
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
-		parent_tool_use_id TEXT
+		parent_tool_use_id TEXT,
+		task_id TEXT
 	)`);
 
 	return db;
@@ -228,6 +230,89 @@ describe('SpaceRuntime', () => {
 	// -------------------------------------------------------------------------
 
 	describe('recoverWorkflowBackedTask()', () => {
+		test('manual recovery clears alive-stuck restart budget for the run', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const sdkMessageRepo = new SDKMessageRepository(db);
+			const restarted: string[] = [];
+			const tam = {
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => true,
+				getAgentSessionById: () => ({ getProcessingState: () => ({ status: 'processing' }) }),
+				injectRuntimeRecoveryMessage: async (sessionId: string) => `runtime-nag:${sessionId}`,
+				restartStuckSubSession: async (sessionId: string) => {
+					restarted.push(sessionId);
+				},
+				spawnWorkflowNodeAgentForExecution: async () => 'session:new',
+				prepareSubSessionForWorkflowResume: async () => true,
+				rehydrate: async () => {},
+			};
+			const rt = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				nodeExecutionRepo,
+				sdkMessageRepo,
+				taskAgentManager: tam as never,
+				agentNoProgressThresholdMs: 60_000,
+				agentStuckNagGraceMs: 0,
+			});
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Recover stuck');
+			const task = tasks[0];
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:stuck-before-recover',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			sdkMessageRepo.saveSDKMessage('session:stuck-before-recover', {
+				type: 'assistant',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'tool_use', id: 'tool-before-recover', name: 'bash', input: {} }],
+					stop_reason: null,
+				},
+			} as never);
+			db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(
+				new Date(Date.now() - 20 * 60_000).toISOString(),
+				'session:stuck-before-recover'
+			);
+
+			await rt.executeTick();
+			await rt.executeTick();
+			expect(restarted).toEqual(['session:stuck-before-recover']);
+
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
+			taskRepo.updateTask(task.id, { status: 'blocked', blockReason: 'execution_failed' });
+			nodeExecutionRepo.update(execution.id, {
+				status: 'blocked',
+				agentSessionId: 'session:stuck-after-recover',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			sdkMessageRepo.saveSDKMessage('session:stuck-after-recover', {
+				type: 'assistant',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'tool_use', id: 'tool-after-recover', name: 'bash', input: {} }],
+					stop_reason: null,
+				},
+			} as never);
+			db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(
+				new Date(Date.now() - 20 * 60_000).toISOString(),
+				'session:stuck-after-recover'
+			);
+
+			await rt.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+			await rt.executeTick();
+			await rt.executeTick();
+
+			expect(restarted).toEqual(['session:stuck-before-recover', 'session:stuck-after-recover']);
+		});
+
 		test('resuming a cancelled workflow task keeps task and run active after a tick', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },

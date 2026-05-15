@@ -21,6 +21,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -1043,6 +1044,50 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			await rt.executeTick();
 
 			expect(nags).toEqual(['session:slot-timeout']);
+		});
+
+		test('does not restart while the execution still has an active tool call', async () => {
+			const restarted: string[] = [];
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+					return `runtime-nag:${sessionId}`;
+				},
+				restartStuckSubSession: async (sessionId) => {
+					restarted.push(sessionId);
+				},
+			});
+			const rt = new SpaceRuntime(
+				buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 0 })
+			);
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:active-tool',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			saveAssistantMessage('session:active-tool', { minutesAgo: 20, toolUse: true });
+			new ToolContinuationRecoveryRepository(db).recordToolUse({
+				toolUseId: 'tool-active-tool',
+				sessionId: 'session:active-tool',
+				ttlMs: 60_000,
+				owner: { executionId: execution.id, workflowRunId: run.id },
+			});
+
+			await rt.executeTick();
+			await rt.executeTick();
+
+			expect(nags).toEqual([]);
+			expect(restarted).toEqual([]);
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+			expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe('session:active-tool');
 		});
 
 		test('does not consume restart budget when stopping the stuck session fails', async () => {

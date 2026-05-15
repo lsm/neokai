@@ -2178,6 +2178,13 @@ export class SpaceRuntime {
 					this.nonTerminalIdleCounts.delete(key);
 				}
 			}
+			// Clear Layer 1 alive-stuck state so manually recovered workflow runs get
+			// a fresh nag/restart budget instead of inheriting stale recovery attempts.
+			for (const key of this.agentStuckRecovery.keys()) {
+				if (key.startsWith(preTxRunId + ':')) {
+					this.agentStuckRecovery.delete(key);
+				}
+			}
 		}
 
 		const liveSessionIds = new Set<string>();
@@ -3288,6 +3295,8 @@ export class SpaceRuntime {
 				state.lastAction = null;
 				state.lastActionAt = null;
 				state.nagCount = 0;
+				state.restartCount = 0;
+				state.pendingRestartNotice = null;
 			} else if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
 				state.lastObservedMessageId = lastMessage?.dbId ?? null;
 				state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
@@ -3304,6 +3313,10 @@ export class SpaceRuntime {
 
 			if (classification.terminal) {
 				this.clearAgentStuckState(runId, execution.id);
+				continue;
+			}
+
+			if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id)) {
 				continue;
 			}
 

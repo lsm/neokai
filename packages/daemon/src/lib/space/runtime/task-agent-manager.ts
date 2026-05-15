@@ -2420,10 +2420,16 @@ export class TaskAgentManager {
 	}
 
 	async restartStuckSubSession(agentSessionId: string): Promise<void> {
-		const session = this.agentSessionIndex.get(agentSessionId);
-		if (!session) return;
+		const session = this.getAgentSessionById(agentSessionId);
+		if (!session) {
+			throw new Error(`Cannot restart stuck sub-session; session not found: ${agentSessionId}`);
+		}
 		this.agentSessionIndex.delete(agentSessionId);
+		for (const [, nodeMap] of this.subSessions) {
+			nodeMap.delete(agentSessionId);
+		}
 		await this.stopSessionPreserveDb(agentSessionId, session);
+		await this.config.sessionManager.unregisterSession(agentSessionId);
 	}
 
 	// -------------------------------------------------------------------------
