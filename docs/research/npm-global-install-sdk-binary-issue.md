@@ -5,13 +5,14 @@ Task: #390 — Investigate npm global install SDK binary issue
 
 ## Executive summary
 
-`npm install -g neokai@0.24.0` works on the available host test platform (macOS x64) for startup-level validation:
+`npm install -g neokai@0.24.0` works in a clean Linux x64 Docker container and on a clean macOS x64 npm prefix for startup-level validation:
 
+- Linux container: `node:22-bookworm`, npm `10.9.8`, Node `v22.22.3`.
 - `kai --version` prints `0.24.0`.
-- `kai --db-path /tmp/test-neokai-global` starts the server process and stays running past 8 seconds.
+- `kai --db-path /tmp/test-neokai-global` starts the server process and stays running past 10 seconds in the container.
 - No `cli.js` import error occurs during startup.
 
-The requested clean Docker `linux-x64` test could not run because Docker daemon was unavailable in this environment. A partial Linux install-resolution check with npm platform selectors confirmed `neokai@0.24.0` installs the Linux platform package (`@neokai/cli-linux-x64@0.24.0`), but the Linux binary could not execute on the macOS host (`exec format error`).
+The clean container install confirms npm installs the Linux platform package (`@neokai/cli-linux-x64@0.24.0`) and the compiled Linux binary starts successfully. The installed `neokai` package does not include SDK npm packages as runtime `node_modules`; SDK native CLI resolution is handled by the bundled resolver at first SDK use.
 
 SDK 0.2.141 does not ship `cli.js`. It ships SDK JS entrypoints plus platform-native optional dependencies named `@anthropic-ai/claude-agent-sdk-<os>-<arch>[-musl]`, each containing a native `claude`/`claude.exe` binary. The current source tree already has the correct post-0.2.141 approach: `packages/cli/prod-entry.ts` no longer embeds `cli.js`; `packages/daemon/src/lib/agent/sdk-cli-resolver.ts` resolves the platform package, cache, or downloads the binary from npm.
 
@@ -24,22 +25,121 @@ Recommendation: keep current `prod-entry.ts` architecture. Add release-time smok
 - npm package under test: published `neokai@0.24.0`, not local build
 - SDK package inspected: `@anthropic-ai/claude-agent-sdk@0.2.141`
 
-Docker could not be used:
+Docker initially failed because the OrbStack socket was unavailable:
 
 ```text
 failed to connect to the docker API at unix:///Users/lsm/.orbstack/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /Users/lsm/.orbstack/run/docker.sock: connect: no such file or directory
 ```
 
-`podman` and `colima` were not installed:
+Running `orb start` restored Docker access:
 
 ```text
-(eval):1: command not found: podman
-(eval):1: command not found: colima
+OrbStack is already running. Docker engine is ready to use.
+```
+
+Docker server used for container test:
+
+```text
+Server: Docker Engine - Community
+ Version: 28.5.2
+ OS/Arch: linux/amd64
 ```
 
 ## Tests performed
 
-### 1. Clean npm global-prefix install on macOS x64
+### 1. Clean Docker Linux x64 install
+
+Command shape:
+
+```bash
+docker run --rm node:22-bookworm bash -lc '
+  set -euxo pipefail
+  npm --version
+  node --version
+  npm install -g neokai@0.24.0
+  which kai
+  kai --version
+  kai --db-path /tmp/test-neokai-global > /tmp/kai-start.log 2>&1 &
+  pid=$!
+  sleep 10
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "kai_start_status=still_running"
+    kill "$pid"
+    wait "$pid" 2>/dev/null || true
+  else
+    wait "$pid"
+    echo "kai_start_exit=$?"
+  fi
+  cat /tmp/kai-start.log
+'
+```
+
+Observed install/runtime output:
+
+```text
+npm --version -> 10.9.8
+node --version -> v22.22.3
+added 2 packages in 4s
+/usr/local/bin/kai
+0.24.0
+kai_start_status=still_running
+```
+
+Startup log:
+
+```text
+NeoKai Server
+   Database: /tmp/test-neokai-global
+
+[kai:cli:prod-server] Starting production server...
+[kai:cli:prod-server] Extracted 15 built-in skill files to /root/.neokai/skills
+[Daemon] NO CREDENTIALS DETECTED - set ANTHROPIC_API_KEY or authenticate via OAuth
+[Daemon] Model initialization skipped - no credentials available
+[kai:daemon:space-runtime-service] SpaceRuntimeService started
+[kai:daemon:task-agent-manager] TaskAgentManager.rehydrate: attempted=0 succeeded=0 failed=0 selfHealed=0
+[Daemon] Enqueued initial job_queue.cleanup job
+[Daemon] Job queue processor started
+[Daemon] Process watchdog started
+[kai:daemon:neoagentmanager] Provisioning Neo session (neo:global)
+[kai:daemon:neoagentmanager] Created new Neo session
+[kai:daemon:agentsession neo:global] mcp.attach {"event":"mcp.attach","sessionId":"neo:global","action":"merge","servers":["db-query","fetch-mcp","neo-action","neo-query"]}
+[kai:daemon:neoagentmanager] Neo session provisioned
+[Daemon] Neo agent provisioned
+[Daemon] Worktree orphan cleanup complete
+[kai:cli:prod-server] Room orchestration is handled by RoomAgentService
+[Daemon] Worktree TTL reaper complete
+[kai:cli:prod-server] Serving 48 embedded web assets
+[kai:cli:prod-server]
+Production server running!
+[kai:cli:prod-server]    UI: http://localhost:9283
+[kai:cli:prod-server]    WebSocket: ws://localhost:9283/ws
+[kai:cli:prod-server]
+Press Ctrl+C to stop
+```
+
+Installed package checks:
+
+```text
+--- neokai/package.json FOUND
+"version": "0.24.0"
+
+--- neokai/node_modules/@neokai/cli-linux-x64/package.json FOUND
+"name": "@neokai/cli-linux-x64"
+"version": "0.24.0"
+"os": ["linux"]
+"cpu": ["x64"]
+
+--- neokai/node_modules/@neokai/cli-linux-x64/bin/kai FOUND
+108579136
+
+--- neokai/node_modules/@anthropic-ai/claude-agent-sdk/package.json MISSING
+--- neokai/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/package.json MISSING
+--- neokai/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude MISSING
+```
+
+Conclusion: published package installs and starts in a clean Linux x64 container. No SDK `cli.js` resolution error appears during startup. The SDK npm packages are not installed into the global package tree because the compiled NeoKai binary bundles JS code and resolves/downloads the native SDK CLI at first SDK use.
+
+### 2. Clean npm global-prefix install on macOS x64
 
 Command shape:
 
@@ -80,7 +180,7 @@ prefix/
 
 Conclusion: published package installs and starts on macOS x64. No `cli.js` error appears at `kai --version` or server startup.
 
-### 2. Linux x64 install-resolution check via npm selectors
+### 3. Linux x64 install-resolution check via npm selectors
 
 Command shape:
 
@@ -116,9 +216,9 @@ Attempting to run the Linux binary on macOS produced the expected host mismatch 
 linux_kai_start_exit=126
 ```
 
-Conclusion: npm can select/install the Linux optional dependency, but real Linux execution still needs Docker/CI validation.
+Conclusion: npm can select/install the Linux optional dependency. The Docker test above now confirms real Linux x64 startup too.
 
-### 3. SDK 0.2.141 package structure inspection
+### 4. SDK 0.2.141 package structure inspection
 
 `npm pack @anthropic-ai/claude-agent-sdk@0.2.141` showed no `cli.js` in the SDK tarball. Contents included:
 
@@ -234,19 +334,20 @@ Potential failure points if a user reports breakage:
    - If network or `curl` is unavailable, `resolveSDKCliPath()` returns `undefined`; SDK may then fail depending on fallback behavior and local Claude Code install.
    - This was not exercised by `kai --db-path`; startup does not necessarily invoke SDK query execution.
 
-3. **Linux-specific runtime behavior**
-   - Linux binary could not be executed locally because Docker was unavailable.
-   - npm dependency selection for Linux x64 works, but actual process startup and SDK query flow remain unverified on Linux.
+3. **SDK query execution path not covered by startup smoke**
+   - Linux startup now passes in Docker.
+   - `kai --db-path` starts the server but does not necessarily invoke an SDK query.
+   - First-use SDK binary download/cache should be tested separately with credentials or a controlled resolver diagnostic.
 
 ## Answers to requested questions
 
 ### Does `npm install -g neokai@0.24.0` work?
 
-Yes on clean npm global-prefix macOS x64 test. Linux install selection works, but real Linux execution was blocked by unavailable Docker daemon.
+Yes. Clean Linux x64 Docker install and clean macOS x64 npm-prefix install both worked.
 
 ### Does compiled binary start successfully?
 
-Yes on macOS x64. `kai --db-path /tmp/test-neokai-global` stayed running past 8 seconds and printed server startup banner.
+Yes on Linux x64 Docker and macOS x64. `kai --db-path /tmp/test-neokai-global` stayed running past the smoke-test wait and printed the server startup banner.
 
 ### Does SDK platform binary get installed via npm optionalDependencies?
 
@@ -263,7 +364,7 @@ If an older release branch still has `prod-entry.ts` embedding `cli.js`, that br
 ## Recommendations
 
 1. Keep current `prod-entry.ts` and `sdk-cli-resolver.ts` architecture.
-2. Add or run CI smoke test for published package on Linux x64:
+2. Add CI smoke test for published package on Linux x64 so this remains covered automatically:
    - clean container
    - `npm install -g neokai@0.24.0`
    - `kai --version`
@@ -277,7 +378,8 @@ If an older release branch still has `prod-entry.ts` embedding `cli.js`, that br
 ## Sources and evidence
 
 - Published npm metadata: `npm view neokai@0.24.0 optionalDependencies version --json`
-- Published package install: `npm_config_prefix=<tmp> npm install -g neokai@0.24.0`
+- Published package install in Docker: `docker run --rm node:22-bookworm ... npm install -g neokai@0.24.0`
+- Published package install on host: `npm_config_prefix=<tmp> npm install -g neokai@0.24.0`
 - SDK package tarball: `npm pack @anthropic-ai/claude-agent-sdk@0.2.141`
 - SDK platform tarball: `npm pack @anthropic-ai/claude-agent-sdk-darwin-arm64@0.2.141`
 - Source files inspected:
