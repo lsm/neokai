@@ -1921,8 +1921,8 @@ export class TaskAgentManager {
 		);
 	}
 
-	async injectRuntimeRecoveryMessage(subSessionId: string, message: string): Promise<void> {
-		await this.injectSubSessionMessageWithOrigin(subSessionId, message, 'system', true);
+	async injectRuntimeRecoveryMessage(subSessionId: string, message: string): Promise<string> {
+		return await this.injectSubSessionMessageWithOrigin(subSessionId, message, 'system', true);
 	}
 
 	private async injectSubSessionMessageWithOrigin(
@@ -1932,10 +1932,10 @@ export class TaskAgentManager {
 		isSyntheticMessage = true,
 		images?: MessageImage[],
 		deliveryMode: 'immediate' | 'defer' = 'immediate'
-	): Promise<void> {
+	): Promise<string> {
 		const indexed = this.agentSessionIndex.get(subSessionId);
 		if (indexed) {
-			await this.injectMessageIntoSession(
+			return await this.injectMessageIntoSession(
 				indexed,
 				message,
 				deliveryMode,
@@ -1943,37 +1943,34 @@ export class TaskAgentManager {
 				isSyntheticMessage,
 				images
 			);
-			return;
 		}
 
 		// Find the sub-session by ID across all task maps
 		for (const [, nodeMap] of this.subSessions) {
 			const session = nodeMap.get(subSessionId);
 			if (session) {
-				await this.injectMessageIntoSession(
+				return await this.injectMessageIntoSession(
 					session,
 					message,
 					deliveryMode,
-					undefined,
+					origin,
 					isSyntheticMessage,
 					images
 				);
-				return;
 			}
 		}
 
 		// Not in memory — attempt lazy rehydration from DB
 		const rehydrated = await this.rehydrateSubSession(subSessionId);
 		if (rehydrated) {
-			await this.injectMessageIntoSession(
+			return await this.injectMessageIntoSession(
 				rehydrated,
 				message,
 				deliveryMode,
-				undefined,
+				origin,
 				isSyntheticMessage,
 				images
 			);
-			return;
 		}
 		throw new Error(`Sub-session not found: ${subSessionId}`);
 	}
@@ -3871,7 +3868,7 @@ export class TaskAgentManager {
 		origin?: MessageOrigin,
 		isSyntheticMessage = true,
 		images?: MessageImage[]
-	): Promise<void> {
+	): Promise<string> {
 		const sessionId = session.session.id;
 		const state = session.getProcessingState();
 		// 'processing'/'queued' = actively running; 'waiting_for_input' = human gate open;
@@ -3926,7 +3923,7 @@ export class TaskAgentManager {
 		// defer + busy → persist as deferred for replay after current turn completes
 		if (deliveryMode === 'defer' && isBusy) {
 			this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
-			return;
+			return messageId;
 		}
 
 		await session.ensureQueryStarted();
@@ -3935,6 +3932,7 @@ export class TaskAgentManager {
 		// sees image blocks alongside the text. Otherwise pass the plain string to
 		// preserve the existing behaviour for callers that don't supply images.
 		await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
+		return messageId;
 	}
 
 	// -------------------------------------------------------------------------

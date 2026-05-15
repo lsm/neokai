@@ -36,6 +36,16 @@ export const DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS = 15 * 60 * 1000;
 /** Maximum runtime nudges sent to an alive stuck session before restart/block. */
 export const MAX_AGENT_STUCK_NAGS = 1;
 
+/**
+ * Minimum wait after a runtime nag before restart/block recovery can proceed.
+ *
+ * Runtime nags are injected as synthetic user messages. If an agent is already
+ * processing, that message can be queued but not yet consumed; this cooldown
+ * prevents the next tick from restarting a live session before the agent has a
+ * chance to reach a turn boundary and observe the nudge.
+ */
+export const DEFAULT_AGENT_STUCK_NAG_GRACE_MS = 2 * 60 * 1000;
+
 /** Maximum per-agent session restarts for alive-but-stuck recovery. */
 export const MAX_AGENT_STUCK_RESTARTS = 1;
 

@@ -66,6 +66,7 @@ import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { CompletionDetector } from './completion-detector';
 import {
 	DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
+	DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
 	MAX_AGENT_STUCK_NAGS,
 	MAX_AGENT_STUCK_RESTARTS,
 	MAX_BLOCKED_RUN_RETRIES,
@@ -154,6 +155,11 @@ export interface SpaceRuntimeConfig {
 	 * considers a non-terminal last SDK message stuck. Default: 15 minutes.
 	 */
 	agentNoProgressThresholdMs?: number;
+	/**
+	 * Minimum wait after injecting a runtime nag before Layer 1 may restart/block
+	 * the same still-stale session. Default: 2 minutes.
+	 */
+	agentStuckNagGraceMs?: number;
 	/**
 	 * InternalEventBus for publishing typed Space domain events and subscribing to
 	 * external event publications.
@@ -269,6 +275,9 @@ interface AgentStuckRecoveryState {
 	lastActionAt: number | null;
 	lastObservedMessageId: string | null;
 	lastObservedMessageAt: number | null;
+	lastObservedProgressMessageId: string | null;
+	lastObservedProgressMessageAt: number | null;
+	lastRuntimeNagMessageId: string | null;
 	lastSessionId: string | null;
 	pendingRestartNotice: string | null;
 }
@@ -647,8 +656,9 @@ export class SpaceRuntime {
 	/**
 	 * Tracks idle executions whose last SDK message was non-terminal.
 	 *
-	 * The counter is intentionally in-memory like crash recovery: transient idle
-	 * ambiguity gets one automatic re-spawn, then escalates if it repeats.
+	 * This is an in-memory duplicate-notification guard only. Naturally idle
+	 * incomplete executions are preserved; Layer 1 no longer respawns or blocks
+	 * them solely because the canonical task remains incomplete.
 	 */
 	private nonTerminalIdleCounts = new Map<string, number>();
 
@@ -3175,6 +3185,9 @@ export class SpaceRuntime {
 			lastActionAt: null,
 			lastObservedMessageId: null,
 			lastObservedMessageAt: null,
+			lastObservedProgressMessageId: null,
+			lastObservedProgressMessageAt: null,
+			lastRuntimeNagMessageId: null,
 			lastSessionId: execution.agentSessionId,
 			pendingRestartNotice: null,
 		};
@@ -3192,6 +3205,18 @@ export class SpaceRuntime {
 
 	private clearAgentStuckState(runId: string, executionId: string): void {
 		this.agentStuckRecovery.delete(this.makeAgentStuckKey(runId, executionId));
+	}
+
+	private getAgentNoProgressThresholdMs(workflow: SpaceWorkflow, execution: NodeExecution): number {
+		const configuredDefault =
+			this.config.agentNoProgressThresholdMs ?? DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS;
+		const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+		const slot = node?.agents?.find((agent) => agent.name === execution.agentName);
+		const slotTimeoutMs = slot?.timeoutMs;
+		if (typeof slotTimeoutMs === 'number' && slotTimeoutMs > 0) {
+			return Math.min(configuredDefault, slotTimeoutMs);
+		}
+		return configuredDefault;
 	}
 
 	private buildRuntimeNagMessage(
@@ -3225,10 +3250,10 @@ export class SpaceRuntime {
 		spaceId: string,
 		canonicalTask: SpaceTask,
 		nodeExecutions: NodeExecution[],
-		tam: TaskAgentManager
+		tam: TaskAgentManager,
+		workflow: SpaceWorkflow
 	): Promise<'none' | 'restarted' | 'blocked'> {
-		const thresholdMs =
-			this.config.agentNoProgressThresholdMs ?? DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS;
+		const nagGraceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
 		const now = Date.now();
 		for (const execution of nodeExecutions) {
 			if (execution.status !== 'in_progress' || !execution.agentSessionId) {
@@ -3244,25 +3269,37 @@ export class SpaceRuntime {
 			if (processingState?.status === 'waiting_for_input') continue;
 
 			const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(execution.agentSessionId);
-			if (!lastMessage) continue;
-
 			const classification = classifyLastMessageForIdleAgent(lastMessage);
 			const state = this.getAgentStuckState(runId, execution);
+			const isRuntimeNagMessage =
+				lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNagMessageId;
+			const progressMessage = lastMessage && !isRuntimeNagMessage ? lastMessage : null;
+			const observedAt =
+				progressMessage?.timestamp ?? execution.startedAt ?? state.lastActionAt ?? now;
+			const thresholdMs = this.getAgentNoProgressThresholdMs(workflow, execution);
+
 			if (state.lastSessionId !== execution.agentSessionId) {
 				state.lastSessionId = execution.agentSessionId;
-				state.lastObservedMessageId = lastMessage.dbId;
-				state.lastObservedMessageAt = lastMessage.timestamp;
+				state.lastObservedMessageId = lastMessage?.dbId ?? null;
+				state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
+				state.lastObservedProgressMessageId = progressMessage?.dbId ?? null;
+				state.lastObservedProgressMessageAt = progressMessage?.timestamp ?? null;
+				state.lastRuntimeNagMessageId = null;
 				state.lastAction = null;
 				state.lastActionAt = null;
 				state.nagCount = 0;
-			} else if (state.lastObservedMessageId !== lastMessage.dbId) {
-				state.lastObservedMessageId = lastMessage.dbId;
-				state.lastObservedMessageAt = lastMessage.timestamp;
-				state.lastAction = null;
-				state.lastActionAt = null;
-				state.nagCount = 0;
-				state.restartCount = 0;
-				state.pendingRestartNotice = null;
+			} else if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
+				state.lastObservedMessageId = lastMessage?.dbId ?? null;
+				state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
+				if (progressMessage && state.lastObservedProgressMessageId !== progressMessage.dbId) {
+					state.lastObservedProgressMessageId = progressMessage.dbId;
+					state.lastObservedProgressMessageAt = progressMessage.timestamp;
+					state.lastAction = null;
+					state.lastActionAt = null;
+					state.nagCount = 0;
+					state.restartCount = 0;
+					state.pendingRestartNotice = null;
+				}
 			}
 
 			if (classification.terminal) {
@@ -3270,18 +3307,14 @@ export class SpaceRuntime {
 				continue;
 			}
 
-			if (now - lastMessage.timestamp <= thresholdMs) continue;
+			if (now - observedAt <= thresholdMs) continue;
 
 			if (state.nagCount < MAX_AGENT_STUCK_NAGS) {
-				await tam.injectRuntimeRecoveryMessage(
+				const nagMessageId = await tam.injectRuntimeRecoveryMessage(
 					execution.agentSessionId,
-					this.buildRuntimeNagMessage(
-						runId,
-						execution,
-						lastMessage.timestamp,
-						classification.reason
-					)
+					this.buildRuntimeNagMessage(runId, execution, observedAt, classification.reason)
 				);
+				state.lastRuntimeNagMessageId = nagMessageId;
 				state.nagCount += 1;
 				state.lastAction = 'nag';
 				state.lastActionAt = now;
@@ -3292,12 +3325,23 @@ export class SpaceRuntime {
 				return 'none';
 			}
 
+			if (state.lastAction === 'nag' && state.lastActionAt !== null) {
+				const elapsedSinceNag = now - state.lastActionAt;
+				if (elapsedSinceNag < nagGraceMs) {
+					log.debug(
+						`SpaceRuntime: delaying restart for stuck agent execution ${execution.id}; ` +
+							`runtime nag grace has ${nagGraceMs - elapsedSinceNag}ms remaining`
+					);
+					return 'none';
+				}
+			}
+
 			if (state.restartCount < MAX_AGENT_STUCK_RESTARTS) {
+				await tam.restartStuckSubSession(execution.agentSessionId);
 				state.restartCount += 1;
 				state.lastAction = 'restart';
 				state.lastActionAt = now;
 				state.pendingRestartNotice = this.buildRuntimeRestartNotice(execution);
-				await tam.restartStuckSubSession(execution.agentSessionId);
 				this.config.nodeExecutionRepo.update(execution.id, {
 					status: 'pending',
 					agentSessionId: null,
@@ -3621,7 +3665,8 @@ export class SpaceRuntime {
 				meta.spaceId,
 				canonicalTask,
 				nodeExecutions,
-				tam
+				tam,
+				meta.workflow
 			);
 			if (aliveStuckOutcome === 'restarted' || aliveStuckOutcome === 'blocked') {
 				return;

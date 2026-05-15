@@ -140,7 +140,7 @@ function makeMockTaskAgentManager(
 		cancelBySessionId?: (sessionId: string) => void;
 		interruptBySessionId?: (sessionId: string) => Promise<void>;
 		restartStuckSubSession?: (sessionId: string) => Promise<void>;
-		injectRuntimeRecoveryMessage?: (sessionId: string, message: string) => Promise<void>;
+		injectRuntimeRecoveryMessage?: (sessionId: string, message: string) => Promise<string>;
 		getAgentSessionById?: (sessionId: string) => unknown;
 	} = {}
 ) {
@@ -214,7 +214,9 @@ function makeMockTaskAgentManager(
 		cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 		interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
 		restartStuckSubSession: overrides.restartStuckSubSession ?? (async () => {}),
-		injectRuntimeRecoveryMessage: overrides.injectRuntimeRecoveryMessage ?? (async () => {}),
+		injectRuntimeRecoveryMessage:
+			overrides.injectRuntimeRecoveryMessage ??
+			(async (sessionId: string) => `runtime-nag:${sessionId}`),
 		getAgentSessionById: overrides.getAgentSessionById ?? (() => null),
 		// PR 3/5 added a post-approval awareness injection via
 		// `injectIntoTaskAgent`. The tick-loop mock is not exercising delivery,
@@ -257,7 +259,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	function saveAssistantMessage(
 		sessionId: string,
 		opts: { minutesAgo: number; terminal?: boolean; toolUse?: boolean }
-	): void {
+	): string {
 		const content = opts.toolUse
 			? [{ type: 'tool_use', id: `tool-${sessionId}`, name: 'bash', input: {} }]
 			: [{ type: 'text', text: 'done' }];
@@ -270,14 +272,40 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			},
 		};
 		sdkMessageRepo.saveSDKMessage(sessionId, message as never);
+		const timestamp = new Date(Date.now() - opts.minutesAgo * 60_000).toISOString();
 		db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(
-			new Date(Date.now() - opts.minutesAgo * 60_000).toISOString(),
+			timestamp,
 			sessionId
 		);
+		const row = db
+			.prepare(
+				`SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+			)
+			.get(sessionId) as { id: string };
+		return row.id;
 	}
 
 	function processingState(status: string) {
 		return { getProcessingState: () => ({ status }) };
+	}
+
+	function saveRuntimeNagMessage(sessionId: string, messageId: string, minutesAgo = 20): void {
+		const message = {
+			type: 'user',
+			uuid: messageId,
+			message: {
+				role: 'user',
+				content: [{ type: 'text', text: '[Runtime recovery notice]' }],
+			},
+		};
+		db.prepare(
+			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal) VALUES (?, ?, 'user', ?, ?, 'consumed', 'system', 1, 0)`
+		).run(
+			messageId,
+			sessionId,
+			JSON.stringify(message),
+			new Date(Date.now() - minutesAgo * 60_000).toISOString()
+		);
 	}
 
 	beforeEach(() => {
@@ -712,6 +740,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				getAgentSessionById: () => processingState('processing'),
 				injectRuntimeRecoveryMessage: async (sessionId, message) => {
 					nags.push({ sessionId, message });
+					return `runtime-nag:${sessionId}`;
 				},
 			});
 			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
@@ -773,6 +802,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				getAgentSessionById: () => processingState('processing'),
 				injectRuntimeRecoveryMessage: async (sessionId, message) => {
 					injected.push({ sessionId, message });
+					return `runtime-nag:${sessionId}:${injected.length}`;
 				},
 				restartStuckSubSession: async (sessionId) => {
 					restarted.push(sessionId);
@@ -789,7 +819,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					return sessionId;
 				},
 			});
-			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const rt = new SpaceRuntime(
+				buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 0 })
+			);
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-agent restart ${Date.now()}`,
@@ -845,6 +877,209 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			);
 		});
 
+		test('waits for nag grace before restarting a still-stale live session', async () => {
+			const restarted: string[] = [];
+			const injected: Array<{ sessionId: string; message: string }> = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId, message) => {
+					injected.push({ sessionId, message });
+					return `runtime-nag:${sessionId}:${injected.length}`;
+				},
+				restartStuckSubSession: async (sessionId) => {
+					restarted.push(sessionId);
+				},
+			});
+			const rt = new SpaceRuntime(
+				buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 60_000 })
+			);
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:queued-nag',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			saveAssistantMessage('session:queued-nag', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+			await rt.executeTick();
+
+			expect(injected).toHaveLength(1);
+			expect(injected[0].message).toContain('[Runtime recovery notice]');
+			expect(restarted).toEqual([]);
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+			expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe('session:queued-nag');
+		});
+
+		test('ignores consumed runtime nag when deciding whether progress occurred', async () => {
+			const restarted: string[] = [];
+			const injected: Array<{ sessionId: string; message: string }> = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId, message) => {
+					injected.push({ sessionId, message });
+					return `runtime-nag:${sessionId}:${injected.length}`;
+				},
+				restartStuckSubSession: async (sessionId) => {
+					restarted.push(sessionId);
+				},
+				spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+					const exec = execution as { id: string; agentName: string };
+					const sessionId = `session:${exec.agentName}:after-nag`;
+					nodeExecutionRepo.update(exec.id, {
+						status: 'in_progress',
+						agentSessionId: sessionId,
+						startedAt: Date.now(),
+						completedAt: null,
+					});
+					return sessionId;
+				},
+			});
+			const rt = new SpaceRuntime(
+				buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 0 })
+			);
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:runtime-nag-progress',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			saveAssistantMessage('session:runtime-nag-progress', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+			saveRuntimeNagMessage(
+				'session:runtime-nag-progress',
+				'runtime-nag:session:runtime-nag-progress:1'
+			);
+			await rt.executeTick();
+			await rt.executeTick();
+
+			expect(
+				injected.filter((entry) => entry.message.includes('[Runtime recovery notice]'))
+			).toHaveLength(1);
+			expect(restarted).toEqual(['session:runtime-nag-progress']);
+			expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe(
+				'session:Plan:after-nag'
+			);
+		});
+
+		test('nags alive sessions with no SDK messages after the threshold', async () => {
+			const nags: Array<{ sessionId: string; message: string }> = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId, message) => {
+					nags.push({ sessionId, message });
+					return `runtime-nag:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:no-sdk-output',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+
+			await rt.executeTick();
+
+			expect(nags).toHaveLength(1);
+			expect(nags[0].sessionId).toBe('session:no-sdk-output');
+			expect(nags[0].message).toContain('no SDK messages were recorded');
+		});
+
+		test('uses per-slot timeout as the no-progress threshold when configured', async () => {
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+					return `runtime-nag:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Per-slot threshold ${Date.now()}`,
+				description: 'Test',
+				nodes: [
+					{
+						id: STEP_A,
+						name: 'Build',
+						agents: [{ agentId: AGENT_PLANNER, name: 'Planner', timeoutMs: 30_000 }],
+					},
+				],
+				transitions: [],
+				startNodeId: STEP_A,
+				endNodeId: STEP_A,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:slot-timeout',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			saveAssistantMessage('session:slot-timeout', { minutesAgo: 1, toolUse: true });
+
+			await rt.executeTick();
+
+			expect(nags).toEqual(['session:slot-timeout']);
+		});
+
+		test('does not consume restart budget when stopping the stuck session fails', async () => {
+			const restarted: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => `runtime-nag:${sessionId}`,
+				restartStuckSubSession: async (sessionId) => {
+					restarted.push(sessionId);
+					if (restarted.length === 1) throw new Error('stop failed');
+				},
+			});
+			const rt = new SpaceRuntime(
+				buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 0 })
+			);
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:restart-fails-once',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			saveAssistantMessage('session:restart-fails-once', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+			await expect(rt.executeTick()).rejects.toThrow('stop failed');
+			await rt.executeTick();
+
+			expect(restarted).toEqual(['session:restart-fails-once', 'session:restart-fails-once']);
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('pending');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
 		test('does not nag terminal or waiting-for-input sessions', async () => {
 			const nags: string[] = [];
 			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
@@ -853,6 +1088,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					processingState(sessionId === 'session:waiting' ? 'waiting_for_input' : 'processing'),
 				injectRuntimeRecoveryMessage: async (sessionId) => {
 					nags.push(sessionId);
+					return `runtime-nag:${sessionId}`;
 				},
 			});
 			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
