@@ -66,6 +66,54 @@ describe('Migration 128: external event extension config tables', () => {
 		);
 	});
 
+	test('copies existing legacy global config rows into renamed table', () => {
+		db.exec(`
+			CREATE TABLE external_event_source_configs (
+				source TEXT PRIMARY KEY,
+				globally_enabled INTEGER NOT NULL,
+				capabilities_json TEXT,
+				secrets_ref TEXT,
+				settings_json TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.prepare(
+			`INSERT INTO external_event_source_configs
+			 (source, globally_enabled, capabilities_json, secrets_ref, settings_json, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		).run('github', 1, JSON.stringify({ polling: true }), 'secret/github', null, 1, 2);
+
+		runMigration128(db);
+
+		expect(
+			db.prepare(`SELECT * FROM external_event_extension_configs WHERE source = 'github'`).get()
+		).toMatchObject({
+			source: 'github',
+			globally_enabled: 1,
+			capabilities_json: JSON.stringify({ polling: true }),
+			secrets_ref: 'secret/github',
+			settings_json: '{}',
+			created_at: 1,
+			updated_at: 2,
+		});
+	});
+
+	test('seeds GitHub polling disabled by default', () => {
+		runMigration128(db);
+
+		const row = db
+			.prepare(
+				`SELECT capabilities_json FROM external_event_extension_configs WHERE source = 'github'`
+			)
+			.get() as { capabilities_json: string };
+		expect(JSON.parse(row.capabilities_json)).toEqual({
+			webhooks: true,
+			polling: false,
+			rpcConfig: true,
+		});
+	});
+
 	test('is idempotent', () => {
 		runMigration128(db);
 		expect(() => runMigration128(db)).not.toThrow();

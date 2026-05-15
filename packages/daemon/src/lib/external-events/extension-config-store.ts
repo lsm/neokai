@@ -94,7 +94,7 @@ export class ExternalEventExtensionConfigStore
 				config.globallyEnabled ? 1 : 0,
 				JSON.stringify(config.capabilities),
 				config.secretsRef ?? null,
-				config.settings === undefined ? null : JSON.stringify(config.settings),
+				JSON.stringify(config.settings ?? {}),
 				now,
 				now
 			);

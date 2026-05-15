@@ -440,7 +440,22 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		},
 	};
 	const extensionManager = new ExternalEventExtensionManager();
-	extensionManager.register(new GitHubEventExtension(db.getDatabase()));
+	const githubPollingEnabled = !!(config.githubPollingInterval && config.githubPollingInterval > 0);
+	if (!githubPollingEnabled) {
+		await extensionConfigStore.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true, polling: false, rpcConfig: true },
+			settings: { pollingDisabledByEnv: true },
+		});
+	}
+	extensionManager.register(
+		new GitHubEventExtension(
+			db.getDatabase(),
+			process.env.GITHUB_TOKEN,
+			githubPollingEnabled ? { pollIntervalMs: config.githubPollingInterval! * 1000 } : undefined
+		)
+	);
 
 	function isHttpExternalEventExtension(
 		extension: unknown

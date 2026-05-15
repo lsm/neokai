@@ -8811,6 +8811,8 @@ export function runMigration127(db: BunDatabase): void {
  * extension configuration.
  */
 export function runMigration128(db: BunDatabase): void {
+	const hadLegacyGlobalConfigTable = tableExists(db, 'external_event_source_configs');
+
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS external_event_extension_configs (
 			source TEXT PRIMARY KEY,
@@ -8822,6 +8824,24 @@ export function runMigration128(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
+
+	if (hadLegacyGlobalConfigTable) {
+		db.exec(`
+			INSERT OR IGNORE INTO external_event_extension_configs (
+				source, globally_enabled, capabilities_json, secrets_ref,
+				settings_json, created_at, updated_at
+			)
+			SELECT
+				source,
+				globally_enabled,
+				COALESCE(capabilities_json, '{}'),
+				secrets_ref,
+				COALESCE(settings_json, '{}'),
+				created_at,
+				updated_at
+			FROM external_event_source_configs
+		`);
+	}
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
@@ -8841,7 +8861,7 @@ export function runMigration128(db: BunDatabase): void {
 		`INSERT OR IGNORE INTO external_event_extension_configs
 		 (source, globally_enabled, capabilities_json, secrets_ref, settings_json, created_at, updated_at)
 		 VALUES ('github', 1, ?, NULL, '{}', ?, ?)`
-	).run(JSON.stringify({ webhooks: true, polling: true, rpcConfig: true }), now, now);
+	).run(JSON.stringify({ webhooks: true, polling: false, rpcConfig: true }), now, now);
 }
 
 /**

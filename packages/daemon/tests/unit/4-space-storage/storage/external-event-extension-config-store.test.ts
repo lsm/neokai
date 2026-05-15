@@ -70,6 +70,21 @@ describe('ExternalEventExtensionConfigStore', () => {
 		});
 	});
 
+	test('persists global config when optional settings are omitted', async () => {
+		await store.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+		});
+
+		await expect(store.getGlobalConfig('github')).resolves.toEqual({
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+			settings: {},
+		});
+	});
+
 	test('persists and updates per-space config', async () => {
 		await expect(store.getSpaceConfig('space-1', 'github')).resolves.toBeNull();
 
