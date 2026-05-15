@@ -649,13 +649,14 @@ describe('SpaceRuntimeService', () => {
 			svc.start();
 			await svc.stop();
 
-			// Eight InternalEventBus subscriptions are registered: externalEvent.published,
-			// space.created, spaceWorkflow.updated (mid-run gate poll refresh), session.created,
-			// session.deleted (which releases per-session db-query servers), space.archived,
-			// space.deleted (tear down notification services), and space.updated (refresh
-			// autonomy level). Hard-reset reprovisioning uses SessionManager's awaited
-			// in-process subscriber instead of InternalEventBus.
-			expect(unsubFn).toHaveBeenCalledTimes(8);
+			// Ten InternalEventBus subscriptions are registered: externalEvent.published,
+			// sdk.toolUse.created, sdk.toolUse.consumed, space.created, spaceWorkflow.updated
+			// (mid-run gate poll refresh), session.created, session.deleted (which releases
+			// per-session db-query servers), space.archived, space.deleted (tear down
+			// notification services), and space.updated (refresh autonomy level). Hard-reset
+			// reprovisioning uses SessionManager's awaited in-process subscriber instead of
+			// InternalEventBus.
+			expect(unsubFn).toHaveBeenCalledTimes(10);
 		});
 	});
 
