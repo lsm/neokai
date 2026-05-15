@@ -8,16 +8,10 @@ import { parseArgs, getHelpText } from './src/cli-utils';
 import { startProdServer } from './src/prod-server-embedded';
 import { version } from './package.json';
 
-// Embed the Claude Agent SDK's CLI into the compiled binary.
-// The { type: "file" } attribute tells Bun to include this file in its
-// virtual filesystem (/$bunfs/root/), making it accessible at runtime.
-// Without this, the SDK cannot find its CLI executable in bundled binaries.
-// @ts-ignore -- Bun-specific import attribute
-import embeddedSdkCliPath from '../daemon/node_modules/@anthropic-ai/claude-agent-sdk/cli.js' with {
-	type: 'file',
-};
-import { setEmbeddedCliPath } from '@neokai/daemon/sdk-cli-resolver';
-setEmbeddedCliPath(embeddedSdkCliPath);
+// The SDK CLI binary is no longer embedded in the compiled binary.
+// Instead, the runtime resolver (sdk-cli-resolver.ts) downloads it
+// on first use and caches it at ~/.neokai/sdk/. This keeps the
+// compiled binary ~66 MB instead of ~266 MB.
 
 // Handle uncaught errors to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
