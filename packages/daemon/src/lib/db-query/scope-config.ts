@@ -387,6 +387,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'space_github_watched_repos',
 	// Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
 	'node_executions',
+	// Gate-open cache — internal state for skipping gate re-evaluation, not useful for ad-hoc queries
+	'gate_open_state',
 	// Tool continuation recovery — internal bridge/runtime recovery state for orphaned tool_result chunks
 	'tool_continuation_recovery',
 	'tool_continuation_inbox',

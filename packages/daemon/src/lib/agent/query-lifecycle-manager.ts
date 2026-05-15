@@ -62,6 +62,8 @@ export interface QueryLifecycleManagerContext {
 	firstMessageReceived: boolean;
 	/** Resolves when the SDK subprocess exits. Used by stop() to wait deterministically. */
 	processExitedPromise: Promise<void> | null;
+	/** Clear processExitedPromise and any stale no-PID exit promises. */
+	resetProcessExitedPromise(): void;
 	/** SDK startup timeout timer — must be cleared during stop() to prevent stale timers. */
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	/** Abort controller for the current query — must be cleared during stop(). */
@@ -308,7 +310,7 @@ export class QueryLifecycleManager {
 				processExitedPromise,
 				new Promise((resolve) => setTimeout(resolve, timeoutMs)),
 			]);
-			this.ctx.processExitedPromise = null;
+			this.ctx.resetProcessExitedPromise();
 		}
 
 		// 7. Clear stale startup timer and abort controller.

@@ -32,6 +32,7 @@ import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
+import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
@@ -74,6 +75,10 @@ export interface SpaceRuntimeServiceConfig {
 	 */
 	gateDataRepo?: GateDataRepository;
 	/**
+	 * Optional gate open state repository for persisting gate-open cache across daemon restarts.
+	 */
+	gateOpenStateRepo?: import('../../../storage/repositories/gate-open-state-repository').GateOpenStateRepository;
+	/**
 	 * Optional pending message repository for queueing messages to not-yet-spawned
 	 * workflow node agents.
 	 */
@@ -114,6 +119,12 @@ export interface SpaceRuntimeServiceConfig {
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	commandBus?: InternalCommandBus<DaemonCommandMap>;
 	externalEventStore?: ExternalEventStore;
+	/**
+	 * Reply routing registry for symmetric message routing.
+	 * Passed to space-agent-tools so member sessions can register their
+	 * session ID as the reply target when sending messages to task/node agents.
+	 */
+	replyRoutingRegistry?: ReplyRoutingRegistry;
 }
 
 export class SpaceRuntimeService {
@@ -771,6 +782,7 @@ export class SpaceRuntimeService {
 			mySessionId: session.id,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 
 		const additional: Record<string, McpServerConfig> = {
@@ -865,6 +877,7 @@ export class SpaceRuntimeService {
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.
@@ -1072,6 +1085,7 @@ export class SpaceRuntimeService {
 			agentManager: this.config.spaceAgentManager,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
+			gateOpenStateRepo: this.config.gateOpenStateRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 			workspacePath,
@@ -1133,6 +1147,7 @@ export class SpaceRuntimeService {
 			agentManager: this.config.spaceAgentManager,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
+			gateOpenStateRepo: this.config.gateOpenStateRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 			workspacePath,

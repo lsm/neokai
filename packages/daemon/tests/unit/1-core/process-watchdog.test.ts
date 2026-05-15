@@ -40,6 +40,272 @@ describe('process-watchdog', () => {
 		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
 	});
 
+	test('sends SIGTERM to the process group before killing the suspicious process', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		// PID 200 was an exited root (group leader). PID 123 is a suspicious
+		// orphaned descendant still in PGID 200. Group kill is safe because
+		// PGID 200 is NOT a live root.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 123,
+					ppid: 1,
+					pgid: 200,
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [], exited: [200] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill called with pgid before individual kill
+		expect(killProcessGroup).toHaveBeenCalledWith(200, 'SIGTERM');
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('skips group kill when pgid is undefined or zero', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 0,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					// No pgid (undefined)
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill should NOT be called (pgid is 0 or undefined)
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('still kills individual PID when killProcessGroup throws', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {
+			throw new Error('group kill failed');
+		});
+
+		// PID 200 was an exited root (group leader). PID 123 is orphaned.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 123,
+					ppid: 1,
+					pgid: 200,
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [], exited: [200] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill was attempted but threw
+		expect(killProcessGroup).toHaveBeenCalledWith(200, 'SIGTERM');
+		// Direct PID signal still ran despite group kill failure
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('counts kill as success when group kill terminates the PID (ESRCH)', async () => {
+		const killProcess = mock(() => {
+			const err = new Error('ESRCH') as Error & { code: string };
+			err.code = 'ESRCH';
+			throw err;
+		});
+		const killProcessGroup = mock(() => {});
+
+		// PID 200 was an exited root (group leader). PID 123 is orphaned.
+		// The group kill terminates PID 123, so the individual kill gets ESRCH.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 123,
+					ppid: 1,
+					pgid: 200,
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [], exited: [200] }),
+		});
+
+		// ESRCH after group kill means the process was already terminated —
+		// counted as a successful cleanup.
+		expect(killed).toBe(1);
+		expect(killProcessGroup).toHaveBeenCalledWith(200, 'SIGTERM');
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('rejects PGID 1 before issuing group SIGTERM', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 1, // PGID 1 = init — kill(-1, SIGTERM) targets everything
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill must NOT be called for PGID 1
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		// Individual PID kill still fires
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('skips group kill when PGID leader is not daemon-owned', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		// PID 500 is an external process group leader — not in the daemon tree.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 500, // PGID 500 is NOT an owned PID
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill must NOT be called — PGID leader (500) is not daemon-owned
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		// Individual PID kill still fires
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('skips group kill when exited root PGID is reused by an unrelated process', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		// PID 300 was an exited root but has been reused by an unrelated process.
+		// The suspicious child (PID 123) has PGID 300, but signaling that group
+		// would kill the unrelated process that now leads PGID 300.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 300, // PGID 300 is in exitedRoots but also in snapshot (reused)
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+				{
+					pid: 300,
+					ppid: 1,
+					pgid: 300, // Reused PID â now leads an unrelated process group
+					elapsedSeconds: 30,
+					command: 'unrelated-browser',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [300] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill must NOT be called â PGID 300 is reused by an unrelated process.
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		// Individual PID kill still fires for the suspicious child
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
+	test('skips group kill when PGID is a live daemon root (protects active session)', async () => {
+		const killProcess = mock(() => {});
+		const killProcessGroup = mock(() => {});
+
+		// PID 100 is the SDK root (live). PID 123 is a suspicious child with
+		// PGID 100 — same group as the root. Group kill would kill the agent.
+		const killed = await cleanupSuspiciousProcesses({
+			listProcesses: async () => [
+				{
+					pid: 100,
+					ppid: 1,
+					pgid: 100,
+					elapsedSeconds: 20 * 60,
+					command: 'claude-code-sdk',
+				},
+				{
+					pid: 123,
+					ppid: 100,
+					pgid: 100, // Same PGID as the live SDK root
+					elapsedSeconds: 16 * 60,
+					command: 'bun test tests/unit/leaky.test.ts',
+				},
+			],
+			killProcess,
+			killProcessGroup,
+			getRootPids: () => ({ live: [100], exited: [] }),
+		});
+
+		expect(killed).toBe(1);
+		// Group kill must NOT be called — PGID 100 is the live SDK root
+		expect(killProcessGroup).not.toHaveBeenCalled();
+		// Individual PID kill still fires for the suspicious child
+		expect(killProcess).toHaveBeenCalledWith(123, 'SIGTERM');
+	});
+
 	test('does not kill short-lived bun test processes', async () => {
 		const killProcess = mock(() => {});
 

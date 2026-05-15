@@ -200,6 +200,11 @@ describe('QueryRunner', () => {
 			originalEnvVars: {},
 
 			processExitedPromise: null,
+			resetProcessExitedPromise: mock(function (this: {
+				processExitedPromise: Promise<void> | null;
+			}) {
+				this.processExitedPromise = null;
+			}),
 			trackAgentProcess: trackAgentProcessSpy,
 
 			// Methods for state coordination

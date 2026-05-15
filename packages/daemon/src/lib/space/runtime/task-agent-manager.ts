@@ -92,6 +92,7 @@ import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-m
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { AgentMessageRouter } from './agent-message-router';
+import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
@@ -104,7 +105,11 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import { formatAgentMessage, type AgentMessageLevel } from '../agent-message-envelope';
+import {
+	formatAgentMessage,
+	extractReplyToSessionId,
+	type AgentMessageLevel,
+} from '../agent-message-envelope';
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
@@ -173,6 +178,8 @@ export interface TaskAgentManagerConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
 	gateDataRepo: GateDataRepository;
+	/** Gate open state repository — for persisting gate-open cache across daemon restarts */
+	gateOpenStateRepo?: import('../../../storage/repositories/gate-open-state-repository').GateOpenStateRepository;
 	/** Channel cycle repository — for per-channel cycle tracking in cyclic workflows */
 	channelCycleRepo: ChannelCycleRepository;
 	/** InternalEventBus<DaemonInternalEventMap> — event bus for session state change subscriptions */
@@ -230,7 +237,11 @@ export interface TaskAgentManagerConfig {
 	 * Callback to inject a message into the Space Agent chat session for a space.
 	 * Used for Task Agent → Space Agent escalation via `send_message`.
 	 */
-	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
+	spaceAgentInjector?: (
+		spaceId: string,
+		message: string,
+		replyToSessionId?: string | null
+	) => Promise<void>;
 	/**
 	 * Schedule service — shared business logic for managing task schedules.
 	 * Injected into `space-agent-tools` so task agent sessions can create /
@@ -239,6 +250,11 @@ export interface TaskAgentManagerConfig {
 	 * registered.
 	 */
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
+	/**
+	 * Reply routing registry for symmetric message routing.
+	 * Shared between space-agent-tools (register) and task/node-agent-tools (lookup).
+	 */
+	replyRoutingRegistry?: ReplyRoutingRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -756,6 +772,10 @@ export class TaskAgentManager {
 				spaceAgentInjector: this.config.spaceAgentInjector,
 				taskAgentManager: this,
 				artifactRepo: this.config.artifactRepo,
+				replyRoutingLookup: () => {
+					const registry = this.config.replyRoutingRegistry;
+					return registry ? registry.get(taskId) : null;
+				},
 			});
 
 			// mergeRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -831,6 +851,7 @@ export class TaskAgentManager {
 				myAgentName: 'task-agent',
 				mySessionId: sessionId,
 				auditLogRepo: this.auditLogRepo,
+				replyRoutingRegistry: this.config.replyRoutingRegistry,
 			});
 			taskMcpServers['space-agent-tools'] = spaceAgentMcpServer as unknown as McpServerConfig;
 
@@ -1791,7 +1812,19 @@ export class TaskAgentManager {
 						taskId: row.taskId,
 					});
 			try {
-				await inject(spaceId, message);
+				// Look up reply routing at flush time so queued messages retain
+				// their original reply-to target (ad-hoc member session) instead
+				// of always going to the canonical space:chat: session.
+				// Dual strategy: (1) extract from message envelope footer (per-message,
+				//     immutable, survives daemon restart),
+				// (2) in-memory registry (fallback for older rows without footer).
+				// Footer takes priority to prevent a newer sender from overwriting
+				// the routing of a previously queued message.
+				const registry = this.config.replyRoutingRegistry;
+				const replyTo =
+					extractReplyToSessionId(message) ??
+					(registry && row.taskId ? registry.get(row.taskId) : null);
+				await inject(spaceId, message, replyTo);
 				repo.markDelivered(row.id, spaceChatSessionId);
 				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
 			} catch (err) {
@@ -2148,6 +2181,7 @@ export class TaskAgentManager {
 				agentManager: this.config.spaceAgentManager,
 				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				gateDataRepo: this.config.gateDataRepo,
+				gateOpenStateRepo: this.config.gateOpenStateRepo,
 				channelCycleRepo: this.config.channelCycleRepo,
 				db: this.config.db.getDatabase(),
 				// Mirror the canonical resolution used by spawn/rehydrate paths:
@@ -3192,6 +3226,10 @@ export class TaskAgentManager {
 			spaceAgentInjector: this.config.spaceAgentInjector,
 			taskAgentManager: this,
 			artifactRepo: this.config.artifactRepo,
+			replyRoutingLookup: () => {
+				const registry = this.config.replyRoutingRegistry;
+				return registry ? registry.get(taskId) : null;
+			},
 		});
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
@@ -3268,6 +3306,7 @@ export class TaskAgentManager {
 			myAgentName: 'task-agent',
 			mySessionId: sessionId,
 			auditLogRepo: this.auditLogRepo,
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 		rehydrateMcpServers['space-agent-tools'] =
 			rehydrateSpaceAgentMcpServer as unknown as McpServerConfig;
@@ -4330,6 +4369,7 @@ export class TaskAgentManager {
 					workflowNodeId: ctx.workflowNodeId,
 				});
 			},
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 	}
 
@@ -4385,6 +4425,7 @@ export class TaskAgentManager {
 			agentManager: this.config.spaceAgentManager,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
+			gateOpenStateRepo: this.config.gateOpenStateRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
 			workspacePath,
@@ -4420,6 +4461,12 @@ export class TaskAgentManager {
 				return { sessionId: ensuredTask.taskAgentSessionId ?? '' };
 			},
 			spaceAgentInjector: this.config.spaceAgentInjector,
+			// Wire reply routing so node-agent replies to space-agent route back
+			// to the originating ad-hoc member session instead of space:chat:.
+			replyRoutingLookup: (fromAgentName) => {
+				const registry = this.config.replyRoutingRegistry;
+				return registry ? registry.get(taskId, fromAgentName) : null;
+			},
 			// Wire up the pending-message queue so node agents can queue messages for
 			// peers that haven't spawned yet (declared but inactive). The queue is
 			// drained by flushPendingMessagesForTarget() when the target session activates.

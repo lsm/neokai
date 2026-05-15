@@ -1248,18 +1248,85 @@ describe('ChannelRouter', () => {
 			);
 		});
 
-		test('gated channel: re-checks gate after activation and throws when closed mid-await', async () => {
+		test('gated channel: re-checks resetOnCycle gate after activation and throws when closed mid-await', async () => {
 			// Race coverage: deliverMessage performs an `await activateNode(...)`
-			// after the first gate eval. If a concurrent cycle reset clears the
-			// gate during that await, the post-activation re-check must catch
-			// the stale-gate condition and throw.
+			// after the first gate eval. If a concurrent operation clears a
+			// resetOnCycle gate during that await, the post-activation re-check
+			// must catch the stale-gate condition and throw. This only applies to
+			// cyclic channels with resetOnCycle gates, where the cache is bypassed.
 			const gate: Gate = {
 				id: 'race-gate',
+				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
+				resetOnCycle: true,
+			};
+			// Backward channel is cyclic and gated — cache is bypassed for resetOnCycle gates
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node' }, // index 0 (forward, no gate)
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node', gateId: 'race-gate' }, // index 1 (cyclic, gated)
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Race Gate Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Simulate the race by clearing the gate after the first eval but
+			// before the post-activation re-check.
+			gateDataRepo.set(run.id, 'race-gate', { plan: 'initial value' });
+
+			const realActivate = router.activateNode.bind(router);
+			let activateCalls = 0;
+			(router as unknown as { activateNode: typeof router.activateNode }).activateNode = async (
+				...args: Parameters<typeof router.activateNode>
+			) => {
+				activateCalls += 1;
+				// Clear gate data mid-activation to simulate a concurrent reset
+				gateDataRepo.set(run.id, 'race-gate', {});
+				return realActivate(...args);
+			};
+
+			try {
+				// Deliver on the backward (cyclic) gated channel. The gate has
+				// resetOnCycle=true, so the cache is bypassed and the post-activation
+				// re-check catches the cleared gate data.
+				await expect(
+					router.deliverMessage(run.id, 'planner', 'coder', 'msg')
+				).rejects.toBeInstanceOf(ChannelGateBlockedError);
+				expect(activateCalls).toBe(1);
+			} finally {
+				(router as unknown as { activateNode: typeof router.activateNode }).activateNode =
+					realActivate;
+			}
+		});
+
+		test('gated channel: non-resetOnCycle gate skips post-activation re-check via cache', async () => {
+			// Complementary to the test above: for non-resetOnCycle gates, the
+			// gate-open cache intentionally skips the post-activation re-check.
+			// A concurrent data clear mid-activation does NOT block delivery
+			// because the gate was already evaluated as open.
+			const gate: Gate = {
+				id: 'non-race-gate',
 				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'planner', to: 'coder', gateId: 'race-gate' },
+				{ id: 'ch-1', from: 'planner', to: 'coder', gateId: 'non-race-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1279,31 +1346,27 @@ describe('ChannelRouter', () => {
 			const run = workflowRunRepo.createRun({
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
-				title: 'Race Gate Run',
+				title: 'Non-Race Gate Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Simulate the race by clearing the gate after the first eval but
-			// before the post-activation re-check. We do this by stubbing
-			// `activateNode` to clear gate data while it awaits.
-			gateDataRepo.set(run.id, 'race-gate', { plan: 'initial value' });
+			// Gate is open
+			gateDataRepo.set(run.id, 'non-race-gate', { plan: 'initial value' });
 
 			const realActivate = router.activateNode.bind(router);
-			let activateCalls = 0;
 			(router as unknown as { activateNode: typeof router.activateNode }).activateNode = async (
 				...args: Parameters<typeof router.activateNode>
 			) => {
-				activateCalls += 1;
-				// Clear gate data mid-activation to simulate a concurrent reset
-				gateDataRepo.set(run.id, 'race-gate', {});
+				// Clear gate data mid-activation — simulates a concurrent data change
+				gateDataRepo.set(run.id, 'non-race-gate', {});
 				return realActivate(...args);
 			};
 
 			try {
-				await expect(
-					router.deliverMessage(run.id, 'planner', 'coder', 'msg')
-				).rejects.toBeInstanceOf(ChannelGateBlockedError);
-				expect(activateCalls).toBe(1);
+				// Delivery succeeds despite concurrent data clear, because
+				// the gate-open cache skips the post-activation re-evaluation.
+				const result = await router.deliverMessage(run.id, 'planner', 'coder', 'msg');
+				expect(result.fromRole).toBe('planner');
 			} finally {
 				(router as unknown as { activateNode: typeof router.activateNode }).activateNode =
 					realActivate;
@@ -2965,6 +3028,914 @@ describe('ChannelRouter', () => {
 				// Gate is closed but this is NOT an external-approval gate → callback not fired
 				expect(activated).toHaveLength(0);
 				expect(pendingCalls).toHaveLength(0);
+			});
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Gate-open cache — skip re-evaluation after first open
+	// -----------------------------------------------------------------------
+
+	describe('gate-open cache', () => {
+		test('deliverMessage: skips gate re-evaluation after first open delivery', async () => {
+			const gate: Gate = {
+				id: 'cache-test-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'cache-test-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cache Test Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open the gate
+			gateDataRepo.set(run.id, 'cache-test-gate', { approved: true });
+
+			// First delivery — evaluates gate, caches open state
+			const result1 = await router.deliverMessage(run.id, 'coder', 'planner', 'msg 1');
+			expect(result1.fromRole).toBe('coder');
+
+			// Close the gate data (remove the approved field)
+			gateDataRepo.set(run.id, 'cache-test-gate', { approved: false });
+
+			// Second delivery — should succeed because gate was cached as open.
+			// Without the cache, this would throw ChannelGateBlockedError.
+			const result2 = await router.deliverMessage(run.id, 'coder', 'planner', 'msg 2');
+			expect(result2.fromRole).toBe('coder');
+		});
+
+		test('canDeliver: skips gate re-evaluation after gate was opened', async () => {
+			const gate: Gate = {
+				id: 'cache-candeliver-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'cache-candeliver-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cache canDeliver Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open the gate and deliver once to populate the cache
+			gateDataRepo.set(run.id, 'cache-candeliver-gate', { approved: true });
+			await router.deliverMessage(run.id, 'coder', 'planner', 'first msg');
+
+			// Close the gate
+			gateDataRepo.set(run.id, 'cache-candeliver-gate', { approved: false });
+
+			// canDeliver should return true because gate was cached as open
+			const result = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result.allowed).toBe(true);
+		});
+
+		test('resetOnCycle gate re-evaluates despite cache on cyclic channel', async () => {
+			const gate: Gate = {
+				id: 'cyclic-reset-cache-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: true,
+			};
+			const channels: WorkflowChannel[] = [
+				{
+					id: 'ch-fwd',
+					from: 'Coder Node',
+					to: 'Planner Node',
+					gateId: 'cyclic-reset-cache-gate',
+				}, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic Reset Cache Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open the gate
+			gateDataRepo.set(run.id, 'cyclic-reset-cache-gate', { approved: true });
+
+			// First cyclic delivery — evaluates gate, then resets it
+			await router.deliverMessage(run.id, 'planner', 'coder', 'cycle 1');
+
+			// After reset, gate data is back to defaults (approved: false for boolean default)
+			// The cache should have been cleared by incrementAndResetCyclicChannel.
+			// Delivering on the gated forward channel should now block.
+			await expect(
+				router.deliverMessage(run.id, 'coder', 'planner', 'blocked msg')
+			).rejects.toBeInstanceOf(ChannelGateBlockedError);
+		});
+
+		test('non-resetOnCycle gate on cyclic channel uses cache', async () => {
+			const gate: Gate = {
+				id: 'non-reset-cache-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{
+					id: 'ch-fwd',
+					from: 'Coder Node',
+					to: 'Planner Node',
+					gateId: 'non-reset-cache-gate',
+				}, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Non-Reset Cyclic Cache Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open the gate
+			gateDataRepo.set(run.id, 'non-reset-cache-gate', { approved: true });
+
+			// First delivery on the gated channel — caches open state
+			const result1 = await router.deliverMessage(run.id, 'coder', 'planner', 'msg 1');
+			expect(result1.fromRole).toBe('coder');
+
+			// Close the gate data
+			gateDataRepo.set(run.id, 'non-reset-cache-gate', { approved: false });
+
+			// Second delivery should still succeed — gate is cached as open
+			// (resetOnCycle is false, so cyclic channel does not force re-evaluation)
+			const result2 = await router.deliverMessage(run.id, 'coder', 'planner', 'msg 2');
+			expect(result2.fromRole).toBe('coder');
+		});
+
+		test('onGateDataChanged caches gate as opened', async () => {
+			const gate: Gate = {
+				id: 'ondemand-cache-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'ondemand-cache-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'onGateDataChanged Cache Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open the gate via onGateDataChanged
+			gateDataRepo.set(run.id, 'ondemand-cache-gate', { approved: true });
+			await router.onGateDataChanged(run.id, 'ondemand-cache-gate');
+
+			// Close the gate
+			gateDataRepo.set(run.id, 'ondemand-cache-gate', { approved: false });
+
+			// canDeliver should return true — gate was cached as open by onGateDataChanged
+			const result = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result.allowed).toBe(true);
+		});
+
+		test('cache is per-gate: different gates are cached independently', async () => {
+			const gate1: Gate = {
+				id: 'gate-alpha',
+				fields: [
+					{
+						name: 'ready',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const gate2: Gate = {
+				id: 'gate-beta',
+				fields: [
+					{
+						name: 'ready',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const AGENT_REVIEWER = 'agent-reviewer';
+			db.prepare(
+				`INSERT INTO space_agents (id, space_id, name, description, model, tools,
+					 system_prompt, created_at, updated_at)
+					 VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+			).run(AGENT_REVIEWER, SPACE_ID, 'Agent Reviewer', Date.now(), Date.now());
+
+			const NODE_C = 'node-c';
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'gate-alpha' },
+				{ id: 'ch-2', from: 'coder', to: 'reviewer-slot', gateId: 'gate-beta' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+					{
+						id: NODE_C,
+						name: 'Reviewer Node',
+						agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer-slot' }],
+					},
+				],
+				channels,
+				[gate1, gate2]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Per-Gate Cache Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open gate-alpha only
+			gateDataRepo.set(run.id, 'gate-alpha', { ready: true });
+
+			// Deliver on gate-alpha channel — caches gate-alpha as open
+			await router.deliverMessage(run.id, 'coder', 'planner', 'msg');
+
+			// Close gate-alpha, open gate-beta
+			gateDataRepo.set(run.id, 'gate-alpha', { ready: false });
+			gateDataRepo.set(run.id, 'gate-beta', { ready: true });
+
+			// Deliver on gate-beta channel — caches gate-beta as open
+			await router.deliverMessage(run.id, 'coder', 'reviewer-slot', 'msg');
+
+			// Close gate-beta
+			gateDataRepo.set(run.id, 'gate-beta', { ready: false });
+
+			// Both channels should still deliver because both gates are cached
+			const r1 = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(r1.allowed).toBe(true);
+
+			const r2 = await router.canDeliver(run.id, 'coder', 'reviewer-slot');
+			expect(r2.allowed).toBe(true);
+		});
+
+		test('cache is per-run: different runs are cached independently', async () => {
+			const gate: Gate = {
+				id: 'per-run-cache-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'per-run-cache-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			// Run 1: open gate, deliver to cache it
+			const run1 = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Run 1',
+			});
+			workflowRunRepo.transitionStatus(run1.id, 'in_progress');
+			gateDataRepo.set(run1.id, 'per-run-cache-gate', { approved: true });
+			await router.deliverMessage(run1.id, 'coder', 'planner', 'run1 msg');
+
+			// Run 2: same gate, different run — should NOT be cached
+			const run2 = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Run 2',
+			});
+			workflowRunRepo.transitionStatus(run2.id, 'in_progress');
+			// Gate not opened for run 2
+			await expect(
+				router.deliverMessage(run2.id, 'coder', 'planner', 'run2 msg')
+			).rejects.toBeInstanceOf(ChannelGateBlockedError);
+		});
+
+		test('evictRunCache clears cached gate state for a completed run', async () => {
+			const gate: Gate = {
+				id: 'eviction-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'eviction-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Eviction Test Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open gate, deliver to cache it
+			gateDataRepo.set(run.id, 'eviction-gate', { approved: true });
+			await router.deliverMessage(run.id, 'coder', 'planner', 'msg');
+
+			// Verify cache is active: close gate, delivery still succeeds
+			gateDataRepo.set(run.id, 'eviction-gate', { approved: false });
+			const result1 = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result1.allowed).toBe(true);
+
+			// Evict the run's cache
+			router.evictRunCache(run.id);
+
+			// Now canDeliver should re-evaluate and find the gate closed
+			const result2 = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result2.allowed).toBe(false);
+		});
+
+		test('terminal run status evicts cache in deliverMessage', async () => {
+			const gate: Gate = {
+				id: 'terminal-eviction-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'terminal-eviction-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Terminal Eviction Test Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open gate, deliver to cache it
+			gateDataRepo.set(run.id, 'terminal-eviction-gate', { approved: true });
+			await router.deliverMessage(run.id, 'coder', 'planner', 'msg');
+
+			// Verify cache is active: close gate, delivery still succeeds
+			gateDataRepo.set(run.id, 'terminal-eviction-gate', { approved: false });
+			const result1 = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result1.allowed).toBe(true);
+
+			// Complete the run
+			workflowRunRepo.transitionStatus(run.id, 'done');
+
+			// deliverMessage detects the terminal status, evicts the cache, then
+			// re-evaluates the gate. Since the gate is closed, it throws.
+			// Without the terminal-eviction, the stale cache would have allowed
+			// delivery to succeed.
+			await expect(
+				router.deliverMessage(run.id, 'coder', 'planner', 'msg after done')
+			).rejects.toThrow(ChannelGateBlockedError);
+		});
+
+		test('canDeliver evicts cache on terminal run and returns accurate result', async () => {
+			const gate: Gate = {
+				id: 'candeliver-terminal-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'candeliver-terminal-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'canDeliver Terminal Test',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Open gate, deliver to cache it
+			gateDataRepo.set(run.id, 'candeliver-terminal-gate', { approved: true });
+			await router.deliverMessage(run.id, 'coder', 'planner', 'msg');
+
+			// Close the gate — cache still allows delivery
+			gateDataRepo.set(run.id, 'candeliver-terminal-gate', { approved: false });
+			const result1 = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result1.allowed).toBe(true);
+
+			// Complete the run — canDeliver should evict cache and re-evaluate
+			workflowRunRepo.transitionStatus(run.id, 'done');
+			const result2 = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result2.allowed).toBe(false);
+		});
+
+		describe('persistence across daemon restarts', () => {
+			test('restart simulation: persisted gate-open state survives router reinstantiation', async () => {
+				const gate: Gate = {
+					id: 'persist-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['*'],
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'persist-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				// Verify workflow has updatedAt timestamp
+				expect(workflow.updatedAt).toBeDefined();
+				expect(workflow.updatedAt).toBeGreaterThan(0);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Persistence Test',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				// Create gateOpenStateRepo and router1, deliver message to cache the gate as open
+				const gateOpenStateRepo = new (
+					await import('../../../../src/storage/repositories/gate-open-state-repository')
+				).GateOpenStateRepository(db);
+				const router1 = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				gateDataRepo.set(run.id, 'persist-gate', { approved: true });
+				await router1.deliverMessage(run.id, 'coder', 'planner', 'msg1');
+
+				// Verify gate is cached open with correct fingerprint
+				const cachedState = gateOpenStateRepo.isOpen(run.id, 'persist-gate');
+				expect(cachedState.open).toBe(true);
+				// Verify the fingerprint matches what we'd compute now (workflow.updatedAt + gate hash)
+				// Verify the fingerprint matches what we'd compute now (workflow.updatedAt + gate hash)
+				// Use the same algorithm as generateGateFingerprint
+				const gateJson = JSON.stringify(gate);
+				let hash = 0;
+				for (let i = 0; i < gateJson.length; i++) {
+					hash = (hash << 5) - hash + gateJson.charCodeAt(i);
+					hash = hash & hash;
+				}
+				const expectedFingerprint = workflow.updatedAt + hash;
+
+				// Create router2 with the SAME repo (simulates daemon restart)
+				const router2 = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Close the gate data — persisted cache should still allow delivery
+				gateDataRepo.set(run.id, 'persist-gate', { approved: false });
+				const result = await router2.canDeliver(run.id, 'coder', 'planner');
+				expect(result.allowed).toBe(true);
+			});
+
+			test('restart: stale workflow fingerprint forces re-evaluation', async () => {
+				const gate: Gate = {
+					id: 'fingerprint-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['*'],
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'fingerprint-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Fingerprint Test',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const gateOpenStateRepo = new (
+					await import('../../../../src/storage/repositories/gate-open-state-repository')
+				).GateOpenStateRepository(db);
+				const router1 = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Open gate, cache it
+				gateDataRepo.set(run.id, 'fingerprint-gate', { approved: true });
+				await router1.deliverMessage(run.id, 'coder', 'planner', 'msg1');
+
+				// Update workflow (change fingerprint)
+				workflowManager.updateWorkflow(workflow.id, { gates: [gate] });
+				const updatedWorkflow = workflowManager.getWorkflow(workflow.id);
+				expect(updatedWorkflow?.updatedAt).not.toBe(workflow.updatedAt);
+
+				// Router2 should re-evaluate despite persisted cache (fingerprint mismatch)
+				const router2 = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Close gate data — should re-evaluate and block
+				gateDataRepo.set(run.id, 'fingerprint-gate', { approved: false });
+				const result = await router2.canDeliver(run.id, 'coder', 'planner');
+				expect(result.allowed).toBe(false);
+			});
+
+			test('resetOnCycle: clears persisted gate-open state', async () => {
+				const gate: Gate = {
+					id: 'reset-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['*'],
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: true,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node' }, // forward channel (index 0)
+					{
+						id: 'ch-bwd',
+						from: 'Planner Node',
+						to: 'Coder Node',
+						gateId: 'reset-gate',
+					}, // cyclic (index 1)
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'ResetOnCycle Test',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const gateOpenStateRepo = new (
+					await import('../../../../src/storage/repositories/gate-open-state-repository')
+				).GateOpenStateRepository(db);
+				const router = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// resetOnCycle gates should NOT be cached across cycle boundaries
+				// First traversal: open gate, deliver, then reset
+				gateDataRepo.set(run.id, 'reset-gate', { approved: true });
+				await router.deliverMessage(run.id, 'planner', 'coder', 'msg1');
+
+				// Gate data should be reset to defaults (empty object for boolean fields)
+				const gateData1 = gateDataRepo.get(run.id, 'reset-gate');
+				expect(gateData1?.data).toEqual({});
+
+				// Persisted cache should NOT exist (resetOnCycle prevents caching)
+				expect(gateOpenStateRepo.isOpen(run.id, 'reset-gate').open).toBe(false);
+
+				// Second traversal: gate is now closed (data was reset)
+				await expect(
+					router.deliverMessage(run.id, 'planner', 'coder', 'msg2')
+				).rejects.toBeInstanceOf(ChannelGateBlockedError);
+			});
+
+			test('terminal run: clears persisted gate-open state', async () => {
+				const gate: Gate = {
+					id: 'terminal-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['*'],
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'terminal-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Terminal Test',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const gateOpenStateRepo = new (
+					await import('../../../../src/storage/repositories/gate-open-state-repository')
+				).GateOpenStateRepository(db);
+				const router = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					gateOpenStateRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+				});
+
+				// Open gate, deliver to cache it
+				gateDataRepo.set(run.id, 'terminal-gate', { approved: true });
+				await router.deliverMessage(run.id, 'coder', 'planner', 'msg1');
+
+				// Verify persisted state exists
+				expect(gateOpenStateRepo.isOpen(run.id, 'terminal-gate').open).toBe(true);
+
+				// Transition run to done — should clear persisted state
+				workflowRunRepo.transitionStatus(run.id, 'done');
+				// Call canDeliver to trigger terminal status detection and cache eviction
+				await router.canDeliver(run.id, 'coder', 'planner');
+				expect(gateOpenStateRepo.isOpen(run.id, 'terminal-gate').open).toBe(false);
 			});
 		});
 	});

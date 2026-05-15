@@ -519,7 +519,7 @@ export interface SpaceWorkflowRunReopenedEvent {
 	namespaceId?: string;
 	spaceId: string;
 	runId: string;
-	fromStatus: 'done' | 'cancelled';
+	fromStatus: 'done' | 'cancelled' | 'blocked';
 	reason: string;
 	by: string;
 	timestamp: string;

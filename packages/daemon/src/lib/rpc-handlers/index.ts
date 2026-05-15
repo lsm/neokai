@@ -42,6 +42,7 @@ import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-ta
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
+import { ReplyRoutingRegistry } from '../space/runtime/reply-routing-registry';
 import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import {
 	setupSpaceWorkflowHandlers,
@@ -56,6 +57,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceGitHubService } from '../github/space-github';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
+import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
@@ -259,8 +261,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
-	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
+	const gateOpenStateRepo = new GateOpenStateRepository(deps.db.getDatabase());
+	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(
+		deps.db.getDatabase(),
+		gateOpenStateRepo
+	);
 	const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
@@ -388,6 +394,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// sessionManager and internalEventBus are injected so space:chat:${spaceId} sessions are
 	// provisioned with MCP tools and system prompts on startup and on space.created.
 	const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
+	// Reply Routing Registry — shared between space-agent-tools (register)
+	// and task-agent-tools / node-agent-tools (lookup).
+	const replyRoutingRegistry = new ReplyRoutingRegistry();
+
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		dbPath: deps.db.getDatabasePath(),
@@ -399,6 +409,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		nodeExecutionRepo,
 		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
+		gateOpenStateRepo,
 		channelCycleRepo,
 		sessionManager: deps.sessionManager,
 		internalEventBus: deps.internalEventBus,
@@ -407,6 +418,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		scheduleService,
 		commandBus: deps.commandBus,
 		externalEventStore: deps.externalEventStore,
+		replyRoutingRegistry,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -460,11 +472,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// `space:chat:${spaceId}` session via SessionManager. Shared between
 	// TaskAgentManager (for queue flush) and task-agent tool wiring.
 	const sessionManagerRef = deps.sessionManager;
-	const spaceAgentInjector = async (spaceId: string, message: string): Promise<void> => {
-		const sessionId = `space:chat:${spaceId}`;
-		const session = await sessionManagerRef.getSessionAsync(sessionId);
+	const spaceAgentInjector = async (
+		spaceId: string,
+		message: string,
+		replyToSessionId?: string | null
+	): Promise<void> => {
+		let sessionId = replyToSessionId || `space:chat:${spaceId}`;
+		let session = await sessionManagerRef.getSessionAsync(sessionId);
+		// Fallback: if the routed-to session no longer exists (e.g. ad-hoc member
+		// session ended), fall back to the canonical space chat session so the
+		// reply is not silently dropped.
+		if (!session && replyToSessionId) {
+			sessionId = `space:chat:${spaceId}`;
+			session = await sessionManagerRef.getSessionAsync(sessionId);
+		}
 		if (!session) {
-			throw new Error(`Space Agent chat session not found: ${sessionId}`);
+			throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
 		}
 		const messageId = generateUUID();
 		const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
@@ -498,6 +521,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		gateDataRepo,
+		gateOpenStateRepo,
 		channelCycleRepo,
 		messageHub: deps.messageHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
@@ -513,6 +537,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceAgentInjector,
 		scheduleService,
 		internalEventBus: deps.internalEventBus,
+		replyRoutingRegistry,
 	});
 
 	deps.commandBus.register('agent.message.inject', async (command) => {

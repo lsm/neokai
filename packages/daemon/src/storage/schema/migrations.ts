@@ -620,6 +620,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 129: Add per-space concurrent task execution limit.
 	runMigration129(db);
+
+	// Migration 130: Add gate_open_state table for persisting gate-open cache across daemon restarts.
+	runMigration130(db);
 }
 
 /**
@@ -8840,6 +8843,33 @@ export function runMigration128(db: BunDatabase): void {
  * Backfills from legacy config.maxConcurrentTasks when present and valid, otherwise
  * defaults to 1. This preserves legacy SpaceConfig-based limits during upgrade.
  */
+/**
+ * Migration 130: Add `gate_open_state` table.
+ *
+ * Persists the gate-open cache so that already-opened gates skip re-evaluation
+ * even after a daemon restart. Each row records the `workflow.updatedAt` timestamp
+ * at the time the gate was cached open — if the workflow definition changes
+ * (different `updatedAt`), the cache entry is stale and the gate is re-evaluated.
+ *
+ * Foreign key to `space_workflow_runs(id)` with `ON DELETE CASCADE` ensures rows
+ * are cleaned up when the run itself is deleted.
+ */
+export function runMigration130(db: BunDatabase): void {
+	if (tableExists(db, 'gate_open_state')) return;
+
+	db.exec(`
+		CREATE TABLE gate_open_state (
+			run_id TEXT NOT NULL,
+			gate_id TEXT NOT NULL,
+			opened_workflow_updated_at INTEGER NOT NULL,
+			opened_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, gate_id),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX idx_gate_open_state_run ON gate_open_state(run_id)`);
+}
+
 export function runMigration129(db: BunDatabase): void {
 	if (!tableExists(db, 'spaces')) return;
 	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;

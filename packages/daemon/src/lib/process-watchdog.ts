@@ -15,7 +15,11 @@ export interface ProcessSnapshot {
 
 export type ProcessLister = () => Promise<ProcessSnapshot[]>;
 export type ProcessKiller = (pid: number, signal: NodeJS.Signals) => void;
-export type RootPidProvider = () => { live: Iterable<number>; exited: Iterable<number> };
+export type ProcessGroupKiller = (pgid: number, signal: NodeJS.Signals) => void;
+export type RootPidProvider = (snapshot?: ProcessSnapshot[]) => {
+	live: Iterable<number>;
+	exited: Iterable<number>;
+};
 
 const SUSPICIOUS_THRESHOLDS = [
 	{ pattern: /\bbun\s+test\b/, thresholdMs: 15 * 60 * 1000 },
@@ -96,19 +100,47 @@ export function parsePsElapsedDuration(raw: string): number {
 export async function cleanupSuspiciousProcesses(options?: {
 	listProcesses?: ProcessLister;
 	killProcess?: ProcessKiller;
+	killProcessGroup?: ProcessGroupKiller;
 	getRootPids?: RootPidProvider;
 }): Promise<number> {
 	const lister = options?.listProcesses ?? listProcesses;
 	const killer = options?.killProcess ?? ((pid, signal) => process.kill(pid, signal));
-	const rootResult = options?.getRootPids
+	const groupKiller =
+		options?.killProcessGroup ??
+		(process.platform === 'win32'
+			? () => {}
+			: (pgid, signal) => {
+					try {
+						process.kill(-pgid, signal);
+					} catch {
+						// Process group may have already exited.
+					}
+				});
+	// Quick emptiness check without shelling out to ps â avoids
+	// unnecessary load on idle daemons with no tracked roots.
+	const quickResult = options?.getRootPids
 		? options.getRootPids()
+		: { live: [] as number[], exited: [] as number[] };
+	const quickLive = [...quickResult.live];
+	const quickExited = [...quickResult.exited];
+	if (quickLive.length === 0 && quickExited.length === 0) return 0;
+
+	// Only shell out to ps if there are tracked roots to process.
+	const snapshots = await lister();
+
+	// Re-fetch with snapshot for accurate identity verification.
+	const rootResult = options?.getRootPids
+		? options.getRootPids(snapshots)
 		: { live: [] as number[], exited: [] as number[] };
 	const liveRoots = new Set(rootResult.live);
 	const exitedRoots = new Set(rootResult.exited);
 	if (liveRoots.size === 0 && exitedRoots.size === 0) return 0;
-
-	const snapshots = await lister();
 	const ownedPids = collectDescendantPids(snapshots, liveRoots, exitedRoots);
+	// Set of PIDs present in the current snapshot â used to detect PID reuse.
+	// An exited root whose PGID appears in this set has been reused by an
+	// unrelated process; group-signaling it would kill non-daemon processes.
+	const snapshotPids = new Set<number>();
+	for (const snap of snapshots) snapshotPids.add(snap.pid);
 	let killed = 0;
 
 	for (const snapshot of snapshots) {
@@ -120,7 +152,40 @@ export async function cleanupSuspiciousProcesses(options?: {
 		if (!threshold) continue;
 
 		try {
-			killer(snapshot.pid, 'SIGTERM');
+			// Signal the process group first (reaches tool grandchildren
+			// that the parent may not have forwarded signals to).
+			// The PGID must be attributable to the daemon tree (owned or a
+			// tracked root) but NOT a live root (would kill the active session).
+			if (
+				typeof snapshot.pgid === 'number' &&
+				Number.isFinite(snapshot.pgid) &&
+				snapshot.pgid > 1 &&
+				!liveRoots.has(snapshot.pgid) &&
+				(ownedPids.has(snapshot.pgid) ||
+					(exitedRoots.has(snapshot.pgid) && !snapshotPids.has(snapshot.pgid)))
+			) {
+				try {
+					groupKiller(snapshot.pgid, 'SIGTERM');
+				} catch {
+					// Group kill failed; fall through to direct PID signal.
+				}
+			}
+			try {
+				killer(snapshot.pid, 'SIGTERM');
+			} catch (error: unknown) {
+				// ESRCH after group kill means the process was already terminated —
+				// count it as a successful cleanup rather than a failure.
+				if (
+					!(
+						error &&
+						typeof error === 'object' &&
+						'code' in error &&
+						(error as { code: string }).code === 'ESRCH'
+					)
+				) {
+					throw error;
+				}
+			}
 			killed++;
 			logger.warn(
 				`Killing suspicious daemon-owned long-running process pid=${snapshot.pid} ppid=${snapshot.ppid} ` +
