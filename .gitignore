@@ -69,3 +69,4 @@ packages/desktop/src-tauri/gen/
 
 # Claude Code — ignore everything under .claude/
 .claude/
+packages/daemon/.embedded-sdk-cli
