@@ -716,6 +716,88 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		});
 	});
 
+	describe('edit task button', () => {
+		it('shows the edit button for in_progress tasks', () => {
+			mockTasks.value = [makeTask({ status: 'in_progress' })];
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(getByTestId('task-edit-button')).toBeTruthy();
+		});
+
+		it('shows the edit button for open tasks', () => {
+			mockTasks.value = [makeTask({ status: 'open' })];
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(getByTestId('task-edit-button')).toBeTruthy();
+		});
+
+		it('shows the edit button for draft tasks', () => {
+			mockTasks.value = [makeTask({ status: 'draft' })];
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(getByTestId('task-edit-button')).toBeTruthy();
+		});
+
+		it('hides the edit button for terminal tasks (done)', () => {
+			mockTasks.value = [makeTask({ status: 'done' })];
+			const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(queryByTestId('task-edit-button')).toBeNull();
+		});
+
+		it('hides the edit button for terminal tasks (cancelled)', () => {
+			mockTasks.value = [makeTask({ status: 'cancelled' })];
+			const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(queryByTestId('task-edit-button')).toBeNull();
+		});
+
+		it('hides the edit button for terminal tasks (archived)', () => {
+			mockTasks.value = [makeTask({ status: 'archived' })];
+			const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(queryByTestId('task-edit-button')).toBeNull();
+		});
+
+		it('opens the edit modal when clicked', () => {
+			mockTasks.value = [makeTask({ status: 'in_progress' })];
+			const { getByTestId, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(queryByTestId('edit-task-modal-content')).toBeNull();
+			fireEvent.click(getByTestId('task-edit-button'));
+			expect(getByTestId('edit-task-modal-content')).toBeTruthy();
+		});
+
+		it('calls spaceStore.updateTask when edit is confirmed', async () => {
+			mockTasks.value = [makeTask({ status: 'in_progress', title: 'Old Title' })];
+			mockUpdateTask.mockResolvedValueOnce(makeTask({ status: 'in_progress', title: 'New Title' }));
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-edit-button'));
+
+			// Change the title
+			fireEvent.input(getByTestId('edit-task-title'), {
+				target: { value: 'New Title' },
+			});
+			fireEvent.click(getByTestId('edit-task-confirm'));
+
+			await waitFor(() => {
+				expect(mockUpdateTask).toHaveBeenCalledWith('task-1', {
+					title: 'New Title',
+					description: 'Task description',
+					priority: 'normal',
+				});
+			});
+		});
+
+		it('shows inline error when updateTask fails', async () => {
+			mockTasks.value = [makeTask({ status: 'in_progress', title: 'Old Title' })];
+			mockUpdateTask.mockRejectedValueOnce(new Error('Server error'));
+
+			const { getByTestId, findByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-edit-button'));
+
+			fireEvent.input(getByTestId('edit-task-title'), {
+				target: { value: 'New Title' },
+			});
+			fireEvent.click(getByTestId('edit-task-confirm'));
+
+			const errEl = await findByTestId('edit-task-error');
+			expect(errEl.textContent).toContain('Server error');
+		});
+	});
 	it('canvas node click matches by role (slot name), not by label — regression for Review node bug', () => {
 		// This test reproduces the bug where clicking a "Review" node opened the Task Agent
 		// session instead of the Reviewer session. The root cause was matching m.label against

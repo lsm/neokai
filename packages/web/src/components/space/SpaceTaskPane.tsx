@@ -25,6 +25,7 @@ import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
+import { EditTaskModal } from './EditTaskModal';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
@@ -188,6 +189,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	// review RPC needs to surface inside the modal regardless of composer
 	// visibility — see `SubmitForReviewModalProps.error`.
 	const [submitForReviewError, setSubmitForReviewError] = useState<string | null>(null);
+	const [showEditTaskModal, setShowEditTaskModal] = useState(false);
+	const [editTaskError, setEditTaskError] = useState<string | null>(null);
 	const [fullWorkflow, setFullWorkflow] = useState<import('@neokai/shared').SpaceWorkflow | null>(
 		null
 	);
@@ -657,6 +660,23 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
+	const handleEditTaskConfirm = async (updates: {
+		title: string;
+		description: string;
+		priority: import('@neokai/shared').SpaceTaskPriority;
+	}) => {
+		try {
+			setStatusTransitioning(true);
+			setEditTaskError(null);
+			await spaceStore.updateTask(task.id, updates);
+			setShowEditTaskModal(false);
+		} catch (err) {
+			setEditTaskError(formatTaskThreadError(err));
+		} finally {
+			setStatusTransitioning(false);
+		}
+	};
+
 	const allTransitionActions = getTransitionActions(task.status);
 	// Mirrors the filter in `TaskStatusActions`: any task in `review` is
 	// "awaiting human approval via a dedicated banner" — the bare review→done /
@@ -801,6 +821,33 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 					</div>
+					{!isTerminalTask && (
+						<button
+							type="button"
+							onClick={() => {
+								setEditTaskError(null);
+								setShowEditTaskModal(true);
+							}}
+							class="flex-shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-dark-800 hover:text-gray-200 transition-colors"
+							data-testid="task-edit-button"
+							aria-label="Edit Task"
+							title="Edit title, description, or priority"
+						>
+							<svg
+								class="w-4 h-4"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+								stroke-width={2}
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+								/>
+							</svg>
+						</button>
+					)}
 					{taskActionItems.length > 0 && (
 						<Dropdown
 							items={taskActionItems}
@@ -1034,6 +1081,18 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				}}
 				onConfirm={handleSubmitForReviewConfirm}
 				error={submitForReviewError}
+			/>
+			<EditTaskModal
+				isOpen={showEditTaskModal}
+				busy={statusTransitioning}
+				initialTitle={task.title}
+				initialDescription={task.description ?? ''}
+				initialPriority={task.priority}
+				onCancel={() => {
+					if (!statusTransitioning) setShowEditTaskModal(false);
+				}}
+				onConfirm={handleEditTaskConfirm}
+				error={editTaskError}
 			/>
 		</div>
 	);
