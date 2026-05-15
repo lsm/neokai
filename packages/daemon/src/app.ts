@@ -441,12 +441,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	};
 	const extensionManager = new ExternalEventExtensionManager();
 	const githubPollingEnabled = !!(config.githubPollingInterval && config.githubPollingInterval > 0);
-	if (!githubPollingEnabled) {
+	if (githubPollingEnabled) {
+		const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
 		await extensionConfigStore.setGlobalConfig('github', {
-			source: 'github',
-			globallyEnabled: true,
-			capabilities: { webhooks: true, polling: false, rpcConfig: true },
-			settings: { pollingDisabledByEnv: true },
+			...githubGlobalConfig,
+			capabilities: {
+				...githubGlobalConfig.capabilities,
+				polling: true,
+			},
 		});
 	}
 	extensionManager.register(

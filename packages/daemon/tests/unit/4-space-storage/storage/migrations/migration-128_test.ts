@@ -86,17 +86,26 @@ describe('Migration 128: external event extension config tables', () => {
 
 		runMigration128(db);
 
-		expect(
-			db.prepare(`SELECT * FROM external_event_extension_configs WHERE source = 'github'`).get()
-		).toMatchObject({
+		const row = db
+			.prepare(`SELECT * FROM external_event_extension_configs WHERE source = 'github'`)
+			.get() as {
+			source: string;
+			globally_enabled: number;
+			capabilities_json: string;
+			secrets_ref: string;
+			settings_json: string;
+			created_at: number;
+			updated_at: number;
+		};
+		expect(row).toMatchObject({
 			source: 'github',
 			globally_enabled: 1,
-			capabilities_json: JSON.stringify({ polling: true }),
 			secrets_ref: 'secret/github',
 			settings_json: '{}',
 			created_at: 1,
 			updated_at: 2,
 		});
+		expect(JSON.parse(row.capabilities_json)).toEqual({ polling: true, rpcConfig: true });
 	});
 
 	test('seeds GitHub polling disabled by default', () => {

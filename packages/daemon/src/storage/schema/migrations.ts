@@ -8834,7 +8834,7 @@ export function runMigration128(db: BunDatabase): void {
 			SELECT
 				source,
 				globally_enabled,
-				COALESCE(capabilities_json, '{}'),
+				json_set(COALESCE(capabilities_json, '{}'), '$.rpcConfig', json('true')),
 				secrets_ref,
 				COALESCE(settings_json, '{}'),
 				created_at,
