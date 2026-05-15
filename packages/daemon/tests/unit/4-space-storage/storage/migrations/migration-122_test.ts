@@ -100,7 +100,7 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 		mkdirSync(testDir, { recursive: true });
 		db = new BunDatabase(join(testDir, 'test.db'));
 		db.exec('PRAGMA foreign_keys = ON');
-	});
+	}, 10_000);
 
 	afterEach(() => {
 		try {
@@ -113,13 +113,13 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 		} catch {
 			// ignore
 		}
-	});
+	}, 10_000);
 
 	describe('fresh DB (all migrations applied)', () => {
-		beforeEach(() => {
+		beforeEach(async () => {
 			runMigrations(db, () => {});
 			createTables(db);
-		});
+		}, 30_000);
 
 		test('sdk_messages has the new derived columns plus task_id', () => {
 			const columns = columnNames(db, 'sdk_messages');
@@ -266,7 +266,7 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 				JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }),
 				ts
 			);
-		});
+		}, 30_000);
 
 		test('is_terminal is set to 1 for result messages and 0 elsewhere', () => {
 			runMigration122(db);

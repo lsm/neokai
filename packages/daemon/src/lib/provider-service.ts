@@ -808,8 +808,10 @@ export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.P
 	return { ...process.env, ...providerEnvVars };
 }
 
-// Singleton instance
-let providerServiceInstance: ProviderService | null = null;
+// Singleton instance — stored on globalThis to survive ESM module duplication
+// in Bun's test runner (different import paths can load the same module twice,
+// each with its own module-level let, breaking singleton guarantees).
+const PROVIDER_SERVICE_KEY = Symbol.for('neokai:providerServiceInstance');
 
 /**
  * User-configured env vars captured at module initialization.
@@ -829,8 +831,13 @@ const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODE
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
 export function getProviderService(): ProviderService {
-	if (!providerServiceInstance) {
-		providerServiceInstance = new ProviderService();
+	if (!(globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY]) {
+		(globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = new ProviderService();
 	}
-	return providerServiceInstance;
+	return (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] as ProviderService;
+}
+
+/** Reset singleton — tests only */
+export function resetProviderServiceInstance(): void {
+	delete (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY];
 }

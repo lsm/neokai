@@ -2,29 +2,10 @@
  * Space Runtime Constants
  *
  * Shared configuration constants for the Space runtime layer.
- *
- * Per-node timeout policy lives with the workflow definition, not here. The
- * runtime knows exactly one timeout default — `DEFAULT_NODE_TIMEOUT_MS`. Any
- * per-slot override is read from `WorkflowNodeAgent.timeoutMs` at runtime by
- * `resolveTimeoutForExecution` (see `space-runtime.ts`). Adding a new agent
- * role no longer requires a runtime change.
  */
 
 // ---------------------------------------------------------------------------
-// Per-node default timeout
-// ---------------------------------------------------------------------------
-
-/**
- * Default timeout for node agents whose workflow slot does not declare an
- * explicit `timeoutMs`. 4 minutes 30 seconds (270_000 ms) — chosen to stay
- * within the model prompt-cache window so the next interaction can reuse
- * cached context. Per-node overrides are configured on the agent slot in the
- * workflow definition.
- */
-export const DEFAULT_NODE_TIMEOUT_MS = 4 * 60 * 1000 + 30 * 1000;
-
-// ---------------------------------------------------------------------------
-// Network retry constants (M9.4)
+// Crash retry constants
 // ---------------------------------------------------------------------------
 
 /**
@@ -41,6 +22,35 @@ export const DEFAULT_NODE_TIMEOUT_MS = 4 * 60 * 1000 + 30 * 1000;
  * transient startup failures common in CI and cold-start environments.
  */
 export const MAX_TASK_AGENT_CRASH_RETRIES = 2;
+
+/**
+ * Maximum silence window for an alive node-agent session before the runtime
+ * treats a non-terminal last message as no observable progress.
+ *
+ * This is deliberately conservative: long-running agents are allowed, but an
+ * alive session whose latest meaningful SDK message is old and non-terminal is
+ * eligible for Layer 1 runtime recovery.
+ */
+export const DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS = 15 * 60 * 1000;
+
+/** Maximum runtime nudges sent to an alive stuck session before restart/block. */
+export const MAX_AGENT_STUCK_NAGS = 1;
+
+/**
+ * Minimum wait after a runtime nag before restart/block recovery can proceed.
+ *
+ * Runtime nags are injected as synthetic user messages. If an agent is already
+ * processing, that message can be queued but not yet consumed; this cooldown
+ * prevents the next tick from restarting a live session before the agent has a
+ * chance to reach a turn boundary and observe the nudge.
+ */
+export const DEFAULT_AGENT_STUCK_NAG_GRACE_MS = 2 * 60 * 1000;
+
+/** Maximum time an SDK tool_use stays active for runtime recovery guards. */
+export const DEFAULT_TOOL_USE_ACTIVE_TTL_MS = 60 * 60 * 1000;
+
+/** Maximum per-agent session restarts for alive-but-stuck recovery. */
+export const MAX_AGENT_STUCK_RESTARTS = 1;
 
 /**
  * Maximum number of automatic recovery attempts for a blocked workflow run.

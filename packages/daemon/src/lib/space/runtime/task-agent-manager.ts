@@ -1911,47 +1911,66 @@ export class TaskAgentManager {
 		images?: MessageImage[],
 		deliveryMode: 'immediate' | 'defer' = 'immediate'
 	): Promise<void> {
+		await this.injectSubSessionMessageWithOrigin(
+			subSessionId,
+			message,
+			undefined,
+			isSyntheticMessage,
+			images,
+			deliveryMode
+		);
+	}
+
+	async injectRuntimeRecoveryMessage(subSessionId: string, message: string): Promise<string> {
+		return await this.injectSubSessionMessageWithOrigin(subSessionId, message, 'system', true);
+	}
+
+	private async injectSubSessionMessageWithOrigin(
+		subSessionId: string,
+		message: string,
+		origin: MessageOrigin | undefined,
+		isSyntheticMessage = true,
+		images?: MessageImage[],
+		deliveryMode: 'immediate' | 'defer' = 'immediate'
+	): Promise<string> {
 		const indexed = this.agentSessionIndex.get(subSessionId);
 		if (indexed) {
-			await this.injectMessageIntoSession(
+			return await this.injectMessageIntoSession(
 				indexed,
 				message,
 				deliveryMode,
-				undefined,
+				origin,
 				isSyntheticMessage,
 				images
 			);
-			return;
 		}
 
 		// Find the sub-session by ID across all task maps
 		for (const [, nodeMap] of this.subSessions) {
 			const session = nodeMap.get(subSessionId);
 			if (session) {
-				await this.injectMessageIntoSession(
+				return await this.injectMessageIntoSession(
 					session,
 					message,
 					deliveryMode,
-					undefined,
+					origin,
 					isSyntheticMessage,
 					images
 				);
-				return;
 			}
 		}
 
 		// Not in memory — attempt lazy rehydration from DB
 		const rehydrated = await this.rehydrateSubSession(subSessionId);
 		if (rehydrated) {
-			await this.injectMessageIntoSession(
+			return await this.injectMessageIntoSession(
 				rehydrated,
 				message,
 				deliveryMode,
-				undefined,
+				origin,
 				isSyntheticMessage,
 				images
 			);
-			return;
 		}
 		throw new Error(`Sub-session not found: ${subSessionId}`);
 	}
@@ -2398,6 +2417,19 @@ export class TaskAgentManager {
 				err
 			);
 		}
+	}
+
+	async restartStuckSubSession(agentSessionId: string): Promise<void> {
+		const session = this.getAgentSessionById(agentSessionId);
+		if (!session) {
+			throw new Error(`Cannot restart stuck sub-session; session not found: ${agentSessionId}`);
+		}
+		await this.stopSessionPreserveDb(agentSessionId, session, { strict: true });
+		this.agentSessionIndex.delete(agentSessionId);
+		for (const [, nodeMap] of this.subSessions) {
+			nodeMap.delete(agentSessionId);
+		}
+		await this.config.sessionManager.unregisterSession(agentSessionId);
 	}
 
 	// -------------------------------------------------------------------------
@@ -3842,7 +3874,7 @@ export class TaskAgentManager {
 		origin?: MessageOrigin,
 		isSyntheticMessage = true,
 		images?: MessageImage[]
-	): Promise<void> {
+	): Promise<string> {
 		const sessionId = session.session.id;
 		const state = session.getProcessingState();
 		// 'processing'/'queued' = actively running; 'waiting_for_input' = human gate open;
@@ -3896,16 +3928,17 @@ export class TaskAgentManager {
 
 		// defer + busy → persist as deferred for replay after current turn completes
 		if (deliveryMode === 'defer' && isBusy) {
-			this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
-			return;
+			const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
+			return dbId;
 		}
 
 		await session.ensureQueryStarted();
-		this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+		const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
 		// When images are present, enqueue the multi-modal content array so the SDK
 		// sees image blocks alongside the text. Otherwise pass the plain string to
 		// preserve the existing behaviour for callers that don't supply images.
 		await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
+		return dbId;
 	}
 
 	// -------------------------------------------------------------------------
@@ -3924,24 +3957,45 @@ export class TaskAgentManager {
 	 * `SessionManager.archiveSessionResources` or
 	 * `SessionManager.deleteSessionResources`.
 	 */
-	private async stopSessionPreserveDb(sessionId: string, session: AgentSession): Promise<void> {
+	private async stopSessionPreserveDb(
+		sessionId: string,
+		session: AgentSession,
+		options: { strict?: boolean } = {}
+	): Promise<void> {
 		const unsub = this.sessionListeners.get(sessionId);
-		if (unsub) {
+		if (!options.strict && unsub) {
 			unsub();
 			this.sessionListeners.delete(sessionId);
 		}
-		this.completionCallbacks.delete(sessionId);
+		if (!options.strict) {
+			this.completionCallbacks.delete(sessionId);
+		}
 
+		let stopError: unknown;
 		try {
 			await session.handleInterrupt();
 		} catch (err) {
+			stopError = err;
 			log.warn(`TaskAgentManager: failed to interrupt session ${sessionId}:`, err);
 		}
 
 		try {
 			await session.cleanup();
 		} catch (err) {
+			stopError = stopError ?? err;
 			log.warn(`TaskAgentManager: failed to cleanup session ${sessionId}:`, err);
+		}
+
+		if (options.strict && stopError) {
+			throw new Error(
+				`Failed to stop session ${sessionId}: ${stopError instanceof Error ? stopError.message : String(stopError)}`
+			);
+		}
+
+		if (options.strict && unsub) {
+			unsub();
+			this.sessionListeners.delete(sessionId);
+			this.completionCallbacks.delete(sessionId);
 		}
 	}
 
