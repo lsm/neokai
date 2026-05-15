@@ -697,4 +697,35 @@ describe('warmupSDKCliBinary', () => {
 		const resolved = resolveSDKCliPath();
 		expect(resolved).toBeDefined();
 	});
+
+	it('returns failed for unsupported platform', () => {
+		// Mock getPlatformPackageName to return undefined via module spy.
+		// Internal calls bypass the export, so we patch the resolver module.
+		// Since process.platform/arch are read-only in Bun, we test the
+		// unsupported platform path by verifying the error shape when
+		// all resolution strategies fail.
+		existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
+		execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+			throw new Error('not found');
+		});
+		execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+			throw new Error('not found');
+		});
+
+		const result = warmupSDKCliBinary();
+
+		expect(result.status).toBe('failed');
+		expect(result.error).toBeDefined();
+		expect(result.version).toBeDefined();
+	});
+
+	it('handles sequential warmup calls correctly (mutex releases)', () => {
+		const first = warmupSDKCliBinary();
+		expect(first.status).toBe('ready');
+
+		// Mutex released after first call — second succeeds immediately.
+		const second = warmupSDKCliBinary();
+		expect(second.status).toBe('ready');
+		expect(second.path).toBe(first.path);
+	});
 });

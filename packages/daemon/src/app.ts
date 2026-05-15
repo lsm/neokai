@@ -257,12 +257,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logInfo('[Daemon] Model initialization skipped - no credentials available');
 	}
 
-	// Warm up SDK CLI binary — resolves from node_modules/cache or downloads.
-	// Non-fatal: daemon continues if download fails. resolveSDKCliPath() retries on first query.
-	if (process.env.NODE_ENV !== 'test') {
-		warmupSDKCliBinary();
-	}
-
 	// PHASE 3 ARCHITECTURE (FIXED): MessageHub owns Router, Transport is pure I/O
 	// 1. Initialize MessageHubRouter (routing layer - pure routing, no app logic)
 	const router = new MessageHubRouter({
@@ -607,6 +601,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			);
 		},
 	});
+
+	// Warm up SDK CLI binary — resolves from node_modules/cache or downloads.
+	// Deferred to next tick so the WS server binds and starts accepting connections
+	// before any potential download (~200 MB, up to ~135s timeout).
+	// Non-fatal: daemon continues if download fails. resolveSDKCliPath() retries on first query.
+	if (process.env.NODE_ENV !== 'test') {
+		setTimeout(warmupSDKCliBinary, 0);
+	}
 
 	// Start GitHub service after server is ready.
 	// GitHubService.start() registers the github.poll handler and enqueues the
