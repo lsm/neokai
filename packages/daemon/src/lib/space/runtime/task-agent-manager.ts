@@ -3928,17 +3928,17 @@ export class TaskAgentManager {
 
 		// defer + busy → persist as deferred for replay after current turn completes
 		if (deliveryMode === 'defer' && isBusy) {
-			this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
-			return messageId;
+			const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
+			return dbId;
 		}
 
 		await session.ensureQueryStarted();
-		this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+		const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
 		// When images are present, enqueue the multi-modal content array so the SDK
 		// sees image blocks alongside the text. Otherwise pass the plain string to
 		// preserve the existing behaviour for callers that don't supply images.
 		await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
-		return messageId;
+		return dbId;
 	}
 
 	// -------------------------------------------------------------------------

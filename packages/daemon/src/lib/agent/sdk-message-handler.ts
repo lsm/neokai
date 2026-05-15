@@ -399,6 +399,10 @@ export class SDKMessageHandler {
 					message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
 				})
 				.catch(() => {});
+			this.publishToolResultConsumedEvents({
+				...sdkMessage,
+				timestamp: consumedAt,
+			} as unknown as SDKMessage).catch(() => {});
 			return;
 		}
 
@@ -442,6 +446,10 @@ export class SDKMessageHandler {
 				message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
 			})
 			.catch(() => {});
+		this.publishToolResultConsumedEvents({
+			...sdkMessage,
+			timestamp: consumedAt,
+		} as unknown as SDKMessage).catch(() => {});
 	}
 
 	/**
