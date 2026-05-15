@@ -85,6 +85,7 @@ export function useAutoScroll({
 	// current value rather than a stale closure capture.
 	const enabledRef = useRef<boolean>(enabled);
 	const loadingOlderRef = useRef<boolean>(loadingOlder);
+	const deferredScrollRafRef = useRef<number | null>(null);
 	useEffect(() => {
 		enabledRef.current = enabled;
 	}, [enabled]);
@@ -114,6 +115,19 @@ export function useAutoScroll({
 		},
 		[containerRef, endRef]
 	);
+
+	const scrollToBottomAfterLayout = useCallback(() => {
+		if (deferredScrollRafRef.current !== null) {
+			cancelAnimationFrame(deferredScrollRafRef.current);
+		}
+
+		deferredScrollRafRef.current = requestAnimationFrame(() => {
+			deferredScrollRafRef.current = null;
+			if (!loadingOlderRef.current) {
+				scrollToBottom();
+			}
+		});
+	}, [scrollToBottom]);
 
 	// Detect scroll position to show/hide scroll button
 	useEffect(() => {
@@ -257,6 +271,7 @@ export function useAutoScroll({
 			// suppress the auto-scroll and let the caller drive.
 			if (enabled || !isInitialLoad) {
 				scrollToBottom();
+				scrollToBottomAfterLayout();
 			}
 			return;
 		}
@@ -264,10 +279,18 @@ export function useAutoScroll({
 		// Only auto-scroll for new messages if enabled
 		if (enabled && hasNewContent) {
 			scrollToBottom();
+			scrollToBottomAfterLayout();
 		}
 
 		prevMessageCountRef.current = messageCount;
-	}, [messageCount, isInitialLoad, loadingOlder, enabled, scrollToBottom]);
+	}, [
+		messageCount,
+		isInitialLoad,
+		loadingOlder,
+		enabled,
+		scrollToBottom,
+		scrollToBottomAfterLayout,
+	]);
 
 	// Reset the mount-scroll latch when `isInitialLoad` flips back to true.
 	// This preserves the existing reset semantic — a parent can signal "treat
@@ -278,6 +301,14 @@ export function useAutoScroll({
 			hasScrolledOnMountRef.current = false;
 		}
 	}, [isInitialLoad]);
+
+	useEffect(() => {
+		return () => {
+			if (deferredScrollRafRef.current !== null) {
+				cancelAnimationFrame(deferredScrollRafRef.current);
+			}
+		};
+	}, []);
 
 	return {
 		showScrollButton,

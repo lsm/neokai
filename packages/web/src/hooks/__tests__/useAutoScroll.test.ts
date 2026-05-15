@@ -181,6 +181,7 @@ describe('useAutoScroll', () => {
 
 	describe('auto-scroll behavior', () => {
 		it('should scroll on initial load when messages arrive', () => {
+			vi.useFakeTimers();
 			const { containerRef, endRef } = createMockRefs();
 
 			// Start with isInitialLoad=true and 0 messages
@@ -200,8 +201,15 @@ describe('useAutoScroll', () => {
 
 			// Rerender with messages arriving
 			rerender({ messageCount: 5, isInitialLoad: true });
-
 			expect(containerRef.current!.scrollTop).toBe(1000);
+
+			// Layout grows after first scroll; deferred rAF scroll should re-pin.
+			containerRef.current!.scrollHeight = 1200;
+			act(() => {
+				vi.advanceTimersByTime(16);
+			});
+			expect(containerRef.current!.scrollTop).toBe(1200);
+			vi.useRealTimers();
 		});
 
 		it('should NOT force-scroll on initial load when enabled=false (deep-link case)', () => {
@@ -569,6 +577,7 @@ describe('useAutoScroll', () => {
 		});
 
 		it('should scroll on new content after messageCount drops to 0', () => {
+			vi.useFakeTimers();
 			// When the message list is cleared (task switch, session navigation),
 			// prevMessageCountRef resets so the next non-zero count is
 			// seen as new content. This is the fix for SpaceTaskUnifiedThread,
@@ -600,9 +609,17 @@ describe('useAutoScroll', () => {
 			rerender({ messageCount: 7, enabled: true });
 			expect(containerRef.current!.scrollTop).toBe(1000);
 
+			// Layout grows after first scroll; deferred rAF scroll should re-pin.
+			containerRef.current!.scrollHeight = 1200;
+			act(() => {
+				vi.advanceTimersByTime(16);
+			});
+			expect(containerRef.current!.scrollTop).toBe(1200);
+
 			// Subsequent new-message scrolls use the hasNewContent path.
 			rerender({ messageCount: 8, enabled: true });
-			expect(containerRef.current!.scrollTop).toBe(1000);
+			expect(containerRef.current!.scrollTop).toBe(1200);
+			vi.useRealTimers();
 		});
 	});
 
