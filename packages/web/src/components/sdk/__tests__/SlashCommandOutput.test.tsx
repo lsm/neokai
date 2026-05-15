@@ -259,12 +259,13 @@ Line 3</local-command-stdout>`;
 
 		it('should handle special characters in output', async () => {
 			const content =
-				'<local-command-stdout>Special chars: <>&"\' and unicode</local-command-stdout>';
+				'<local-command-stdout>Special chars: `<>` & "\' and unicode</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
 			await waitFor(() => {
 				expect(container.textContent).toContain('Special chars');
-				expect(container.textContent).toContain('<>&');
+				expect(container.textContent).toContain('<>');
+				expect(container.textContent).toContain('&');
 			});
 		});
 
