@@ -27,9 +27,9 @@ export declare type AccountInfo = {
     tokenSource?: string;
     apiKeySource?: string;
     /**
-     * Active API backend. Anthropic OAuth login only applies when "firstParty"; for 3P providers the other fields are absent and auth is external (AWS creds, gcloud ADC, etc.).
+     * Active API backend. Anthropic OAuth login only applies when "firstParty"; for 3P providers the other fields are absent and auth is external (AWS creds, gcloud ADC, etc.). "gateway" means the CLI is authenticated against an enterprise gateway.
      */
-    apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | 'anthropicAws' | 'mantle';
+    apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | 'anthropicAws' | 'mantle' | 'gateway';
 };
 
 /**
@@ -41,7 +41,7 @@ export declare type AgentDefinition = {
      */
     description: string;
     /**
-     * Array of allowed tool names. If omitted, inherits all tools from parent
+     * Array of allowed tool names. If omitted, inherits all tools from parent. Note: passing 'Skill' here is deprecated — use the `skills` field instead.
      */
     tools?: string[];
     /**
@@ -133,6 +133,15 @@ export declare type BaseHookInput = {
      * Agent type name (e.g., "general-purpose", "code-reviewer"). Present when the hook fires from within a subagent (alongside agent_id), or on the main thread of a session started with --agent (without agent_id).
      */
     agent_type?: string;
+    /**
+     * Reasoning effort applied to the current turn. Same shape as StatusLineCommandInput.effort. Present for hooks that fire within a tool-use context (PreToolUse, PostToolUse, Stop, SubagentStop, etc.) on a model that supports the effort parameter; absent for session-lifecycle hooks and models without effort support.
+     */
+    effort?: {
+        /**
+         * Active effort level for the current turn (e.g., "low", "medium", "high", "xhigh", "max"), after any silent downgrade for the selected model. Also exposed to hook commands and Bash as the CLAUDE_EFFORT env var.
+         */
+        level: string;
+    };
 };
 
 export declare type BaseOutputFormat = {
@@ -325,6 +334,9 @@ declare namespace coreTypes {
         PermissionUpdateDestination,
         PermissionUpdate,
         PostCompactHookInput,
+        PostToolBatchHookInput,
+        PostToolBatchHookSpecificOutput,
+        PostToolBatchToolCall,
         PostToolUseFailureHookInput,
         PostToolUseFailureHookSpecificOutput,
         PostToolUseHookInput,
@@ -332,9 +344,6 @@ declare namespace coreTypes {
         PreCompactHookInput,
         PreToolUseHookInput,
         PreToolUseHookSpecificOutput,
-        PromptRequestOption,
-        PromptRequest,
-        PromptResponse,
         RewindFilesResult,
         SDKAPIRetryMessage,
         SDKAssistantMessageError,
@@ -351,9 +360,11 @@ declare namespace coreTypes {
         SDKMemoryRecallMessage,
         SDKMessageOrigin,
         SDKMessage,
+        SDKMirrorErrorMessage,
         SDKNotificationMessage,
         SDKPartialAssistantMessage,
         SDKPermissionDenial,
+        SDKPermissionDeniedMessage,
         SDKPluginInstallMessage,
         SDKPromptSuggestionMessage,
         SDKRateLimitEvent,
@@ -398,6 +409,8 @@ declare namespace coreTypes {
         ThinkingConfig,
         ThinkingDisabled,
         ThinkingEnabled,
+        UserPromptExpansionHookInput,
+        UserPromptExpansionHookSpecificOutput,
         UserPromptSubmitHookInput,
         UserPromptSubmitHookSpecificOutput,
         WorktreeCreateHookInput,
@@ -418,6 +431,14 @@ declare type CreateSdkMcpServerOptions = {
     name: string;
     version?: string;
     tools?: Array<SdkMcpToolDefinition<any>>;
+    /**
+     * When true, all tools from this server are always included in the prompt
+     * and never deferred behind tool search. Applied via
+     * `_meta['anthropic/alwaysLoad']` on each tool. Equivalent to
+     * `defer_loading: false` on the API. Per-tool `tool({ alwaysLoad })` still
+     * works and is OR'd with this.
+     */
+    alwaysLoad?: boolean;
 };
 
 export declare type CwdChangedHookInput = BaseHookInput & {
@@ -430,6 +451,22 @@ export declare type CwdChangedHookSpecificOutput = {
     hookEventName: 'CwdChanged';
     watchPaths?: string[];
 };
+
+/**
+ * Delete a session.
+ *
+ * With `sessionStore`: calls `sessionStore.delete()` if implemented; no-op
+ * otherwise (per the SessionStore contract — appropriate for WORM/append-only
+ * backends).
+ *
+ * Without `sessionStore`: removes `{sessionId}.jsonl` and the `{sessionId}/`
+ * subagent-transcript subdirectory from the local projects dir. Throws if the
+ * session is not found.
+ *
+ * @param sessionId - UUID of the session
+ * @param options - `{ dir?, sessionStore? }`
+ */
+export declare function deleteSession(_sessionId: string, _options?: SessionMutationOptions): Promise<void>;
 
 /**
  * Effort level for controlling how much thinking/reasoning Claude applies.
@@ -536,6 +573,39 @@ export declare type FileChangedHookSpecificOutput = {
 };
 
 /**
+ * Apply the same trust-tier filter the CLI applies before honoring escalating
+ * permission modes from settings: if `permissions.defaultMode` is escalating
+ * (`bypassPermissions`/`auto`/`acceptEdits`) AND was set by a repo-committed
+ * tier (`project`), drop it from the returned `effective`.
+ *
+ * @alpha
+ */
+export declare function filterEscalatingDefaultMode(_resolved: ResolvedSettings): Settings;
+
+/**
+ * Fold a batch of appended entries into the running summary for `key`.
+ *
+ * Stores call this from inside `append()` to keep a {@link SessionSummaryEntry}
+ * sidecar up to date without re-reading the transcript. `prev` is the previous
+ * summary for the same key (or `undefined` for the first append). The returned
+ * `data` blob is opaque to the store — persist it verbatim.
+ *
+ * Set-once fields (`isSidechain`, `createdAt`, `cwd`, `firstPrompt`) freeze on
+ * first sight; last-wins fields (`customTitle`, `aiTitle`, `lastPrompt`,
+ * `summaryHint`, `gitBranch`, `tag`) overwrite on every appearance.
+ *
+ * `mtime` is NOT derived from entry timestamps — the adapter MUST stamp it at
+ * persist time using the same clock it uses for `listSessions().mtime`. Pass
+ * it via `options.mtime`; when omitted, the previous summary's `mtime` is
+ * preserved (use this only when re-folding the same sidecar without a new
+ * persist). See {@link SessionSummaryEntry.mtime} for the contract.
+ * @alpha
+ */
+export declare function foldSessionSummary(prev: SessionSummaryEntry | undefined, key: SessionKey, entries: SessionStoreEntry[], options?: {
+    mtime?: number;
+}): SessionSummaryEntry;
+
+/**
  * Fork a session into a new branch with fresh UUIDs.
  *
  * Copies transcript messages from the source session into a new session file,
@@ -589,7 +659,12 @@ export declare type GetSessionInfoOptions = {
      * When omitted, all project directories are searched for the session file.
      */
     dir?: string;
-
+    /**
+     * When provided, load session info from this store instead of the local
+     * filesystem.
+     * @alpha
+     */
+    sessionStore?: SessionStore;
 };
 
 /**
@@ -621,7 +696,12 @@ export declare type GetSessionMessagesOptions = {
      * Defaults to false for backwards compatibility.
      */
     includeSystemMessages?: boolean;
-
+    /**
+     * When provided, load session messages from this store instead of the
+     * local filesystem.
+     * @alpha
+     */
+    sessionStore?: SessionStore;
 };
 
 /**
@@ -647,10 +727,15 @@ export declare type GetSubagentMessagesOptions = {
     limit?: number;
     /** Number of messages to skip from the start. */
     offset?: number;
-
+    /**
+     * When provided, load subagent messages from this store instead of the
+     * local filesystem.
+     * @alpha
+     */
+    sessionStore?: SessionStore;
 };
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "PermissionDenied", "Setup", "TeammateIdle", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded", "CwdChanged", "FileChanged"];
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "Notification", "UserPromptSubmit", "UserPromptExpansion", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "PermissionDenied", "Setup", "TeammateIdle", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded", "CwdChanged", "FileChanged"];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -669,13 +754,52 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'Notification' | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
 export declare type HookPermissionDecision = 'allow' | 'deny' | 'ask' | 'defer';
+
+/**
+ * Copy a local JSONL session into a SessionStore.
+ *
+ * Reads the session file (and optionally subagent transcripts) from disk
+ * and calls `store.append()` for each. Entries are appended in batches of
+ * `batchSize` to avoid backend payload limits; the store's `append()` is
+ * called multiple times per session. Useful for migrating existing local
+ * sessions to a remote backend.
+ *
+ * @alpha
+ * @param sessionId - UUID of the local session to import
+ * @param store - Destination SessionStore
+ * @param options - `{ dir?, includeSubagents?, batchSize? }`
+ */
+export declare function importSessionToStore(_sessionId: string, _store: SessionStore, _options?: ImportSessionToStoreOptions): Promise<void>;
+
+/**
+ * Options for importing a local JSONL session into a SessionStore.
+ * @alpha
+ */
+export declare type ImportSessionToStoreOptions = {
+    /**
+     * Project directory path (same semantics as `listSessions({ dir })`).
+     * When omitted, all project directories are searched for the session file
+     * and the destination projectKey is derived from the resolved cwd.
+     */
+    dir?: string;
+    /**
+     * If true, also import subagent transcripts. Default: true.
+     */
+    includeSubagents?: boolean;
+    /**
+     * Maximum entries per `store.append()` call. Entries are appended in
+     * batches of this size to avoid backend payload limits; the store's
+     * `append()` is called multiple times per session. Default: 500.
+     */
+    batchSize?: number;
+};
 
 /**
  * A user message typed on claude.ai, extracted from the bridge WS.
@@ -691,6 +815,38 @@ export declare type InferShape<T extends AnyZodRawShape> = {
         _output: infer O;
     } ? O : never;
 } & {};
+
+/**
+ * In-memory SessionStore implementation for testing and development.
+ * Stores entries in a Map keyed by a composite string.
+ * Not suitable for production -- data is lost when the process exits.
+ * @alpha
+ */
+export declare class InMemorySessionStore implements SessionStore {
+    private store;
+    private mtimes;
+    private summaries;
+    private lastMtime;
+    private keyToString;
+    append(key: SessionKey, entries: SessionStoreEntry[]): Promise<void>;
+    load(key: SessionKey): Promise<SessionStoreEntry[] | null>;
+    listSessions(projectKey: string): Promise<Array<{
+        sessionId: string;
+        mtime: number;
+    }>>;
+    listSessionSummaries(projectKey: string): Promise<SessionSummaryEntry[]>;
+    delete(key: SessionKey): Promise<void>;
+    listSubkeys(key: {
+        projectKey: string;
+        sessionId: string;
+    }): Promise<string[]>;
+    /** Test helper -- get all entries for a key */
+    getEntries(key: SessionKey): SessionStoreEntry[];
+    /** Test helper -- number of stored sessions (main transcripts only) */
+    get size(): number;
+    /** Test helper -- clear all stored data */
+    clear(): void;
+}
 
 export declare type InstructionsLoadedHookInput = BaseHookInput & {
     hook_event_name: 'InstructionsLoaded';
@@ -752,7 +908,12 @@ export declare type ListSessionsOptions = {
      * Only applies when reading from the local filesystem.
      */
     includeWorktrees?: boolean;
-
+    /**
+     * When provided, list sessions from this store instead of the local
+     * filesystem. Requires `store.listSessions` to be defined.
+     * @alpha
+     */
+    sessionStore?: SessionStore;
 };
 
 /**
@@ -773,7 +934,12 @@ export declare function listSubagents(_sessionId: string, _options?: ListSubagen
 export declare type ListSubagentsOptions = {
     /** Project directory to find the session in. If omitted, searches all projects. */
     dir?: string;
-
+    /**
+     * When provided, list subagents from this store instead of the local
+     * filesystem. Requires `store.listSubkeys` to be defined.
+     * @alpha
+     */
+    sessionStore?: SessionStore;
 };
 
 export declare type McpClaudeAIProxyServerConfig = {
@@ -787,6 +953,10 @@ export declare type McpHttpServerConfig = {
     url: string;
     headers?: Record<string, string>;
     tools?: McpServerToolPolicy[];
+    /**
+     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even when MCP_CONNECTION_NONBLOCKING=1, since the tools must be present when the turn-1 prompt is built.
+     */
+    alwaysLoad?: boolean;
 };
 
 export declare type McpSdkServerConfig = {
@@ -888,6 +1058,10 @@ export declare type McpSSEServerConfig = {
     url: string;
     headers?: Record<string, string>;
     tools?: McpServerToolPolicy[];
+    /**
+     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even when MCP_CONNECTION_NONBLOCKING=1, since the tools must be present when the turn-1 prompt is built.
+     */
+    alwaysLoad?: boolean;
 };
 
 export declare type McpStdioServerConfig = {
@@ -895,6 +1069,10 @@ export declare type McpStdioServerConfig = {
     command: string;
     args?: string[];
     env?: Record<string, string>;
+    /**
+     * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even when MCP_CONNECTION_NONBLOCKING=1, since the tools must be present when the turn-1 prompt is built.
+     */
+    alwaysLoad?: boolean;
 };
 
 /**
@@ -1024,6 +1202,8 @@ export declare type Options = {
      * List of tool names that are auto-allowed without prompting for permission.
      * These tools will execute automatically without asking the user for approval.
      * To restrict which tools are available, use the `tools` option instead.
+     *
+     * Note: passing `'Skill'` here is deprecated — use the `skills` option instead.
      */
     allowedTools?: string[];
     /**
@@ -1058,11 +1238,7 @@ export declare type Options = {
     };
     /**
      * Environment variables to pass to the Claude Code process.
-     * Merged on top of `process.env` — entries here override the parent
-     * process's variables, and anything not set here is inherited.
-     * Set a key to `undefined` to remove an inherited variable. Note:
-     * `GITHUB_ACTIONS` and a few SDK-managed vars are stripped and are
-     * not inherited unless set explicitly here.
+     * Defaults to `process.env`.
      *
      * SDK consumers can identify their app/library to include in the User-Agent header by setting:
      * - `CLAUDE_AGENT_SDK_CLIENT_APP` - Your app/library identifier (e.g., "my-app/1.0.0", "my-library/2.1")
@@ -1169,8 +1345,36 @@ export declare type Options = {
      * @default true
      */
     persistSession?: boolean;
-
-
+    /**
+     * Mirror session transcripts to an external store. When set, the subprocess
+     * still writes to CLAUDE_CONFIG_DIR (set it to /tmp for ephemeral local copy)
+     * AND emits entries to this adapter via dual-write.
+     *
+     * Cannot be used with persistSession: false -- local writes are required
+     * for the mirror to function (the mirror hook fires after local write success).
+     *
+     * Default: undefined (no mirroring, today's behavior).
+     * @alpha
+     */
+    sessionStore?: SessionStore;
+    /**
+     * Controls how aggressively transcript entries are flushed to
+     * {@link Options.sessionStore}. Defaults to `'batched'`. Ignored when
+     * `sessionStore` is not set.
+     *
+     * @alpha
+     */
+    sessionStoreFlush?: SessionStoreFlush;
+    /**
+     * Timeout for each `sessionStore.load()` / `sessionStore.listSubkeys()` call
+     * during resume materialization. If the adapter doesn't settle within this
+     * window the query fails with a clear error instead of hanging the iterator
+     * forever (the deferred-spawn path otherwise has no upper bound).
+     *
+     * @default 60_000
+     * @alpha
+     */
+    loadTimeoutMs?: number;
     /**
      * Include hook lifecycle events in the output stream.
      * When true, `hook_started`, `hook_progress`, and `hook_response` system
@@ -1186,6 +1390,13 @@ export declare type Options = {
      * When true, `SDKPartialAssistantMessage` events will be emitted during streaming.
      */
     includePartialMessages?: boolean;
+    /**
+     * Forward subagent text and thinking blocks as assistant/user messages with
+     * `parent_tool_use_id` set. By default, only tool_use/tool_result blocks from
+     * subagents are emitted (enough for a heartbeat counter). When true, the full
+     * subagent conversation is forwarded so consumers can render a nested transcript.
+     */
+    forwardSubagentText?: boolean;
     /**
      * Controls Claude's thinking/reasoning behavior.
      *
@@ -1207,7 +1418,7 @@ export declare type Options = {
      * - `'medium'` — Moderate thinking
      * - `'high'` — Deep reasoning (default)
      * - `'xhigh'` — Deeper than high (Opus 4.7 only)
-     * - `'max'` — Maximum effort (Opus 4.6/4.7 only)
+     * - `'max'` — Maximum effort (Opus 4.6/4.7, Sonnet 4.6)
      *
      * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
      */
@@ -1287,6 +1498,13 @@ export declare type Options = {
      * - `'dontAsk'` - Don't prompt for permissions, deny if not pre-approved
      */
     permissionMode?: PermissionMode;
+    /**
+     * Custom workflow instructions for plan mode. When `permissionMode` is
+     * `'plan'`, this string replaces the default code-implementation workflow
+     * body in the plan-mode system reminder. The CLI still wraps it with the
+     * read-only enforcement preamble and the ExitPlanMode protocol footer.
+     */
+    planModeInstructions?: string;
     /**
      * Must be set to `true` when using `permissionMode: 'bypassPermissions'`.
      * This is a safety measure to ensure intentional bypassing of permissions.
@@ -1415,15 +1633,63 @@ export declare type Options = {
      */
     settings?: string | Settings;
     /**
+     * Policy-tier settings supplied by the spawning parent process. When an
+     * IT-controlled managed-settings tier (server / MDM / managed-settings.json)
+     * exists on the user's machine, these are **dropped by default** — they only
+     * layer in if that admin opts in via `parentSettingsBehavior: 'merge'` in
+     * their managed settings. Even when opted in, the value is filtered
+     * restrictive-only: permissive arrays (`permissions.allow`,
+     * `additionalDirectories`, `allowedMcpServers`, …) that would widen an
+     * existing admin lock are silently dropped. With no admin tier present,
+     * these apply as the sole policy tier (still filtered restrictive-only —
+     * non-allowlisted keys are dropped regardless).
+     *
+     * Intended for embedding applications (e.g. desktop apps) that derive
+     * lockdown settings from their own enterprise configuration and need to
+     * enforce them on the spawned subprocess without writing root-owned files.
+     *
+     * @example
+     * ```typescript
+     * managedSettings: {
+     *   sandbox: { network: { allowManagedDomainsOnly: true } }
+     * }
+     * ```
+     */
+    managedSettings?: Settings;
+    /**
      * Control which filesystem settings to load.
      * - `'user'` - Global user settings (`~/.claude/settings.json`)
      * - `'project'` - Project settings (`.claude/settings.json`)
      * - `'local'` - Local settings (`.claude/settings.local.json`)
      *
-     * When omitted or empty, no filesystem settings are loaded (SDK isolation mode).
+     * When omitted, all sources are loaded (matches CLI defaults).
+     * Pass `[]` to disable filesystem settings (SDK isolation mode).
      * Must include `'project'` to load CLAUDE.md files.
      */
     settingSources?: SettingSource[];
+    /**
+     * Skills to enable for the main session. This is the single place to turn
+     * skills on; you do not need to add `'Skill'` to `allowedTools` yourself
+     * when using this option.
+     *
+     * - omitted (default): no SDK auto-configuration. The CLI's own defaults
+     *   still apply, so this is **not** "skills off."
+     * - `'all'`: enable every discovered skill.
+     * - `string[]`: enable only the listed skills. Names match the SKILL.md
+     *   `name` / directory name, or `plugin:skill` for plugin-qualified skills.
+     *
+     * This is a context filter, not a sandbox: unlisted skills are hidden from
+     * the model's listing and rejected by the Skill tool, but their files
+     * remain on disk and are reachable via Read/Bash. Do not store secrets in
+     * skill files.
+     *
+     * @example
+     * ```typescript
+     * skills: 'all'
+     * skills: ['pdf', 'docx']
+     * ```
+     */
+    skills?: string[] | 'all';
     /**
      * Enable debug mode for the Claude Code process.
      * When true, enables verbose debug logging (equivalent to `--debug` CLI flag).
@@ -1510,6 +1776,16 @@ export declare type Options = {
         append?: string;
         excludeDynamicSections?: boolean;
     };
+    /**
+     * Custom title for a new session. When provided, the session uses this title
+     * instead of auto-generating one from the first user message.
+     *
+     * When resuming via `resume` or `continue`, the resumed session's persisted
+     * title takes precedence — use `renameSession()` to retitle an existing
+     * session.
+     */
+    title?: string;
+
 
     /**
      * Custom function to spawn the Claude Code process.
@@ -1629,6 +1905,12 @@ export declare type PermissionUpdate = {
 
 export declare type PermissionUpdateDestination = 'userSettings' | 'projectSettings' | 'localSettings' | 'session' | 'cliArg';
 
+/**
+ * Which policy sub-source supplied a `'managed'` value.
+ * @alpha
+ */
+export declare type PolicySettingsOrigin = 'helper' | 'remote' | 'plist' | 'hklm' | 'file' | 'parent' | 'hkcu';
+
 export declare type PostCompactHookInput = BaseHookInput & {
     hook_event_name: 'PostCompact';
     trigger: 'manual' | 'auto';
@@ -1638,6 +1920,26 @@ export declare type PostCompactHookInput = BaseHookInput & {
     compact_summary: string;
 };
 
+/**
+ * Hook input for the PostToolBatch event. Fired once after every tool call in a batch has resolved, before the next model request. PostToolUse fires per-tool and may run concurrently for parallel tool calls; PostToolBatch fires exactly once with the full batch.
+ */
+export declare type PostToolBatchHookInput = BaseHookInput & {
+    hook_event_name: 'PostToolBatch';
+    tool_calls: PostToolBatchToolCall[];
+};
+
+export declare type PostToolBatchHookSpecificOutput = {
+    hookEventName: 'PostToolBatch';
+    additionalContext?: string;
+};
+
+export declare type PostToolBatchToolCall = {
+    tool_name: string;
+    tool_input: unknown;
+    tool_use_id: string;
+    tool_response?: unknown;
+};
+
 export declare type PostToolUseFailureHookInput = BaseHookInput & {
     hook_event_name: 'PostToolUseFailure';
     tool_name: string;
@@ -1645,6 +1947,10 @@ export declare type PostToolUseFailureHookInput = BaseHookInput & {
     tool_use_id: string;
     error: string;
     is_interrupt?: boolean;
+    /**
+     * Tool execution time in milliseconds. Excludes permission-prompt and hook time.
+     */
+    duration_ms?: number;
 };
 
 export declare type PostToolUseFailureHookSpecificOutput = {
@@ -1658,11 +1964,22 @@ export declare type PostToolUseHookInput = BaseHookInput & {
     tool_input: unknown;
     tool_response: unknown;
     tool_use_id: string;
+    /**
+     * Tool execution time in milliseconds. Excludes permission-prompt and hook time.
+     */
+    duration_ms?: number;
 };
 
 export declare type PostToolUseHookSpecificOutput = {
     hookEventName: 'PostToolUse';
     additionalContext?: string;
+    /**
+     * Replaces the tool output before it is sent to the model
+     */
+    updatedToolOutput?: unknown;
+    /**
+     * Replaces the output for MCP tools only. Prefer updatedToolOutput, which works for all tools
+     */
     updatedMCPToolOutput?: unknown;
 };
 
@@ -1687,45 +2004,16 @@ export declare type PreToolUseHookSpecificOutput = {
     additionalContext?: string;
 };
 
-export declare type PromptRequest = {
-    /**
-     * Request ID. Presence of this key marks the line as a prompt request.
-     */
-    prompt: string;
-    /**
-     * The prompt message to display to the user
-     */
-    message: string;
-    /**
-     * Available options for the user to choose from
-     */
-    options: PromptRequestOption[];
-};
-
-export declare type PromptRequestOption = {
-    /**
-     * Unique key for this option, returned in the response
-     */
-    key: string;
-    /**
-     * Display text for this option
-     */
-    label: string;
-    /**
-     * Optional description shown below the label
-     */
-    description?: string;
-};
-
-export declare type PromptResponse = {
-    /**
-     * The request ID from the corresponding prompt request
-     */
-    prompt_response: string;
-    /**
-     * The key of the selected option
-     */
-    selected: string;
+/**
+ * Per-key provenance entry.
+ * @alpha
+ */
+export declare type ProvenanceEntry = {
+    source: ResolvedSettingSource;
+    /** Absolute path to the settings file, for filesystem-backed sources. */
+    path?: string;
+    /** Which policy sub-source supplied the value, when `source === 'managed'`. */
+    policyOrigin?: PolicySettingsOrigin;
 };
 
 /**
@@ -1776,17 +2064,25 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
     setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>;
     /**
      * Merge the provided settings into the flag settings layer, dynamically
-     * updating the active configuration. Top-level keys are shallow-merged
-     * across successive calls — a second call with `{permissions: {...}}`
-     * replaces the entire `permissions` object from a prior call. The resulting
-     * flag settings are then deep-merged with file-based settings at read time.
+     * updating the active configuration. Equivalent to the inline `settings`
+     * option of `query()`, but applies mid-session. Flag settings sit above
+     * user/project/local settings and below managed policy settings in the
+     * precedence order.
      *
-     * Equivalent to passing an object to the `settings` option of `query()`,
-     * but applies mid-session. Only available in streaming input mode.
+     * Successive calls shallow-merge top-level keys — a second call with
+     * `{permissions: {...}}` replaces the entire `permissions` object from a
+     * prior call. Pass `null` for a key to clear it from the flag layer and
+     * fall back to lower-precedence sources (`undefined` is dropped by JSON
+     * serialization and has no effect).
      *
-     * @param settings - A partial settings object to merge into the flag settings
+     * Only available in streaming input mode.
+     *
+     * @param settings - A partial settings object to merge into the flag settings.
+     * Each top-level key also accepts `null` to clear it from the flag layer.
      */
-    applyFlagSettings(settings: Settings): Promise<void>;
+    applyFlagSettings(settings: {
+        [K in keyof Settings]?: Settings[K] | null;
+    }): Promise<void>;
     /**
      * Get the full initialization result, including supported commands, models,
      * account info, and output style configuration.
@@ -1826,6 +2122,20 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     getContextUsage(): Promise<SDKControlGetContextUsageResponse>;
     /**
+     * Read a file from the session's filesystem for the remote sidebar
+     * viewer. Path is resolved against cwd and gated by the same
+     * read-permission rules as the Read tool. Returns null on permission
+     * denial, missing file, or transport error.
+     *
+     * @param path - File path (relative to cwd or absolute)
+     * @param options - Optional maxBytes cap (default 1MB) and encoding
+     *   (default utf-8; pass 'base64' for binary files like images)
+     */
+    readFile(path: string, options?: {
+        maxBytes?: number;
+        encoding?: 'utf-8' | 'base64';
+    }): Promise<SDKControlReadFileResponse | null>;
+    /**
      * Reload plugins from disk and return the refreshed commands, agents,
      * plugins, and MCP server status.
      *
@@ -1860,6 +2170,8 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @param mtime - File mtime (floored ms) at the time of the observed Read
      */
     seedReadState(path: string, mtime: number): Promise<void>;
+
+
 
 
 
@@ -1914,6 +2226,19 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     stopTask(taskId: string): Promise<void>;
     /**
+     * Background in-flight foreground tasks (Bash commands and subagents).
+     * With `toolUseId`, targets the single task started by that tool_use
+     * block; without it, backgrounds all foreground tasks — equivalent to
+     * pressing Ctrl+B in the terminal. Each blocking tool call returns
+     * immediately with a "running in the background" tool_result and the
+     * turn continues; the task keeps running and emits a task_notification
+     * when it settles.
+     * @param toolUseId - Optional tool_use block id to target a single task
+     * @returns true when at least one task was backgrounded; false only
+     *   when `toolUseId` was given and it matched no foreground task
+     */
+    backgroundTasks(toolUseId?: string): Promise<boolean>;
+    /**
      * Close the query and terminate the underlying process.
      * This forcefully ends the query, cleaning up all resources including
      * pending requests, MCP transports, and the CLI subprocess.
@@ -1936,6 +2261,96 @@ export declare function query(_params: {
  * @param options - `{ dir?: string }` project path; omit to search all projects
  */
 export declare function renameSession(_sessionId: string, _title: string, _options?: SessionMutationOptions): Promise<void>;
+
+/**
+ * Result of {@link resolveSettings}.
+ * @alpha
+ */
+export declare type ResolvedSettings = {
+    /** Merged settings after applying all enabled sources in precedence order. */
+    effective: Settings;
+    /** For each top-level key in `effective`, which source supplied the value. */
+    provenance: Partial<Record<keyof Settings, ProvenanceEntry>>;
+    /**
+     * Per-source raw settings, low→high precedence. Use this when per-top-level
+     * provenance is too coarse (e.g. checking which tier set a nested key).
+     */
+    sources: Array<{
+        source: ResolvedSettingSource;
+        settings: Settings;
+        path?: string;
+        policyOrigin?: PolicySettingsOrigin;
+    }>;
+};
+
+/**
+ * Source that contributed an effective setting value. Filesystem sources use
+ * the same names as {@link SettingSource}; `'managed'` is the policy tier
+ * (managed-settings.json / `managedSettings` option); `'flag'` is the
+ * `--settings` CLI flag tier.
+ * @alpha
+ */
+export declare type ResolvedSettingSource = SettingSource | 'managed' | 'flag';
+
+/**
+ * Resolve the effective Claude Code settings for the given options using the
+ * same merge engine as the CLI, without spawning the Claude CLI. Useful for
+ * inspecting what configuration a `query()` call would see.
+ *
+ * @remarks
+ * This reports the **raw settings cascade**, not a security decision. Two
+ * caveats:
+ *
+ * - **The policy tier matches CLI startup** (managed-settings.json,
+ *   remote-cached managed settings, MDM via macOS plist / Windows
+ *   HKLM/HKCU, and `managedSettings`) **except** the admin-configured
+ *   `policyHelper` subprocess is not executed. MDM resolution may invoke
+ *   `plutil` (macOS, when an MDM plist exists) or `reg.exe` (Windows/WSL)
+ *   on the first call per process. If your deployment relies on
+ *   policyHelper to inject managed settings, results will differ.
+ * - **`permissions.defaultMode` is reported as-is across all tiers**
+ *   including project. The CLI applies a separate trust filter before
+ *   honoring escalating modes (`bypassPermissions`, `auto`, `acceptEdits`)
+ *   from repo-committed files; pass the result through
+ *   {@link filterEscalatingDefaultMode} before acting on `defaultMode`.
+ *
+ * @alpha
+ */
+export declare function resolveSettings(_opts?: ResolveSettingsOptions): Promise<ResolvedSettings>;
+
+/**
+ * Options for {@link resolveSettings}.
+ * @alpha
+ */
+export declare type ResolveSettingsOptions = {
+    /**
+     * Directory to resolve project/local settings relative to. Defaults to the
+     * current process's working directory.
+     */
+    cwd?: string;
+    /**
+     * Which filesystem settings sources to load. When omitted, all sources are
+     * loaded (matches CLI defaults). Pass `[]` to skip user/project/local
+     * sources — the managed-settings policy tier is still read from disk.
+     */
+    settingSources?: SettingSource[];
+    /**
+     * Restrictive policy-tier settings — equivalent to `Options.managedSettings`
+     * on `query()`. Feeds the lowest-precedence policy sub-source and is
+     * filtered through a restrictive-key allowlist (`allowManaged*Only` locks,
+     * `permissions.deny`/`ask`, sandbox restrictions); non-restrictive keys
+     * such as `model`, `env`, `cleanupPeriodDays` are silently dropped.
+     */
+    managedSettings?: Settings;
+    /**
+     * Server-managed settings payload (the result of fetching
+     * `/api/claude_code/settings`). Feeds the `'remote'` policy sub-source —
+     * same trust level as the on-disk cache it replaces, so non-restrictive
+     * keys flow through unfiltered. Use this when the embedding host has a
+     * fresher result than the CLI's `~/.claude/remote-settings.json` cache.
+     */
+    serverManagedSettings?: Settings;
+};
 
 /**
  * Result of a rewindFiles operation.
@@ -1970,6 +2385,7 @@ export declare type SandboxNetworkConfig = NonNullable<z.infer<ReturnType<typeof
  */
 declare const SandboxNetworkConfigSchema: () => z.ZodOptional<z.ZodObject<{
     allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    deniedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowManagedDomainsOnly: z.ZodOptional<z.ZodBoolean>;
     allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowAllUnixSockets: z.ZodOptional<z.ZodBoolean>;
@@ -1977,6 +2393,10 @@ declare const SandboxNetworkConfigSchema: () => z.ZodOptional<z.ZodObject<{
     allowMachLookup: z.ZodOptional<z.ZodArray<z.ZodString>>;
     httpProxyPort: z.ZodOptional<z.ZodNumber>;
     socksProxyPort: z.ZodOptional<z.ZodNumber>;
+    tlsTerminate: z.ZodOptional<z.ZodObject<{
+        caCertPath: z.ZodOptional<z.ZodString>;
+        caKeyPath: z.ZodOptional<z.ZodString>;
+    }, z.core.$strip>>;
 }, z.core.$strip>>;
 
 export declare type SandboxSettings = z.infer<ReturnType<typeof SandboxSettingsSchema>>;
@@ -1991,6 +2411,7 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
     allowUnsandboxedCommands: z.ZodOptional<z.ZodBoolean>;
     network: z.ZodOptional<z.ZodObject<{
         allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        deniedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
         allowManagedDomainsOnly: z.ZodOptional<z.ZodBoolean>;
         allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
         allowAllUnixSockets: z.ZodOptional<z.ZodBoolean>;
@@ -1998,6 +2419,10 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
         allowMachLookup: z.ZodOptional<z.ZodArray<z.ZodString>>;
         httpProxyPort: z.ZodOptional<z.ZodNumber>;
         socksProxyPort: z.ZodOptional<z.ZodNumber>;
+        tlsTerminate: z.ZodOptional<z.ZodObject<{
+            caCertPath: z.ZodOptional<z.ZodString>;
+            caKeyPath: z.ZodOptional<z.ZodString>;
+        }, z.core.$strip>>;
     }, z.core.$strip>>;
     filesystem: z.ZodOptional<z.ZodObject<{
         allowWrite: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -2014,6 +2439,8 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
         command: z.ZodString;
         args: z.ZodOptional<z.ZodArray<z.ZodString>>;
     }, z.core.$strip>>;
+    bwrapPath: z.ZodCatch<z.ZodOptional<z.ZodPipe<z.ZodTransform<string, unknown>, z.ZodString>>>;
+    socatPath: z.ZodCatch<z.ZodOptional<z.ZodPipe<z.ZodTransform<string, unknown>, z.ZodString>>>;
 }, z.core.$loose>;
 
 /**
@@ -2040,7 +2467,7 @@ export declare type SDKAssistantMessage = {
     session_id: string;
 };
 
-export declare type SDKAssistantMessageError = 'authentication_failed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown' | 'max_output_tokens';
+export declare type SDKAssistantMessageError = 'authentication_failed' | 'oauth_org_not_allowed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown' | 'max_output_tokens';
 
 export declare type SDKAuthStatusMessage = {
     type: 'auth_status';
@@ -2069,6 +2496,13 @@ export declare type SDKCompactBoundaryMessage = {
             anchor_uuid: UUID;
             tail_uuid: UUID;
         };
+        /**
+         * Ordered messagesToKeep UUIDs. Supersedes preserved_segment — readers look up each UUID directly and relink uuids[i] to uuids[i-1] (uuids[0] to anchor_uuid) instead of walking the parentUuid chain. Unset when compaction summarizes everything.
+         */
+        preserved_messages?: {
+            anchor_uuid: UUID;
+            uuids: UUID[];
+        };
     };
     uuid: UUID;
     session_id: string;
@@ -2080,6 +2514,17 @@ export declare type SDKCompactBoundaryMessage = {
 declare type SDKControlApplyFlagSettingsRequest = {
     subtype: 'apply_flag_settings';
     settings: Record<string, unknown>;
+};
+
+/**
+ * Backgrounds in-flight foreground tasks (Bash commands and subagents). With tool_use_id, targets the single task started by that tool_use block; without it, backgrounds all foreground tasks — the control-request equivalent of pressing Ctrl+B in the terminal. Each blocking tool call returns immediately with a "running in the background" tool_result and the turn continues; the task keeps running and emits a task_notification when it settles.
+ */
+declare type SDKControlBackgroundTasksRequest = {
+    subtype: 'background_tasks';
+    /**
+     * When set, backgrounds only the task whose originating tool_use block has this id. When omitted, backgrounds all foreground tasks (Ctrl+B semantics).
+     */
+    tool_use_id?: string;
 };
 
 /**
@@ -2121,6 +2566,21 @@ declare type SDKControlElicitationRequest = {
      * Permission-display subtitle from _meta['anthropic/permissionDisplay'].description. Mirrors can_use_tool.description.
      */
     description?: string;
+};
+
+/**
+ * Requests at-mention file autocomplete suggestions for a partial path prefix. Returns the same fuzzy-matched results the TUI shows.
+ */
+declare type SDKControlFileSuggestionsRequest = {
+    subtype: 'file_suggestions';
+    query: string;
+};
+
+/**
+ * Requests the responder's CLI binary version. Used by /version in --remote mode so the thin client can show both its own and the remote container's version.
+ */
+declare type SDKControlGetBinaryVersionRequest = {
+    subtype: 'get_binary_version';
 };
 
 /**
@@ -2226,6 +2686,13 @@ export declare type SDKControlGetContextUsageResponse = {
 };
 
 /**
+ * Requests the formatted session cost summary (the same text /usage prints in non-interactive mode). Used by the thin-client /usage dialog to show the remote container cost instead of the local $0.00.
+ */
+declare type SDKControlGetSessionCostRequest = {
+    subtype: 'get_session_cost';
+};
+
+/**
  * Returns the effective merged settings and the raw per-source settings.
  */
 declare type SDKControlGetSettingsRequest = {
@@ -2242,14 +2709,28 @@ declare type SDKControlInitializeRequest = {
     jsonSchema?: Record<string, unknown>;
     systemPrompt?: string[];
     appendSystemPrompt?: string;
+    /**
+     * Custom workflow body for the plan-mode system reminder. Replaces the default code-implementation phases; the CLI still wraps it with the read-only enforcement preamble and the ExitPlanMode protocol footer.
+     */
+    planModeInstructions?: string;
 
     /**
      * When true, omit per-user dynamic sections (working directory, auto-memory path) from the cached system prompt and re-inject them as the first user message. Lets cross-user prompt caching hit on a static system prompt prefix. Tradeoff: the model sees this context slightly later in the prompt, so steering on the working directory and memory location is marginally less authoritative. Has no effect when a custom (non-preset) system prompt is in use.
      */
     excludeDynamicSections?: boolean;
     agents?: Record<string, coreTypes.AgentDefinition>;
+    /**
+     * Custom session title. When provided, the session uses this title and skips automatic title generation. Has no effect on the persisted title when resuming an existing session.
+     */
+    title?: string;
+    /**
+     * When provided, only skills whose names match an entry are loaded into the main session system prompt, using the same rules as AgentDefinition.skills: exact name, plugin-qualified name, or ":name" suffix. Omit to load every discovered skill. Applies to the main session only; subagents use AgentDefinition.skills.
+     */
+    skills?: string[];
+
     promptSuggestions?: boolean;
     agentProgressSummaries?: boolean;
+    forwardSubagentText?: boolean;
 };
 
 /**
@@ -2274,6 +2755,18 @@ export declare type SDKControlInitializeResponse = {
  */
 declare type SDKControlInterruptRequest = {
     subtype: 'interrupt';
+};
+
+/**
+ * Invokes an MCP tool via the subprocess MCP client without a model turn. No permission check (control channel is trusted, same as other subtypes). SDK-type MCP servers (config.type === "sdk") are rejected — they are caller-provided, so the caller can invoke them directly without the subprocess round-trip. Result content passes through the same processing as model-turn MCP calls. Session expiry is not retried automatically; callers can mcp_reconnect and retry. UrlElicitationRequired (-32042) tries Elicitation hooks; if no hook resolves, the call errors with the URL in the message — open it out-of-band, then retry mcp_call.
+ */
+declare type SDKControlMcpCallRequest = {
+    subtype: 'mcp_call';
+    /**
+     * Fully-qualified MCP tool name, e.g. mcp__server__tool_name.
+     */
+    tool: string;
+    arguments?: Record<string, unknown>;
 };
 
 /**
@@ -2327,11 +2820,45 @@ declare type SDKControlPermissionRequest = {
     permission_suggestions?: coreTypes.PermissionUpdate[];
     blocked_path?: string;
     decision_reason?: string;
+    /**
+     * Structured discriminator for why auto-mode escalated. Lets SDK hosts make policy (e.g. auto-deny safetyCheck) without parsing decision_reason text. For compound bash commands this is "subcommandResults" even when a safetyCheck is nested inside — check classifier_approvable for that case.
+     */
+    decision_reason_type?: 'rule' | 'mode' | 'subcommandResults' | 'permissionPromptTool' | 'hook' | 'asyncAgent' | 'sandboxOverride' | 'workingDir' | 'safetyCheck' | 'classifier' | 'other';
+    /**
+     * Set when a safetyCheck is present anywhere in the decision reason (including nested inside subcommandResults for compound bash). false = at least one safety check requires manual approval (e.g. Windows path bypass, dangerous rm); true = all safety checks MAY be classifier-approved (e.g. sensitive-file paths). Absent when no safetyCheck is involved.
+     */
+    classifier_approvable?: boolean;
     title?: string;
     display_name?: string;
     tool_use_id: string;
     agent_id?: string;
     description?: string;
+};
+
+/**
+ * Read a file from the session filesystem for the remote sidebar viewer. Path is resolved against cwd and gated by the same read-permission rules as the Read tool.
+ */
+declare type SDKControlReadFileRequest = {
+    subtype: 'read_file';
+    path: string;
+    max_bytes?: number;
+    /**
+     * How to encode the bytes in `contents`. Defaults to utf-8 (lossy for binary); pass 'base64' to read images.
+     */
+    encoding?: 'utf-8' | 'base64';
+};
+
+/**
+ * File contents for the remote sidebar viewer.
+ */
+export declare type SDKControlReadFileResponse = {
+    contents: string;
+    absPath: string;
+    truncated?: boolean;
+    /**
+     * Set when the request asked for base64. Absent means utf-8 — including when an older CLI ignored the request's encoding field.
+     */
+    encoding?: 'base64';
 };
 
 /**
@@ -2370,7 +2897,7 @@ export declare type SDKControlRequest = {
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlReloadPluginsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlUltrareviewLaunchRequest | SDKControlOAuthTokenRefreshRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlReloadPluginsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlUltrareviewLaunchRequest | SDKControlMessageRatedRequest | SDKControlOAuthTokenRefreshRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest | SDKControlSubmitFeedbackRequest;
 
 /**
  * Requests the SDK consumer to render a tool-driven blocking dialog and return the user choice. Used by tools that previously rendered Ink JSX via setToolJSX with an onDone callback.
@@ -2409,6 +2936,14 @@ declare type SDKControlSeedReadStateRequest = {
     subtype: 'seed_read_state';
     path: string;
     mtime: number;
+};
+
+/**
+ * Sets the session accent color. Accepts an agent color name or "default" to reset.
+ */
+declare type SDKControlSetColorRequest = {
+    subtype: 'set_color';
+    color: string;
 };
 
 /**
@@ -2546,7 +3081,7 @@ declare type SDKKeepAliveMessage = {
 };
 
 /**
- * Output from a local slash command (e.g. /voice, /cost). Displayed as assistant-style text in the transcript.
+ * Output from a local slash command (e.g. /voice, /usage). Displayed as assistant-style text in the transcript.
  */
 export declare type SDKLocalCommandOutputMessage = {
     type: 'system';
@@ -2595,7 +3130,7 @@ export declare type SDKMemoryRecallMessage = {
     session_id: string;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKSessionStateChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKSessionStateChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPermissionDeniedMessage | SDKPromptSuggestionMessage | SDKMirrorErrorMessage;
 
 /**
  * Provenance of a user-role message (peer session, team lead, channel). Absent or `human` means keyboard input from the user.
@@ -2613,6 +3148,22 @@ export declare type SDKMessageOrigin = {
     kind: 'task-notification';
 } | {
     kind: 'coordinator';
+};
+
+/**
+ * Emitted when SessionStore.append() rejects or times out for a transcript-mirror batch after bounded retry (3 attempts with short backoff; timeouts are not retried). The batch is then dropped; this surfaces the failure so consumers are not silent on data loss.
+ */
+export declare type SDKMirrorErrorMessage = {
+    type: 'system';
+    subtype: 'mirror_error';
+    error: string;
+    key: {
+        projectKey: string;
+        sessionId: string;
+        subpath?: string;
+    };
+    uuid: UUID;
+    session_id: string;
 };
 
 /**
@@ -2643,6 +3194,34 @@ export declare type SDKPermissionDenial = {
     tool_name: string;
     tool_use_id: string;
     tool_input: Record<string, unknown>;
+};
+
+/**
+ * Emitted when a tool call is auto-denied without an interactive permission prompt (e.g. auto-mode classifier, dontAsk mode, headless-agent auto-deny, or a deny rule). The 'ask' path surfaces via a can_use_tool control_request; this event covers the 'deny' short-circuit in canUseTool so SDK hosts can render the denial instead of only seeing an is_error tool_result. PreToolUse hook denies bypass canUseTool and are not covered here.
+ */
+export declare type SDKPermissionDeniedMessage = {
+    type: 'system';
+    subtype: 'permission_denied';
+    tool_name: string;
+    tool_use_id: string;
+    /**
+     * Subagent ID when the denied tool call originated inside a subagent. Mirrors can_use_tool for host-side routing.
+     */
+    agent_id?: string;
+    /**
+     * Discriminator from PermissionDecisionReason (e.g. 'classifier', 'asyncAgent', 'mode', 'rule').
+     */
+    decision_reason_type?: string;
+    /**
+     * Human-readable reason from the deciding component, when available.
+     */
+    decision_reason?: string;
+    /**
+     * The rejection message returned to the model in the tool_result.
+     */
+    message: string;
+    uuid: UUID;
+    session_id: string;
 };
 
 /**
@@ -2705,7 +3284,7 @@ export declare type SDKRateLimitInfo = {
     utilization?: number;
     overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
     overageResetsAt?: number;
-    overageDisabledReason?: 'overage_not_provisioned' | 'org_level_disabled' | 'org_level_disabled_until' | 'out_of_credits' | 'seat_tier_level_disabled' | 'member_level_disabled' | 'seat_tier_zero_credit_limit' | 'group_zero_credit_limit' | 'member_zero_credit_limit' | 'org_service_level_disabled' | 'org_service_zero_credit_limit' | 'no_limits_configured' | 'unknown';
+    overageDisabledReason?: 'overage_not_provisioned' | 'org_level_disabled' | 'org_level_disabled_until' | 'out_of_credits' | 'seat_tier_level_disabled' | 'member_level_disabled' | 'seat_tier_zero_credit_limit' | 'group_zero_credit_limit' | 'member_zero_credit_limit' | 'org_service_level_disabled' | 'no_limits_configured' | 'fetch_error' | 'unknown';
     isUsingOverage?: boolean;
     surpassedThreshold?: number;
 };
@@ -2725,6 +3304,7 @@ export declare type SDKResultError = {
     errors: string[];
     terminal_reason?: TerminalReason;
     fast_mode_state?: FastModeState;
+    origin?: SDKMessageOrigin;
     uuid: UUID;
     session_id: string;
 };
@@ -2749,6 +3329,7 @@ export declare type SDKResultSuccess = {
     deferred_tool_use?: SDKDeferredToolUse;
     terminal_reason?: TerminalReason;
     fast_mode_state?: FastModeState;
+    origin?: SDKMessageOrigin;
     uuid: UUID;
     session_id: string;
 };
@@ -2757,6 +3338,7 @@ export declare type SDKResultSuccess = {
  * V2 API - UNSTABLE
  * Session interface for multi-turn conversations.
  * Has methods, so not serializable.
+ * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
  * @alpha
  */
 export declare interface SDKSession {
@@ -2825,6 +3407,7 @@ export declare type SDKSessionInfo = {
 /**
  * V2 API - UNSTABLE
  * Options for creating a session.
+ * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
  * @alpha
  */
 export declare type SDKSessionOptions = {
@@ -2838,11 +3421,7 @@ export declare type SDKSessionOptions = {
     executableArgs?: string[];
     /**
      * Environment variables to pass to the Claude Code process.
-     * Merged on top of `process.env` — entries here override the parent
-     * process's variables, and anything not set here is inherited.
-     * Set a key to `undefined` to remove an inherited variable. Note:
-     * `GITHUB_ACTIONS` and a few SDK-managed vars are stripped and are
-     * not inherited unless set explicitly here.
+     * Defaults to `process.env`.
      *
      * SDK consumers can identify their app/library to include in the User-Agent header by setting:
      * - `CLAUDE_AGENT_SDK_CLIENT_APP` - Your app/library identifier (e.g., "my-app/1.0.0", "my-library/2.1")
@@ -2857,7 +3436,9 @@ export declare type SDKSessionOptions = {
     cwd?: string;
     /**
      * Which settings sources to load (CLAUDE.md, `.claude/settings.json`).
-     * Defaults to `[]` — no project/user settings are loaded unless specified.
+     * Defaults to `[]`: no project/user settings are loaded unless specified.
+     * Note that `query()` has the opposite default and loads all sources when
+     * this is omitted.
      */
     settingSources?: SettingSource[];
     /**
@@ -2893,6 +3474,13 @@ export declare type SDKSessionOptions = {
      * - `'dontAsk'` - Don't prompt for permissions, deny if not pre-approved
      */
     permissionMode?: PermissionMode;
+    /**
+     * Custom workflow instructions for plan mode. When `permissionMode` is
+     * `'plan'`, this string replaces the default code-implementation workflow
+     * body in the plan-mode system reminder. The CLI still wraps it with the
+     * read-only enforcement preamble and the ExitPlanMode protocol footer.
+     */
+    planModeInstructions?: string;
 };
 
 /**
@@ -2964,7 +3552,9 @@ export declare type SDKSystemMessage = {
 
     }[];
 
+
     fast_mode_state?: FastModeState;
+
 
     uuid: UUID;
     session_id: string;
@@ -3031,7 +3621,7 @@ export declare type SDKTaskUpdatedMessage = {
     subtype: 'task_updated';
     task_id: string;
     /**
-     * Wire-safe subset of TaskState fields that changed. Excludes abortController, unregisterCleanup, messages, result. Clients merge into their local task map.
+     * Wire-safe subset of TaskState fields that changed. Excludes abortController, messages, result. Clients merge into their local task map.
      */
     patch: {
         status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed';
@@ -3072,6 +3662,7 @@ export declare type SDKUserMessage = {
     tool_use_result?: unknown;
     priority?: 'now' | 'next' | 'later';
     origin?: SDKMessageOrigin;
+
     /**
      * When false, the message is appended to the transcript without triggering an assistant turn. It will be merged into the next user message that does query.
      */
@@ -3092,6 +3683,7 @@ export declare type SDKUserMessageReplay = {
     tool_use_result?: unknown;
     priority?: 'now' | 'next' | 'later';
     origin?: SDKMessageOrigin;
+
     /**
      * When false, the message is appended to the transcript without triggering an assistant turn. It will be merged into the next user message that does query.
      */
@@ -3109,6 +3701,25 @@ export declare type SDKUserMessageReplay = {
 export declare type SessionEndHookInput = BaseHookInput & {
     hook_event_name: 'SessionEnd';
     reason: ExitReason;
+};
+
+/**
+ * Identifies a session transcript or subagent transcript in the store.
+ * Main transcripts have no subpath; subagent transcripts include a subpath
+ * like 'subagents/agent-{id}' that mirrors the on-disk directory structure.
+ * @alpha
+ */
+export declare type SessionKey = {
+    /** Caller-defined scope. Default: sanitized cwd. Multi-tenant deployments
+     *  should set this to a tenant ID or project name. Paths longer than 200
+     *  characters are truncated and suffixed with a portable djb2 hash so the
+     *  same path yields the same key under both Bun and Node.js. */
+    projectKey: string;
+    sessionId: string;
+    /** Undefined = main transcript. Set for subagent files.
+     *  Empty string is invalid — omit the field for the main transcript.
+     *  Opaque to the adapter — just use it as a storage key suffix. */
+    subpath?: string;
 };
 
 /**
@@ -3133,7 +3744,12 @@ export declare type SessionMutationOptions = {
      * When omitted, all project directories are searched for the session file.
      */
     dir?: string;
-
+    /**
+     * When provided, read/write session data via this store instead of the
+     * local filesystem.
+     * @alpha
+     */
+    sessionStore?: SessionStore;
 };
 
 export declare type SessionStartHookInput = BaseHookInput & {
@@ -3148,6 +3764,157 @@ export declare type SessionStartHookSpecificOutput = {
     additionalContext?: string;
     initialUserMessage?: string;
     watchPaths?: string[];
+};
+
+/**
+ * Adapter for mirroring session transcripts to external storage.
+ * The subprocess still writes to local disk (set CLAUDE_CONFIG_DIR=/tmp
+ * for ephemeral local copy); the adapter receives a secondary copy.
+ *
+ * The SDK never deletes from your store unless you call deleteSession()
+ * with delete? implemented. Retention is the adapter's responsibility —
+ * implement TTL, S3 lifecycle policies, or scheduled cleanup according
+ * to your compliance requirements (e.g., ZDR/HIPAA retention windows).
+ * Local-disk transcripts under CLAUDE_CONFIG_DIR are swept by the
+ * existing cleanupPeriodDays setting independently of this adapter.
+ * @alpha
+ */
+export declare type SessionStore = {
+    /**
+     * Mirror a batch of transcript entries. Called AFTER the subprocess's
+     * local write succeeds — durability is already guaranteed locally.
+     *
+     * Batches arrive at ~100ms cadence during active turns. Entries are
+     * JSON-safe POJOs — one per line in the local JSONL file.
+     *
+     * Within a single process, persist entries in append-call order; across
+     * concurrent processes, order is by storage commit time, not call time.
+     *
+     * Most entries carry a stable `uuid`. Adapters SHOULD treat `uuid` as an
+     * idempotency key (upsert / ignore-duplicate) so that retries and
+     * `importSessionToStore()` replays do not create duplicate rows. Entries
+     * without a `uuid` (e.g. titles, tags, mode markers) should be appended
+     * without dedup.
+     *
+     * Rejection is retried (3 attempts total) with short backoff; timeouts
+     * (60s) are not retried since the in-flight call may still land. After
+     * the final failure the batch is dropped and a `mirror_error` system
+     * message is emitted. The subprocess continues unaffected.
+     */
+    append(key: SessionKey, entries: SessionStoreEntry[]): Promise<void>;
+    /**
+     * Load a full session for resume. Called once, in the SDK parent, before
+     * subprocess spawn. The result is materialized to a temporary JSONL file;
+     * the subprocess resumes from that file using its existing resume code.
+     *
+     * Return `null` for a key that was never written; adapters that cannot
+     * distinguish "never written" from "emptied" (e.g. Redis LRANGE) may
+     * return `null` for both. Returned entries must be deep-equal to what was
+     * appended — byte-equal serialization is NOT required (e.g. Postgres
+     * JSONB may reorder object keys); the SDK never hashes or byte-compares
+     * entries.
+     */
+    load(key: SessionKey): Promise<SessionStoreEntry[] | null>;
+    /**
+     * List sessions for a projectKey. Returns IDs + modification times.
+     * `mtime` is Unix epoch milliseconds; adapters without native modification
+     * time (e.g. Redis) must maintain their own index. Result order is
+     * unspecified — the SDK sorts by mtime descending.
+     * Optional — if undefined, listSessions() with a sessionStore throws.
+     */
+    listSessions?(projectKey: string): Promise<Array<{
+        sessionId: string;
+        mtime: number;
+    }>>;
+    /**
+     * Return incrementally-maintained summaries for all sessions in one call.
+     *
+     * Stores should maintain these via {@link foldSessionSummary} inside
+     * `append()`. When implemented, `listSessions({ sessionStore })` reads
+     * all summary metadata in a single round-trip; when undefined, it falls
+     * back to `listSessions()` + per-session `load()`.
+     *
+     * @remarks
+     * Stores that maintain summaries inside `append()` MUST serialize sidecar
+     * writes if `append()` calls can race for the same session — e.g., wrap the
+     * read-fold-write in a transaction/CAS or hold a per-session lock.
+     * `foldSessionSummary` is pure; concurrency control is the store's responsibility.
+     * @alpha
+     */
+    listSessionSummaries?(projectKey: string): Promise<SessionSummaryEntry[]>;
+    /**
+     * Delete a session. Optional — if undefined, deletion is a no-op
+     * (appropriate for WORM/append-only backends like S3).
+     */
+    delete?(key: SessionKey): Promise<void>;
+    /**
+     * List all subpath keys under a session (e.g., subagent transcripts).
+     * Used during resume to discover and materialize all subagent data.
+     * If undefined, resume only materializes the main transcript.
+     */
+    listSubkeys?(key: {
+        projectKey: string;
+        sessionId: string;
+    }): Promise<string[]>;
+};
+
+/**
+ * One JSONL transcript line as observed by a {@link SessionStore} adapter.
+ *
+ * The concrete entry shape is the on-disk transcript format (a large
+ * discriminated union over `type` covering user/assistant messages, summaries,
+ * titles, tags, mode changes, etc.). That union is CLI-internal and not part
+ * of the SDK API surface, so this is exposed as a minimal structural supertype
+ * — every entry has a string `type` discriminant, most carry a `uuid` and ISO
+ * `timestamp`, and the rest of the payload is opaque JSON. Adapters should
+ * treat entries as pass-through blobs; round-tripping `JSON.stringify` /
+ * `JSON.parse` is the only required invariant.
+ * @alpha
+ */
+export declare type SessionStoreEntry = {
+    type: string;
+    uuid?: string;
+    timestamp?: string;
+    [k: string]: unknown;
+};
+
+/**
+ * Flush strategy for {@link Options.sessionStore} transcript mirroring.
+ *
+ * - `'batched'` (default): buffer transcript_mirror frames and flush at
+ *   end-of-turn or when pending thresholds are exceeded.
+ * - `'eager'`: schedule a background flush after every frame, giving
+ *   near-real-time delivery to {@link SessionStore.append}. Each frame
+ *   becomes its own `append()` batch (no coalescing), so adapters should
+ *   be cheap per call.
+ *
+ * @alpha
+ */
+export declare type SessionStoreFlush = 'batched' | 'eager';
+
+/**
+ * Incrementally-maintained session summary.
+ *
+ * Stores update this on {@link SessionStore.append} via
+ * {@link foldSessionSummary} and return the full set from
+ * {@link SessionStore.listSessionSummaries}. Adapters never re-read
+ * previously appended entries.
+ * @alpha
+ */
+export declare type SessionSummaryEntry = {
+    sessionId: string;
+    /**
+     * Storage write time of the sidecar on the adapter. Must share a clock
+     * source with the `mtime` returned by `listSessions()` for this session —
+     * typically file mtime, S3 LastModified, Postgres `updated_at`, or whatever
+     * native timestamp the adapter surfaces. Do not derive from entry ISO
+     * timestamps — entry timestamps and storage write times can differ by
+     * batching and network latency, and conflating them defeats the staleness
+     * check.
+     */
+    mtime: number;
+    /** Opaque SDK-owned state. Stores MUST persist verbatim and MUST NOT interpret. */
+    data: Record<string, unknown>;
 };
 
 /**
@@ -3184,6 +3951,17 @@ export declare interface Settings {
      */
     gcpAuthRefresh?: string;
     /**
+     * Executable that computes managed settings at startup. Honored only from admin-controlled policy sources.
+     */
+    policyHelper?: {
+        /**
+         * Absolute path to the helper executable
+         */
+        path: string;
+        timeoutMs?: number;
+        refreshIntervalMs?: 0 | number;
+    };
+    /**
      * Custom file suggestion configuration for \@ mentions
      */
     fileSuggestion?: {
@@ -3206,6 +3984,10 @@ export declare interface Settings {
      * Fraction of the context window (in characters) reserved for the skill listing sent to Claude (default: 0.01 = 1%). When the listing exceeds this, descriptions are shortened to fit. Raise to opt in to higher per-turn context cost.
      */
     skillListingBudgetFraction?: number;
+    /**
+     * When set to true in either admin-only Windows source — the HKLM SOFTWARE/Policies/ClaudeCode registry key or C:/Program Files/ClaudeCode/managed-settings.json — WSL reads managed settings from the full Windows policy chain (HKLM, C:/Program Files/ClaudeCode via DrvFs, HKCU) in addition to /etc/claude-code. Windows sources take priority. The flag is also required in HKCU itself for HKCU policy to apply on WSL (double opt-in: admin enables the chain, user confirms HKCU). On native Windows the flag has no effect.
+     */
+    wslInheritsWindowsSettings?: boolean;
     /**
      * Environment variables to set for Claude Code sessions
      */
@@ -3355,11 +4137,15 @@ export declare interface Settings {
                  */
                 command: string;
                 /**
+                 * Argument list for exec form. When present, `command` is resolved as an executable and spawned directly with these arguments — no shell. Path placeholders like ${CLAUDE_PLUGIN_ROOT} are substituted per-element as plain strings, so paths with quotes, $, or backticks never reach a shell parser. When absent, `command` runs through a shell (bash on POSIX, PowerShell on Windows without Git Bash).
+                 */
+                args?: string[];
+                /**
                  * Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.
                  */
                 if?: string;
                 /**
-                 * Shell interpreter. 'bash' uses your $SHELL (bash/zsh/sh); 'powershell' uses pwsh. Defaults to bash.
+                 * Shell interpreter. 'bash' uses your $SHELL (bash/zsh/sh); 'powershell' uses pwsh. Defaults to bash (powershell on Windows without Git Bash).
                  */
                 shell?: 'bash' | 'powershell';
                 /**
@@ -3405,6 +4191,10 @@ export declare interface Settings {
                  * Model to use for this prompt hook (e.g., "claude-sonnet-4-6"). If not specified, uses the default small fast model.
                  */
                 model?: string;
+                /**
+                 * Sets the continue value for the decision:"block" produced when ok is false. Default false (turn ends). Whether continue:true lets the turn proceed depends on the event's decision:"block" semantics. On PostToolUse, the reason is fed back to Claude and the turn continues.
+                 */
+                continueOnBlock?: boolean;
                 /**
                  * Custom status message to display in spinner while hook runs
                  */
@@ -3477,6 +4267,41 @@ export declare interface Settings {
                  * If true, hook runs once and is removed after execution
                  */
                 once?: boolean;
+            } | {
+                /**
+                 * MCP tool hook type
+                 */
+                type: 'mcp_tool';
+                /**
+                 * Name of an already-configured MCP server to invoke
+                 */
+                server: string;
+                /**
+                 * Name of the tool on that server to call
+                 */
+                tool: string;
+                /**
+                 * Arguments passed to the MCP tool. String values support ${path} interpolation from the hook input JSON (e.g. "${tool_input.file_path}").
+                 */
+                input?: {
+                    [k: string]: unknown;
+                };
+                /**
+                 * Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.
+                 */
+                if?: string;
+                /**
+                 * Timeout in seconds for this specific tool call
+                 */
+                timeout?: number;
+                /**
+                 * Custom status message to display in spinner while hook runs
+                 */
+                statusMessage?: string;
+                /**
+                 * If true, hook runs once and is removed after execution
+                 */
+                once?: boolean;
             })[];
         }[];
     };
@@ -3492,11 +4317,23 @@ export declare interface Settings {
          * Directories to include when creating worktrees, via git sparse-checkout (cone mode). Dramatically faster in large monorepos — only the listed paths are written to disk.
          */
         sparsePaths?: string[];
+        /**
+         * Which ref new worktrees branch from. 'fresh' (default) branches from origin/<default-branch> for a clean tree. 'head' branches from your current local HEAD so unpushed commits and feature-branch state are present. Applies to --worktree, EnterWorktree, and agent isolation.
+         */
+        baseRef?: 'fresh' | 'head';
     };
     /**
      * Disable all hooks and statusLine execution
      */
     disableAllHooks?: boolean;
+    /**
+     * Disable agent view (`claude agents`, `--bg`, /background, the on-demand daemon). Typically set in managed settings. Equivalent to CLAUDE_CODE_DISABLE_AGENT_VIEW=1.
+     */
+    disableAgentView?: boolean;
+    /**
+     * Disable Remote Control (claude.ai/code, `claude remote-control`, `--remote-control`/`--rc`, auto-start, and the in-session toggle). Typically set in managed settings.
+     */
+    disableRemoteControl?: boolean;
     /**
      * Disable inline shell execution in skills and custom slash commands from user, project, or plugin sources. Commands are replaced with a placeholder instead of being run.
      */
@@ -3540,7 +4377,15 @@ export declare interface Settings {
          * Re-run the status line command every N seconds in addition to event-driven updates
          */
         refreshInterval?: number;
+        /**
+         * Hide the built-in `-- INSERT --` / `-- VISUAL --` indicator below the prompt. Use this when your status line script renders `vim.mode` itself.
+         */
+        hideVimModeIndicator?: boolean;
     };
+    /**
+     * URL template for PR links in the footer badge and inline messages. Placeholders: {host} {owner} {repo} {number} {url}. Example: "https://reviews.example.com/{owner}/{repo}/pull/{number}"
+     */
+    prUrlTemplate?: string;
     /**
      * Custom per-subagent status line shown in the agent panel; receives row context as JSON on stdin
      */
@@ -3549,7 +4394,7 @@ export declare interface Settings {
         command: string;
     };
     /**
-     * Enabled plugins using plugin-id\@marketplace-id format. Example: { "formatter\@anthropic-tools": true }. Also supports extended format with version constraints.
+     * Enabled plugins using plugin-id\@marketplace-id format. Example: { "formatter\@anthropic-tools": true }. Also supports extended format with version constraints. Settings precedence is user < project < local < flag < policy, so to disable a plugin that project settings enable, set it to false in .claude/settings.local.json — setting false in ~/.claude/settings.json is overridden by the project.
      */
     enabledPlugins?: {
         [k: string]: string[] | boolean | {
@@ -3631,6 +4476,8 @@ export declare interface Settings {
                  */
                 path: string;
             } | {
+                source: 'skills-dir';
+            } | {
                 source: 'hostPattern';
                 /**
                  * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
@@ -3671,20 +4518,6 @@ export declare interface Settings {
                         version?: string;
                         /**
                          * Custom NPM registry URL (defaults to using system default, likely npmjs.org)
-                         */
-                        registry?: string;
-                    } | {
-                        source: 'pip';
-                        /**
-                         * Python package name as it appears on PyPI
-                         */
-                        package: string;
-                        /**
-                         * Version specifier (e.g., ==1.0.0, >=2.0.0, <3.0.0)
-                         */
-                        version?: string;
-                        /**
-                         * Custom PyPI registry URL (defaults to using system default, likely pypi.org)
                          */
                         registry?: string;
                     } | {
@@ -3733,6 +4566,8 @@ export declare interface Settings {
                          * Specific commit SHA to use
                          */
                         sha?: string;
+                    } | {
+                        source: 'unsupported';
                     };
                     description?: string;
                     version?: string;
@@ -3833,6 +4668,8 @@ export declare interface Settings {
          */
         path: string;
     } | {
+        source: 'skills-dir';
+    } | {
         source: 'hostPattern';
         /**
          * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
@@ -3873,20 +4710,6 @@ export declare interface Settings {
                 version?: string;
                 /**
                  * Custom NPM registry URL (defaults to using system default, likely npmjs.org)
-                 */
-                registry?: string;
-            } | {
-                source: 'pip';
-                /**
-                 * Python package name as it appears on PyPI
-                 */
-                package: string;
-                /**
-                 * Version specifier (e.g., ==1.0.0, >=2.0.0, <3.0.0)
-                 */
-                version?: string;
-                /**
-                 * Custom PyPI registry URL (defaults to using system default, likely pypi.org)
                  */
                 registry?: string;
             } | {
@@ -3935,6 +4758,8 @@ export declare interface Settings {
                  * Specific commit SHA to use
                  */
                 sha?: string;
+            } | {
+                source: 'unsupported';
             };
             description?: string;
             version?: string;
@@ -4025,6 +4850,8 @@ export declare interface Settings {
          */
         path: string;
     } | {
+        source: 'skills-dir';
+    } | {
         source: 'hostPattern';
         /**
          * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
@@ -4065,20 +4892,6 @@ export declare interface Settings {
                 version?: string;
                 /**
                  * Custom NPM registry URL (defaults to using system default, likely npmjs.org)
-                 */
-                registry?: string;
-            } | {
-                source: 'pip';
-                /**
-                 * Python package name as it appears on PyPI
-                 */
-                package: string;
-                /**
-                 * Version specifier (e.g., ==1.0.0, >=2.0.0, <3.0.0)
-                 */
-                version?: string;
-                /**
-                 * Custom PyPI registry URL (defaults to using system default, likely pypi.org)
                  */
                 registry?: string;
             } | {
@@ -4127,6 +4940,8 @@ export declare interface Settings {
                  * Specific commit SHA to use
                  */
                 sha?: string;
+            } | {
+                source: 'unsupported';
             };
             description?: string;
             version?: string;
@@ -4151,6 +4966,10 @@ export declare interface Settings {
      * Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing
      */
     forceLoginMethod?: 'claudeai' | 'console';
+    /**
+     * Controls whether the SDK parent tier (Options.managedSettings / --managed-settings) layers under this admin tier. "first-wins" (default): parent is dropped — admin tiers are the only policy source. "merge": parent's restrictive-only-filtered settings union under the admin winner. Has no effect when no admin tier exists (parent applies as the sole policy tier, still filtered restrictive-only).
+     */
+    parentSettingsBehavior?: 'first-wins' | 'merge';
     /**
      * Organization UUID to require for OAuth login. Accepts a single UUID string or an array of UUIDs (any one is permitted). When set in managed settings, login fails if the authenticated account does not belong to a listed organization.
      */
@@ -4182,7 +5001,7 @@ export declare interface Settings {
     sandbox?: {
         enabled?: boolean;
         /**
-         * Exit with an error at startup if sandbox.enabled is true but the sandbox cannot start (missing dependencies, unsupported platform, or platform not in enabledPlatforms). When false (default), a warning is shown and commands run unsandboxed. Intended for managed-settings deployments that require sandboxing as a hard gate.
+         * Exit with an error at startup if sandbox.enabled is true but the sandbox cannot start (missing dependencies or unsupported platform). When false (default), a warning is shown and commands run unsandboxed. Intended for managed-settings deployments that require sandboxing as a hard gate.
          */
         failIfUnavailable?: boolean;
         autoAllowBashIfSandboxed?: boolean;
@@ -4192,6 +5011,10 @@ export declare interface Settings {
         allowUnsandboxedCommands?: boolean;
         network?: {
             allowedDomains?: string[];
+            /**
+             * Domains that are always blocked, even if matched by allowedDomains. Supports the same wildcard syntax as allowedDomains. Merged from all settings sources regardless of allowManagedDomainsOnly.
+             */
+            deniedDomains?: string[];
             /**
              * When true (and set in managed settings), only allowedDomains and WebFetch(domain:...) allow rules from managed settings are respected. User, project, local, and flag settings domains are ignored. Denied domains are still respected from all sources.
              */
@@ -4211,6 +5034,13 @@ export declare interface Settings {
             allowMachLookup?: string[];
             httpProxyPort?: number;
             socksProxyPort?: number;
+            /**
+             * [EXPERIMENTAL] Enable in-process TLS termination so the per-request filter can see HTTPS request bodies. Provide a CA cert+key, or omit both to have sandbox-runtime generate an ephemeral one for the session.
+             */
+            tlsTerminate?: {
+                caCertPath?: string;
+                caKeyPath?: string;
+            };
         };
         filesystem?: {
             /**
@@ -4250,6 +5080,14 @@ export declare interface Settings {
             command: string;
             args?: string[];
         };
+        /**
+         * Linux/WSL only: Absolute path to the bwrap (bubblewrap) binary. Overrides auto-detection via PATH. Only honored from admin-controlled managed settings.
+         */
+        bwrapPath?: string;
+        /**
+         * Linux/WSL only: Absolute path to the socat binary used for the sandbox network proxy. Overrides auto-detection via PATH. Only honored from admin-controlled managed settings.
+         */
+        socatPath?: string;
         [k: string]: unknown;
     };
     /**
@@ -4356,7 +5194,7 @@ export declare interface Settings {
     /**
      * Release channel for auto-updates (latest or stable)
      */
-    autoUpdatesChannel?: 'latest' | 'stable';
+    autoUpdatesChannel?: 'latest' | 'stable' | 'rc';
     /**
      * Minimum version to stay on - prevents downgrades when switching to stable channel
      */
@@ -4369,13 +5207,26 @@ export declare interface Settings {
      * Terminal UI renderer. "fullscreen" uses the flicker-free alt-screen renderer with virtualized scrollback (equivalent to CLAUDE_CODE_NO_FLICKER=1). "default" uses the classic main-screen renderer.
      */
     tui?: 'default' | 'fullscreen';
-
     /**
-     * Teams/Enterprise opt-in for channel notifications (MCP servers with the claude/channel capability pushing inbound messages). Default off. Set true to allow; users then select servers via --channels.
+     * Voice mode settings (hold-to-talk / tap-to-toggle dictation)
+     */
+    voice?: {
+        enabled?: boolean;
+        /**
+         * 'hold' (default): hold to talk. 'tap': tap to start, tap to stop+submit.
+         */
+        mode?: 'hold' | 'tap';
+        /**
+         * Submit the prompt when hold-to-talk is released (hold mode only)
+         */
+        autoSubmit?: boolean;
+    };
+    /**
+     * Managed-org opt-in for channel notifications (MCP servers with the claude/channel capability pushing inbound messages). claude.ai Teams/Enterprise: default off. Console: default on unless managed settings exist. Set true to allow; users then select servers via --channels.
      */
     channelsEnabled?: boolean;
     /**
-     * Teams/Enterprise allowlist of channel plugins. When set, replaces the default Anthropic allowlist — admins decide which plugins may push inbound messages. Undefined falls back to the default. Requires channelsEnabled: true.
+     * Managed-org allowlist of channel plugins. When set, replaces the default Anthropic allowlist — admins decide which plugins may push inbound messages. Undefined falls back to the default. Requires channelsEnabled: true.
      */
     allowedChannelPlugins?: {
         marketplace: string;
@@ -4385,6 +5236,7 @@ export declare interface Settings {
      * Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.)
      */
     prefersReducedMotion?: boolean;
+
     /**
      * Enable auto-memory for this project. When false, Claude will not read from or write to the auto-memory directory.
      */
@@ -4439,6 +5291,10 @@ export declare interface Settings {
         startDirectory?: string;
     }[];
     /**
+     * CLAUDE.md-style instructions injected as organization-managed memory. Only honored from managed/policy settings.
+     */
+    claudeMd?: string;
+    /**
      * Glob patterns or absolute paths of CLAUDE.md files to exclude from loading. Patterns are matched against absolute file paths using picomatch. Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). Examples: "/home/user/monorepo/CLAUDE.md", "** /code/CLAUDE.md", "** /some-dir/.claude/rules/**"
      */
     claudeMdExcludes?: string[];
@@ -4446,6 +5302,86 @@ export declare interface Settings {
      * Custom message to append to the plugin trust warning shown before installation. Only read from policy settings (managed-settings.json / MDM). Useful for enterprise administrators to add organization-specific context (e.g., "All plugins from our internal marketplace are vetted and approved.").
      */
     pluginTrustMessage?: string;
+    /**
+     * Color theme for the UI
+     */
+    theme?: ('auto' | 'dark' | 'light' | 'light-daltonized' | 'dark-daltonized' | 'light-ansi' | 'dark-ansi') | string;
+    /**
+     * Key binding mode for the prompt input
+     */
+    editorMode?: 'normal' | 'vim';
+    /**
+     * Show full tool output instead of truncated summaries
+     */
+    verbose?: boolean;
+    /**
+     * Preferred OS notification channel
+     */
+    preferredNotifChannel?: 'auto' | 'iterm2' | 'iterm2_with_bell' | 'terminal_bell' | 'kitty' | 'ghostty' | 'notifications_disabled';
+    /**
+     * Automatically compact conversation when context fills
+     */
+    autoCompactEnabled?: boolean;
+    /**
+     * Auto-scroll the conversation view to bottom (fullscreen mode only)
+     */
+    autoScrollEnabled?: boolean;
+    /**
+     * Snapshot files before edits so /rewind can restore them
+     */
+    fileCheckpointingEnabled?: boolean;
+    /**
+     * Show "Cooked for Nm Ns" after each assistant turn
+     */
+    showTurnDuration?: boolean;
+    /**
+     * Stamp each assistant message with its arrival time
+     */
+    showMessageTimestamps?: boolean;
+    /**
+     * Emit OSC 9;4 progress sequences during long operations
+     */
+    terminalProgressBarEnabled?: boolean;
+    /**
+     * Enable the todo / task tracking panel
+     */
+    todoFeatureEnabled?: boolean;
+    /**
+     * How spawned teammates execute (tmux, in-process, auto)
+     */
+    teammateMode?: 'auto' | 'tmux' | 'in-process';
+    /**
+     * Start Remote Control bridge automatically each session
+     */
+    remoteControlAtStartup?: boolean;
+    /**
+     * Require explicit approval before SendMessage can reach a peer session on another machine via Remote Control
+     */
+    isolatePeerMachines?: boolean;
+    /**
+     * When no background service is running: 'transient' spawns one for this login session; 'ask' offers to install it persistently
+     */
+    daemonColdStart?: 'transient' | 'ask';
+    /**
+     * Mirror local sessions to claude.ai as view-only (no remote control)
+     */
+    autoUploadSessions?: boolean;
+    /**
+     * Push to mobile when a permission prompt or question is waiting
+     */
+    inputNeededNotifEnabled?: boolean;
+    /**
+     * Allow Claude to push proactive mobile notifications
+     */
+    agentPushNotifEnabled?: boolean;
+    /**
+     * Prevent claude-cli:// protocol handler registration with the OS
+     */
+    disableDeepLinkRegistration?: 'disable';
+    /**
+     * Default transcript view: chat (SendUserMessage checkpoints only) or transcript (full)
+     */
+    defaultView?: 'chat' | 'transcript';
     [k: string]: unknown;
 }
 
@@ -4480,6 +5416,10 @@ export declare type SlashCommand = {
      * Hint for skill arguments (e.g., "<file>")
      */
     argumentHint: string;
+    /**
+     * Alternate names that resolve to this command (e.g., /cost and /stats both resolve to /usage)
+     */
+    aliases?: string[];
 };
 
 /**
@@ -4552,7 +5492,7 @@ export declare function startup(_params?: {
     initializeTimeoutMs?: number;
 }): Promise<WarmQuery>;
 
-declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKPostTurnSummaryMessage | coreTypes.SDKTranscriptMirrorMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
+declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKPostTurnSummaryMessage | coreTypes.SDKTaskSummaryMessage | coreTypes.SDKTranscriptMirrorMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
 
 export declare type StopFailureHookInput = BaseHookInput & {
     hook_event_name: 'StopFailure';
@@ -4603,9 +5543,14 @@ export declare type SyncHookJSONOutput = {
     stopReason?: string;
     decision?: 'approve' | 'block';
     systemMessage?: string;
+    /**
+     * A terminal escape sequence (e.g. OSC 9 / OSC 777 desktop-notification) for Claude Code to emit on your behalf. Only notification/title OSCs (0, 1, 2, 9, 99, 777) and BEL are permitted; anything else is dropped.
+     */
+    terminalSequence?: string;
     reason?: string;
 
-    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PermissionDeniedHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput | CwdChangedHookSpecificOutput | FileChangedHookSpecificOutput | WorktreeCreateHookSpecificOutput;
+
+    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | UserPromptExpansionHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PostToolBatchHookSpecificOutput | PermissionDeniedHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput | CwdChangedHookSpecificOutput | FileChangedHookSpecificOutput | WorktreeCreateHookSpecificOutput;
 };
 
 /**
@@ -4750,6 +5695,7 @@ export declare interface Transport {
 /**
  * V2 API - UNSTABLE
  * Create a persistent session for multi-turn conversations.
+ * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
  * @alpha
  */
 export declare function unstable_v2_createSession(_options: SDKSessionOptions): SDKSession;
@@ -4757,6 +5703,7 @@ export declare function unstable_v2_createSession(_options: SDKSessionOptions): 
 /**
  * V2 API - UNSTABLE
  * One-shot convenience function for single prompts.
+ * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
  * @alpha
  *
  * @example
@@ -4771,9 +5718,24 @@ export declare function unstable_v2_prompt(_message: string, _options: SDKSessio
 /**
  * V2 API - UNSTABLE
  * Resume an existing session by ID.
+ * @deprecated Use `query()` instead. The V2 session API will be removed in a future release.
  * @alpha
  */
 export declare function unstable_v2_resumeSession(_sessionId: string, _options: SDKSessionOptions): SDKSession;
+
+export declare type UserPromptExpansionHookInput = BaseHookInput & {
+    hook_event_name: 'UserPromptExpansion';
+    expansion_type: 'slash_command' | 'mcp_prompt';
+    command_name: string;
+    command_args: string;
+    command_source?: string;
+    prompt: string;
+};
+
+export declare type UserPromptExpansionHookSpecificOutput = {
+    hookEventName: 'UserPromptExpansion';
+    additionalContext?: string;
+};
 
 export declare type UserPromptSubmitHookInput = BaseHookInput & {
     hook_event_name: 'UserPromptSubmit';
@@ -4785,6 +5747,10 @@ export declare type UserPromptSubmitHookSpecificOutput = {
     hookEventName: 'UserPromptSubmit';
     additionalContext?: string;
     sessionTitle?: string;
+    /**
+     * When decision is "block", omit the original prompt from the block message
+     */
+    suppressOriginalPrompt?: boolean;
 };
 
 /**
