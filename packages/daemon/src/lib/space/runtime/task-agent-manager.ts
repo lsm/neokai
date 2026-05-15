@@ -1878,13 +1878,35 @@ export class TaskAgentManager {
 		images?: MessageImage[],
 		deliveryMode: 'immediate' | 'defer' = 'immediate'
 	): Promise<void> {
+		await this.injectSubSessionMessageWithOrigin(
+			subSessionId,
+			message,
+			undefined,
+			isSyntheticMessage,
+			images,
+			deliveryMode
+		);
+	}
+
+	async injectRuntimeRecoveryMessage(subSessionId: string, message: string): Promise<void> {
+		await this.injectSubSessionMessageWithOrigin(subSessionId, message, 'system', true);
+	}
+
+	private async injectSubSessionMessageWithOrigin(
+		subSessionId: string,
+		message: string,
+		origin: MessageOrigin | undefined,
+		isSyntheticMessage = true,
+		images?: MessageImage[],
+		deliveryMode: 'immediate' | 'defer' = 'immediate'
+	): Promise<void> {
 		const indexed = this.agentSessionIndex.get(subSessionId);
 		if (indexed) {
 			await this.injectMessageIntoSession(
 				indexed,
 				message,
 				deliveryMode,
-				undefined,
+				origin,
 				isSyntheticMessage,
 				images
 			);
@@ -2364,6 +2386,13 @@ export class TaskAgentManager {
 				err
 			);
 		}
+	}
+
+	async restartStuckSubSession(agentSessionId: string): Promise<void> {
+		const session = this.agentSessionIndex.get(agentSessionId);
+		if (!session) return;
+		this.agentSessionIndex.delete(agentSessionId);
+		await this.stopSessionPreserveDb(agentSessionId, session);
 	}
 
 	// -------------------------------------------------------------------------

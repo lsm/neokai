@@ -283,7 +283,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	// -------------------------------------------------------------------------
 
 	describe('non-terminal idle last-message recovery', () => {
-		test('idle execution with unresolved tool_use is retried and not advanced', async () => {
+		test('idle execution with unresolved tool_use is preserved and not advanced', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
 			]);
@@ -323,16 +323,15 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			await rt.executeTick();
 
 			const updated = nodeExecutionRepo.getById(execution.id)!;
-			expect(updated.status).toBe('pending');
+			expect(updated.status).toBe('idle');
 			expect(updated.agentSessionId).toBe('non-terminal-session');
-			expect(updated.result ?? '').toContain('non-terminal last message');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
 			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(true);
-			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(false);
 		});
 
-		test('recoverStalledRuns retries non-terminal idle execution instead of blocking immediately', async () => {
+		test('recoverStalledRuns preserves non-terminal idle execution instead of blocking', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
 			]);
@@ -364,19 +363,18 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			await rt.recoverStalledRuns();
 
 			const updated = nodeExecutionRepo.getById(execution.id)!;
-			expect(updated.status).toBe('pending');
+			expect(updated.status).toBe('idle');
 			expect(updated.agentSessionId).toBe('restart-non-terminal-session');
-			expect(updated.result ?? '').toContain('non-terminal last message');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
 			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(true);
-			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(false);
 			expect(notifications.some((event) => event.kind === 'workflow_run_needs_attention')).toBe(
 				false
 			);
 		});
 
-		test('repeated non-terminal idle blocks and escalates after retry limit', async () => {
+		test('repeated non-terminal idle remains preserved without escalation', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
 			]);
@@ -412,17 +410,15 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			await rt.executeTick();
 
 			const updated = nodeExecutionRepo.getById(execution.id)!;
-			expect(updated.status).toBe('blocked');
-			expect(updated.result).toContain('Agent went idle without completing');
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-			expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
-			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+			expect(updated.status).toBe('idle');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
 			expect(notifications.some((event) => event.kind === 'workflow_run_needs_attention')).toBe(
-				true
+				false
 			);
 		});
 
-		test('blocked non-terminal idle run sets blockedRetryCounts to prevent auto-retry', async () => {
+		test('non-terminal idle preservation does not set blockedRetryCounts', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
 			]);
@@ -450,7 +446,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			);
 
 			const rt = makeRuntime();
-			// Exhaust retry budget so handleNonTerminalIdleExecutions blocks immediately
+			// Even a previously-counted idle execution should be preserved rather than blocked.
 			(rt as any).nonTerminalIdleCounts.set(`${run.id}:${execution.id}`, 3);
 			// Simulate the handler being called directly (as it would be from processRunTick)
 			const outcome = await (rt as any).handleNonTerminalIdleExecutions(
@@ -459,11 +455,10 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				taskRepo.getTask(task.id)!
 			);
 
-			expect(outcome).toBe('blocked');
-			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-			// Verify blockedRetryCounts is exhausted so attemptBlockedRunRecovery won't auto-retry
-			expect((rt as any).blockedRetryCounts.get(run.id)).toBeGreaterThanOrEqual(1);
+			expect(outcome).toBe('preserved');
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect((rt as any).blockedRetryCounts.get(run.id)).toBeUndefined();
 		});
 	});
 

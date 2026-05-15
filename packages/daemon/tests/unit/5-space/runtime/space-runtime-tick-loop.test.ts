@@ -20,6 +20,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -37,6 +38,23 @@ function makeDb(): BunDatabase {
 	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sdk_messages (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			message_type TEXT NOT NULL,
+			message_subtype TEXT,
+			sdk_message TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			send_status TEXT,
+			origin TEXT,
+			is_renderable INTEGER NOT NULL DEFAULT 1,
+			is_terminal INTEGER NOT NULL DEFAULT 0,
+			parent_tool_use_id TEXT,
+			task_id TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id);
+	`);
 	return db;
 }
 
@@ -121,6 +139,8 @@ function makeMockTaskAgentManager(
 		rehydrate?: () => Promise<void>;
 		cancelBySessionId?: (sessionId: string) => void;
 		interruptBySessionId?: (sessionId: string) => Promise<void>;
+		restartStuckSubSession?: (sessionId: string) => Promise<void>;
+		injectRuntimeRecoveryMessage?: (sessionId: string, message: string) => Promise<void>;
 		getAgentSessionById?: (sessionId: string) => unknown;
 	} = {}
 ) {
@@ -193,6 +213,8 @@ function makeMockTaskAgentManager(
 		rehydrate: overrides.rehydrate ?? (async () => {}),
 		cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 		interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
+		restartStuckSubSession: overrides.restartStuckSubSession ?? (async () => {}),
+		injectRuntimeRecoveryMessage: overrides.injectRuntimeRecoveryMessage ?? (async () => {}),
 		getAgentSessionById: overrides.getAgentSessionById ?? (() => null),
 		// PR 3/5 added a post-approval awareness injection via
 		// `injectIntoTaskAgent`. The tick-loop mock is not exercising delivery,
@@ -220,6 +242,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
 	let nodeExecutionRepo: NodeExecutionRepository;
+	let sdkMessageRepo: SDKMessageRepository;
 
 	const SPACE_ID = 'space-tick-1';
 	const SPACE_ID_2 = 'space-tick-2';
@@ -230,6 +253,32 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 	const STEP_A = 'step-a';
 	const STEP_B = 'step-b';
+
+	function saveAssistantMessage(
+		sessionId: string,
+		opts: { minutesAgo: number; terminal?: boolean; toolUse?: boolean }
+	): void {
+		const content = opts.toolUse
+			? [{ type: 'tool_use', id: `tool-${sessionId}`, name: 'bash', input: {} }]
+			: [{ type: 'text', text: 'done' }];
+		const message = {
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				content,
+				stop_reason: opts.terminal ? 'end_turn' : null,
+			},
+		};
+		sdkMessageRepo.saveSDKMessage(sessionId, message as never);
+		db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(
+			new Date(Date.now() - opts.minutesAgo * 60_000).toISOString(),
+			sessionId
+		);
+	}
+
+	function processingState(status: string) {
+		return { getProcessingState: () => ({ status }) };
+	}
 
 	beforeEach(() => {
 		db = makeDb();
@@ -245,6 +294,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
+		sdkMessageRepo = new SDKMessageRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
 		agentManager = new SpaceAgentManager(agentRepo);
@@ -267,7 +317,10 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		}
 	});
 
-	function buildConfig(tam?: ReturnType<typeof makeMockTaskAgentManager>): SpaceRuntimeConfig {
+	function buildConfig(
+		tam?: ReturnType<typeof makeMockTaskAgentManager>,
+		overrides: Partial<SpaceRuntimeConfig> = {}
+	): SpaceRuntimeConfig {
 		return {
 			db,
 			spaceManager,
@@ -276,7 +329,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			workflowRunRepo,
 			taskRepo,
 			nodeExecutionRepo,
+			sdkMessageRepo,
 			taskAgentManager: tam as never,
+			...overrides,
 		};
 	}
 
@@ -642,6 +697,234 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(freshRt.executorCount).toBe(2);
 			expect(freshRt.getExecutor(run1.id)).toBeDefined();
 			expect(freshRt.getExecutor(run2.id)).toBeDefined();
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Layer 1 runtime anti-stuck recovery
+	// -------------------------------------------------------------------------
+
+	describe('Layer 1 runtime anti-stuck recovery', () => {
+		test('nags only the stale agent in a multi-agent node', async () => {
+			const nags: Array<{ sessionId: string; message: string }> = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId, message) => {
+					nags.push({ sessionId, message });
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-agent ${Date.now()}`,
+				description: 'Test',
+				nodes: [
+					{
+						id: STEP_A,
+						name: 'Build',
+						agents: [
+							{ agentId: AGENT_PLANNER, name: 'Planner' },
+							{ agentId: AGENT_CODER, name: 'Coder' },
+						],
+					},
+					{
+						id: STEP_B,
+						name: 'Done',
+						agents: [{ agentId: AGENT_PLANNER, name: 'Finisher' }],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			for (const execution of nodeExecutionRepo.listByWorkflowRun(run.id)) {
+				const sessionId = `session:${execution.agentName}`;
+				nodeExecutionRepo.update(execution.id, {
+					status: 'in_progress',
+					agentSessionId: sessionId,
+					startedAt: Date.now() - 20 * 60_000,
+				});
+				saveAssistantMessage(sessionId, {
+					minutesAgo: execution.agentName === 'Planner' ? 20 : 0,
+					toolUse: execution.agentName === 'Planner',
+				});
+			}
+
+			await rt.executeTick();
+
+			expect(nags).toHaveLength(1);
+			expect(nags[0].sessionId).toBe('session:Planner');
+			expect(nags[0].message).toContain('[Runtime recovery notice]');
+			expect(
+				nodeExecutionRepo.listByWorkflowRun(run.id).filter((e) => e.status === 'in_progress')
+			).toHaveLength(2);
+		});
+
+		test('restarts only the nagged stale agent when no progress follows', async () => {
+			const restarted: string[] = [];
+			const injected: Array<{ sessionId: string; message: string }> = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: (sessionId) => sessionId !== 'session:Planner:new',
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId, message) => {
+					injected.push({ sessionId, message });
+				},
+				restartStuckSubSession: async (sessionId) => {
+					restarted.push(sessionId);
+				},
+				spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+					const exec = execution as { id: string; agentName: string };
+					const sessionId = `session:${exec.agentName}:new`;
+					nodeExecutionRepo.update(exec.id, {
+						status: 'in_progress',
+						agentSessionId: sessionId,
+						startedAt: Date.now(),
+						completedAt: null,
+					});
+					return sessionId;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-agent restart ${Date.now()}`,
+				description: 'Test',
+				nodes: [
+					{
+						id: STEP_A,
+						name: 'Build',
+						agents: [
+							{ agentId: AGENT_PLANNER, name: 'Planner' },
+							{ agentId: AGENT_CODER, name: 'Coder' },
+						],
+					},
+					{
+						id: STEP_B,
+						name: 'Done',
+						agents: [{ agentId: AGENT_PLANNER, name: 'Finisher' }],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			for (const execution of nodeExecutionRepo.listByWorkflowRun(run.id)) {
+				const sessionId = `session:${execution.agentName}`;
+				nodeExecutionRepo.update(execution.id, {
+					status: 'in_progress',
+					agentSessionId: sessionId,
+					startedAt: Date.now() - 20 * 60_000,
+				});
+				saveAssistantMessage(sessionId, {
+					minutesAgo: execution.agentName === 'Planner' ? 20 : 0,
+					toolUse: execution.agentName === 'Planner',
+				});
+			}
+
+			await rt.executeTick();
+			await rt.executeTick();
+			await rt.executeTick();
+
+			expect(restarted).toEqual(['session:Planner']);
+			const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
+			expect(executions.find((e) => e.agentName === 'Planner')?.agentSessionId).toBe(
+				'session:Planner:new'
+			);
+			expect(executions.find((e) => e.agentName === 'Coder')?.agentSessionId).toBe('session:Coder');
+			expect(injected.some((entry) => entry.message.includes('[Runtime session recovery]'))).toBe(
+				true
+			);
+		});
+
+		test('does not nag terminal or waiting-for-input sessions', async () => {
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: (sessionId) =>
+					processingState(sessionId === 'session:waiting' ? 'waiting_for_input' : 'processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `No nag ${Date.now()}`,
+				description: 'Test',
+				nodes: [
+					{
+						id: STEP_A,
+						name: 'Build',
+						agents: [
+							{ agentId: AGENT_PLANNER, name: 'Terminal' },
+							{ agentId: AGENT_CODER, name: 'Waiting' },
+						],
+					},
+					{
+						id: STEP_B,
+						name: 'Done',
+						agents: [{ agentId: AGENT_PLANNER, name: 'Finisher' }],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			for (const execution of nodeExecutionRepo.listByWorkflowRun(run.id)) {
+				const sessionId =
+					execution.agentName === 'Terminal' ? 'session:terminal' : 'session:waiting';
+				nodeExecutionRepo.update(execution.id, {
+					status: 'in_progress',
+					agentSessionId: sessionId,
+					startedAt: Date.now() - 20 * 60_000,
+				});
+				saveAssistantMessage(sessionId, {
+					minutesAgo: 20,
+					terminal: execution.agentName === 'Terminal',
+					toolUse: execution.agentName !== 'Terminal',
+				});
+			}
+
+			await rt.executeTick();
+
+			expect(nags).toEqual([]);
+		});
+
+		test('preserves naturally idle incomplete executions', async () => {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => false,
+			});
+			const rt = new SpaceRuntime(buildConfig(tam));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'idle',
+				agentSessionId: 'session:idle',
+			});
+			saveAssistantMessage('session:idle', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id);
+			expect(updated?.status).toBe('idle');
+			expect(updated?.agentSessionId).toBe('session:idle');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 		});
 	});
 

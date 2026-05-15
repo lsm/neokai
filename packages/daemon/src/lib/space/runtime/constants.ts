@@ -24,6 +24,22 @@
 export const MAX_TASK_AGENT_CRASH_RETRIES = 2;
 
 /**
+ * Maximum silence window for an alive node-agent session before the runtime
+ * treats a non-terminal last message as no observable progress.
+ *
+ * This is deliberately conservative: long-running agents are allowed, but an
+ * alive session whose latest meaningful SDK message is old and non-terminal is
+ * eligible for Layer 1 runtime recovery.
+ */
+export const DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS = 15 * 60 * 1000;
+
+/** Maximum runtime nudges sent to an alive stuck session before restart/block. */
+export const MAX_AGENT_STUCK_NAGS = 1;
+
+/** Maximum per-agent session restarts for alive-but-stuck recovery. */
+export const MAX_AGENT_STUCK_RESTARTS = 1;
+
+/**
  * Maximum number of automatic recovery attempts for a blocked workflow run.
  *
  * When a workflow run enters `blocked` status (e.g. a node agent failed after
