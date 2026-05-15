@@ -739,6 +739,10 @@ export function resolveSDKCliPath(): string | undefined {
 	if (cachedCliPath === '') return undefined;
 	if (cachedCliPath !== undefined) return cachedCliPath;
 
+	// If startup warmup is running, defer resolution — warmup will set cachedCliPath.
+	// Prevents duplicate downloads if a query arrives during warmup.
+	if (warmupInProgress) return undefined;
+
 	// Priority 1: Resolve from node_modules (dev mode)
 	const nodeModulesPath = resolveFromNodeModules();
 	if (nodeModulesPath) {
