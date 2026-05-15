@@ -735,6 +735,24 @@ describe('SpaceTaskPane — canvas toggle', () => {
 			expect(getByTestId('task-edit-button')).toBeTruthy();
 		});
 
+		it('shows the edit button for blocked tasks', () => {
+			mockTasks.value = [makeTask({ status: 'blocked' })];
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(getByTestId('task-edit-button')).toBeTruthy();
+		});
+
+		it('shows the edit button for review tasks', () => {
+			mockTasks.value = [makeTask({ status: 'review', taskAgentSessionId: 'session-abc' })];
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(getByTestId('task-edit-button')).toBeTruthy();
+		});
+
+		it('shows the edit button for approved tasks', () => {
+			mockTasks.value = [makeTask({ status: 'approved', taskAgentSessionId: 'session-abc' })];
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(getByTestId('task-edit-button')).toBeTruthy();
+		});
+
 		it('hides the edit button for terminal tasks (done)', () => {
 			mockTasks.value = [makeTask({ status: 'done' })];
 			const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);

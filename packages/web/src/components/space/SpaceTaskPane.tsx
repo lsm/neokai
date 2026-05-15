@@ -150,7 +150,7 @@ function formatTaskThreadError(err: unknown): string {
 	if (message.includes('Session not found')) {
 		return 'Task thread points to a stale session. Keep this pane open while it reconnects.';
 	}
-	return message || 'Failed to update task thread';
+	return message || 'Failed to update task';
 }
 
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
@@ -190,6 +190,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	// visibility — see `SubmitForReviewModalProps.error`.
 	const [submitForReviewError, setSubmitForReviewError] = useState<string | null>(null);
 	const [showEditTaskModal, setShowEditTaskModal] = useState(false);
+	const [editTaskBusy, setEditTaskBusy] = useState(false);
 	const [editTaskError, setEditTaskError] = useState<string | null>(null);
 	const [fullWorkflow, setFullWorkflow] = useState<import('@neokai/shared').SpaceWorkflow | null>(
 		null
@@ -666,14 +667,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		priority: import('@neokai/shared').SpaceTaskPriority;
 	}) => {
 		try {
-			setStatusTransitioning(true);
+			setEditTaskBusy(true);
 			setEditTaskError(null);
 			await spaceStore.updateTask(task.id, updates);
 			setShowEditTaskModal(false);
 		} catch (err) {
 			setEditTaskError(formatTaskThreadError(err));
 		} finally {
-			setStatusTransitioning(false);
+			setEditTaskBusy(false);
 		}
 	};
 
@@ -1084,12 +1085,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			/>
 			<EditTaskModal
 				isOpen={showEditTaskModal}
-				busy={statusTransitioning}
+				busy={editTaskBusy}
 				initialTitle={task.title}
 				initialDescription={task.description ?? ''}
 				initialPriority={task.priority}
 				onCancel={() => {
-					if (!statusTransitioning) setShowEditTaskModal(false);
+					if (!editTaskBusy) setShowEditTaskModal(false);
 				}}
 				onConfirm={handleEditTaskConfirm}
 				error={editTaskError}
