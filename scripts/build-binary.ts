@@ -4,9 +4,12 @@
  * 2. Generate embedded assets module
  * 3. Compile binary with bun build --compile
  *
+ * The SDK CLI binary is NOT embedded in the compiled binary — it's
+ * downloaded on first use at runtime (see sdk-cli-resolver.ts).
+ *
  * Usage:
- *   bun run scripts/build-binary.ts                         # All platforms
- *   bun run scripts/build-binary.ts --target bun-darwin-arm64  # Single platform
+ *   bun run scripts/build-binary.ts                             # All platforms
+ *   bun run scripts/build-binary.ts --target bun-darwin-arm64   # Single target
  */
 
 import { execSync } from 'node:child_process';
