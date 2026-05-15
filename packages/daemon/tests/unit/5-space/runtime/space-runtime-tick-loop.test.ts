@@ -1159,7 +1159,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				isSessionAlive: () => true,
 				getAgentSessionById: () => processingState('processing'),
 			});
-			new SpaceRuntime(buildConfig(tam));
+			const rt = new SpaceRuntime(buildConfig(tam));
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
 			]);
@@ -1191,6 +1191,16 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			await internalEventBus.publish('sdk.toolUse.consumed', {
 				sessionId: 'session:production-tool',
 				toolUseId: 'tool-production-path',
+				timestamp: Date.now(),
+			});
+
+			expect(repo.hasActiveToolUseForExecution(execution.id)).toBe(false);
+
+			await rt.stop();
+			await internalEventBus.publish('sdk.toolUse.created', {
+				sessionId: 'session:production-tool',
+				toolUseId: 'tool-after-stop',
+				toolName: 'Bash',
 				timestamp: Date.now(),
 			});
 
@@ -1381,6 +1391,44 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 			expect(rt.getExecutor(run.id)).toBeUndefined();
 			expect(rt.executorCount).toBe(0);
+		});
+
+		test('clears alive-stuck recovery state when removing done run executor', async () => {
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+					return `nag:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:terminal-stuck-state',
+				startedAt: Date.now() - 10 * 60_000,
+			});
+			saveAssistantMessage('session:terminal-stuck-state', { minutesAgo: 10, toolUse: true });
+
+			await rt.executeTick();
+			expect(nags).toEqual(['session:terminal-stuck-state']);
+
+			for (const task of taskRepo.listByWorkflowRun(run.id)) {
+				taskRepo.updateTask(task.id, { status: 'done' });
+			}
+			workflowRunRepo.transitionStatus(run.id, 'done');
+			await rt.executeTick();
+
+			expect(rt.getExecutor(run.id)).toBeUndefined();
+			expect(
+				(rt as unknown as { agentStuckRecovery: Map<string, unknown> }).agentStuckRecovery.size
+			).toBe(0);
 		});
 
 		test('removes executor for cancelled run', async () => {

@@ -368,6 +368,36 @@ describe('SDKMessageHandler', () => {
 			expect((message as unknown as { isSynthetic?: boolean }).isSynthetic).toBeUndefined();
 		});
 
+		it('should emit tool-use consumed events for acknowledged persisted tool results', async () => {
+			getMessageByStatusAndUuidSpy.mockImplementation(
+				(_sessionId: string, status: string, uuid: string) =>
+					status === 'enqueued' && uuid === 'tool-result-uuid'
+						? { dbId: 'db-msg-1', uuid: 'tool-result-uuid' }
+						: null
+			);
+
+			const message: SDKMessage = {
+				type: 'user',
+				uuid: 'tool-result-uuid',
+				session_id: 'test-session-id',
+				message: {
+					role: 'user',
+					content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }],
+				},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+			expect(emitSpy).toHaveBeenCalledWith(
+				'sdk.toolUse.consumed',
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					toolUseId: 'tool-1',
+				})
+			);
+		});
+
 		it('should acknowledge persisted deferred user messages and update timestamp', async () => {
 			getMessageByStatusAndUuidSpy.mockImplementation(
 				(_sessionId: string, status: string, uuid: string) =>
@@ -571,7 +601,10 @@ describe('SDKMessageHandler', () => {
 							uuid: 'enqueued-user-uuid',
 							type: 'user',
 							timestamp: 1700000000000,
-							message: { role: 'user', content: 'Queued message' },
+							message: {
+								role: 'user',
+								content: [{ type: 'tool_result', tool_use_id: 'tool-fallback', content: 'ok' }],
+							},
 						},
 					];
 				}
@@ -618,6 +651,13 @@ describe('SDKMessageHandler', () => {
 					version: expect.any(Number),
 				}),
 				{ channel: 'session:test-session-id' }
+			);
+			expect(emitSpy).toHaveBeenCalledWith(
+				'sdk.toolUse.consumed',
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					toolUseId: 'tool-fallback',
+				})
 			);
 		});
 

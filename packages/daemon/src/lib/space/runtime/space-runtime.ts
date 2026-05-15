@@ -676,6 +676,8 @@ export class SpaceRuntime {
 	private readonly externalEventRetryCounts = new Map<string, number>();
 	private readonly externalEventDeliveriesInFlight = new Set<string>();
 	private unsubscribeExternalEventPublished?: () => void;
+	private unsubscribeSdkToolUseCreated?: () => void;
+	private unsubscribeSdkToolUseConsumed?: () => void;
 	private acceptingExternalEvents = false;
 
 	/**
@@ -697,7 +699,14 @@ export class SpaceRuntime {
 	}
 
 	private subscribeSdkToolUseCreated(): void {
-		this.config.internalEventBus?.subscribe(
+		if (
+			!this.config.internalEventBus ||
+			this.unsubscribeSdkToolUseCreated ||
+			this.unsubscribeSdkToolUseConsumed
+		) {
+			return;
+		}
+		this.unsubscribeSdkToolUseCreated = this.config.internalEventBus.subscribe(
 			'sdk.toolUse.created',
 			(payload) => {
 				if (typeof payload.toolUseId !== 'string' || typeof payload.sessionId !== 'string') {
@@ -711,7 +720,7 @@ export class SpaceRuntime {
 			},
 			{ subscriberName: 'SpaceRuntime.toolUseRecovery' }
 		);
-		this.config.internalEventBus?.subscribe(
+		this.unsubscribeSdkToolUseConsumed = this.config.internalEventBus.subscribe(
 			'sdk.toolUse.consumed',
 			(payload) => {
 				if (typeof payload.toolUseId !== 'string') return;
@@ -1907,6 +1916,10 @@ export class SpaceRuntime {
 		this.pollManager?.stopAll();
 		this.unsubscribeExternalEventPublished?.();
 		this.unsubscribeExternalEventPublished = undefined;
+		this.unsubscribeSdkToolUseCreated?.();
+		this.unsubscribeSdkToolUseCreated = undefined;
+		this.unsubscribeSdkToolUseConsumed?.();
+		this.unsubscribeSdkToolUseConsumed = undefined;
 		for (const timer of this.externalEventRetryTimers.values()) {
 			clearTimeout(timer);
 		}
@@ -2207,11 +2220,7 @@ export class SpaceRuntime {
 			}
 			// Clear Layer 1 alive-stuck state so manually recovered workflow runs get
 			// a fresh nag/restart budget instead of inheriting stale recovery attempts.
-			for (const key of this.agentStuckRecovery.keys()) {
-				if (key.startsWith(preTxRunId + ':')) {
-					this.agentStuckRecovery.delete(key);
-				}
-			}
+			this.clearAgentStuckStateForRun(preTxRunId);
 		}
 
 		const liveSessionIds = new Set<string>();
@@ -3241,6 +3250,14 @@ export class SpaceRuntime {
 		this.agentStuckRecovery.delete(this.makeAgentStuckKey(runId, executionId));
 	}
 
+	private clearAgentStuckStateForRun(runId: string): void {
+		for (const key of this.agentStuckRecovery.keys()) {
+			if (key.startsWith(runId + ':')) {
+				this.agentStuckRecovery.delete(key);
+			}
+		}
+	}
+
 	private getAgentNoProgressThresholdMs(workflow: SpaceWorkflow, execution: NodeExecution): number {
 		const configuredDefault =
 			this.config.agentNoProgressThresholdMs ?? DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS;
@@ -3473,6 +3490,7 @@ export class SpaceRuntime {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
 		if (run.status === 'cancelled' || run.status === 'done') {
+			this.clearAgentStuckStateForRun(runId);
 			return;
 		}
 
@@ -4835,6 +4853,7 @@ export class SpaceRuntime {
 			}
 
 			if (!run || run.status === 'done' || run.status === 'cancelled') {
+				this.clearAgentStuckStateForRun(runId);
 				if (run?.status === 'done') {
 					const meta = this.executorMeta.get(runId);
 					if (meta) {

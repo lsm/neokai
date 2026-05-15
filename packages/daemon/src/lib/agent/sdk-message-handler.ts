@@ -303,6 +303,7 @@ export class SDKMessageHandler {
 			sessionId: session.id,
 			message: sdkReplayMessage,
 		});
+		await this.publishToolResultConsumedEvents(sdkReplayMessage);
 	}
 
 	/**
@@ -333,15 +334,17 @@ export class SDKMessageHandler {
 			});
 
 			const { dbId: _dbId, timestamp, ...sdkUserMessage } = enqueuedUser;
+			const replayedMessage = { ...sdkUserMessage, timestamp } as SDKMessage;
 			messageHub.event(
 				'state.sdkMessages.delta',
 				{
-					added: [{ ...sdkUserMessage, timestamp }],
+					added: [replayedMessage],
 					timestamp: Date.now(),
 					version: ++this.sdkMessageDeltaVersion,
 				},
 				{ channel: `session:${session.id}` }
 			);
+			await this.publishToolResultConsumedEvents(replayedMessage);
 		}
 	}
 
@@ -740,6 +743,10 @@ export class SDKMessageHandler {
 	}
 
 	private async handleUserMessage(message: SDKMessage): Promise<void> {
+		await this.publishToolResultConsumedEvents(message);
+	}
+
+	private async publishToolResultConsumedEvents(message: SDKMessage): Promise<void> {
 		const { internalEventBus } = this.ctx;
 
 		if (!isSDKUserMessage(message)) return;
