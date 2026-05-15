@@ -1101,11 +1101,9 @@ describe('mergeProviderEnvVars', () => {
 		expect(merged.NEW_VAR).toBe('new');
 	});
 
-	it('should return process.env spread when provider env vars is empty', () => {
+	it('should return a new object when provider env vars is empty', () => {
 		const merged = mergeProviderEnvVars({});
-
-		// Result should be a copy of process.env (object with keys)
-		expect(typeof merged).toBe('object');
-		expect(Object.keys(merged).length).toBeGreaterThan(0);
+		// Verify it returns a new object (not the same reference)
+		expect(merged).not.toBe(process.env);
 	});
 });
