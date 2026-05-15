@@ -35,6 +35,10 @@ import { homedir, tmpdir } from 'node:os';
 // oxlint-disable-next-line no-console
 const logWarn = process.env.NEOKAI_VERBOSE ? console.warn : () => {};
 
+/** Startup logging — always visible during daemon startup, never gated by NEOKAI_VERBOSE. */
+// oxlint-disable-next-line no-console
+const logStartup = (...args: unknown[]) => console.log(...args);
+
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
 /** Directory for cached SDK binaries: ~/.neokai/sdk/ */
@@ -563,12 +567,158 @@ function copySystemRipgrepToVendor(cliDir: string): void {
 
 // ─── Public API ───────────────────────────────────────────────────────────
 
+/** Result of SDK CLI binary warmup. */
+export interface WarmupResult {
+	status: 'ready' | 'failed';
+	path?: string;
+	source?: 'node_modules' | 'cache' | 'download';
+	packageName?: string;
+	version?: string;
+	error?: string;
+}
+
+/** Mutex flag to prevent concurrent warmup/download races. */
+let warmupInProgress = false;
+
+/**
+ * Pre-resolve the SDK CLI binary during daemon startup.
+ *
+ * Tries node_modules → cache → download (same priority as resolveSDKCliPath)
+ * but always returns a structured result without throwing. Sets `cachedCliPath`
+ * on success so subsequent `resolveSDKCliPath()` calls are instant.
+ *
+ * Logs progress at each step — never gated by NEOKAI_VERBOSE.
+ */
+export function warmupSDKCliBinary(): WarmupResult {
+	// Already resolved (e.g. a previous call or resolveSDKCliPath ran first)
+	if (cachedCliPath && cachedCliPath !== '') {
+		const source = resolveSource(cachedCliPath);
+		return {
+			status: 'ready',
+			path: cachedCliPath,
+			source,
+			packageName: getPlatformPackageName(),
+			version: getSdkVersion(),
+		};
+	}
+
+	// Prevent concurrent warmup (startup warmup + first query racing)
+	if (warmupInProgress) {
+		return { status: 'failed', error: 'Warmup already in progress' };
+	}
+
+	warmupInProgress = true;
+	try {
+		return doWarmup();
+	} finally {
+		warmupInProgress = false;
+	}
+}
+
+/**
+ * Internal warmup implementation. Logs progress, never throws.
+ */
+function doWarmup(): WarmupResult {
+	const platformPkg = getPlatformPackageName();
+	const version = getSdkVersion();
+
+	logStartup(
+		`[SDK] Resolving Claude Code binary for ${platformPkg ?? 'unsupported platform'} (SDK ${version})`
+	);
+
+	if (!platformPkg) {
+		const msg = `Unsupported platform: ${process.platform}-${process.arch}`;
+		logStartup(
+			`[SDK] Claude Code binary unavailable. Agent queries may fail until the binary is available. Error: ${msg}`
+		);
+		return { status: 'failed', packageName: undefined, version, error: msg };
+	}
+
+	// Priority 1: node_modules
+	const nodeModulesPath = resolveFromNodeModules();
+	if (nodeModulesPath) {
+		cachedCliPath = nodeModulesPath;
+		const size = formatFileSize(getFileSize(nodeModulesPath));
+		logStartup(`[SDK] Claude Code binary ready from node_modules: ${nodeModulesPath} (${size})`);
+		return {
+			status: 'ready',
+			path: nodeModulesPath,
+			source: 'node_modules',
+			packageName: platformPkg,
+			version,
+		};
+	}
+
+	// Priority 2: cache
+	const cachedPath = resolveFromCache();
+	if (cachedPath) {
+		cachedCliPath = cachedPath;
+		const size = formatFileSize(getFileSize(cachedPath));
+		logStartup(`[SDK] Claude Code binary ready from cache: ${cachedPath} (${size})`);
+		return {
+			status: 'ready',
+			path: cachedPath,
+			source: 'cache',
+			packageName: platformPkg,
+			version,
+		};
+	}
+
+	// Priority 3: download
+	logStartup(`[SDK] Downloading ${platformPkg}@${version}...`);
+	const downloadedPath = downloadSdkBinary();
+	if (downloadedPath) {
+		cachedCliPath = downloadedPath;
+		const size = formatFileSize(getFileSize(downloadedPath));
+		logStartup(`[SDK] Claude Code binary ready: ${downloadedPath} (${size})`);
+		return {
+			status: 'ready',
+			path: downloadedPath,
+			source: 'download',
+			packageName: platformPkg,
+			version,
+		};
+	}
+
+	// All strategies failed — do NOT set negative cache so resolveSDKCliPath() can retry later
+	const msg = 'All resolution strategies failed (node_modules, cache, download)';
+	logStartup(
+		`[SDK] Claude Code binary unavailable. Agent queries may fail until the binary is available. Error: ${msg}`
+	);
+	return { status: 'failed', packageName: platformPkg, version, error: msg };
+}
+
+/** Determine source label from a resolved path. */
+function resolveSource(path: string): 'node_modules' | 'cache' | 'download' {
+	if (path.includes('node_modules')) return 'node_modules';
+	if (path.includes('.neokai/sdk')) return 'cache';
+	return 'download';
+}
+
+/** Get file size in bytes, or 0 on error. */
+function getFileSize(path: string): number {
+	try {
+		return lstatSync(path).size;
+	} catch {
+		return 0;
+	}
+}
+
+/** Format bytes as human-readable string. */
+function formatFileSize(bytes: number): string {
+	if (bytes === 0) return '0 B';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+	return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
 /**
  * Reset module state for testing.
  * @public Exported for unit tests.
  */
 export function _resetForTesting(): void {
 	cachedCliPath = undefined;
+	warmupInProgress = false;
 }
 
 /**

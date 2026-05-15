@@ -58,6 +58,7 @@ import {
 	ProcessWatchdog,
 	type ProcessSnapshot,
 } from './lib/process-watchdog';
+import { warmupSDKCliBinary } from './lib/agent/sdk-cli-resolver';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -254,6 +255,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	} /* v8 ignore next 3 */ else {
 		logInfo('[Daemon] NO CREDENTIALS DETECTED - set ANTHROPIC_API_KEY or authenticate via OAuth');
 		logInfo('[Daemon] Model initialization skipped - no credentials available');
+	}
+
+	// Warm up SDK CLI binary — resolves from node_modules/cache or downloads.
+	// Non-fatal: daemon continues if download fails. resolveSDKCliPath() retries on first query.
+	if (process.env.NODE_ENV !== 'test') {
+		warmupSDKCliBinary();
 	}
 
 	// PHASE 3 ARCHITECTURE (FIXED): MessageHub owns Router, Transport is pure I/O
