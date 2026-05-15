@@ -4,12 +4,12 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
-import {
-	ExternalEventExtensionManager,
-	InMemoryExternalEventRouteRegistry,
-	isHttpExternalEventExtension,
-	isRpcExternalEventExtension,
-} from '../../../../src/lib/external-events/extension-manager';
+import { ExternalEventExtensionManager } from '../../../../src/lib/external-events/extension-manager';
+import type {
+	ExternalEventExtension,
+	HttpExternalEventExtension,
+	RpcExternalEventExtension,
+} from '../../../../src/lib/external-events/types';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
 import {
 	createInternalEventBus,
@@ -53,6 +53,18 @@ function getRequestHandler(hub: MessageHub, method: string): RequestHandler | un
 	return (hub as unknown as { requestHandlers: Map<string, RequestHandler> }).requestHandlers.get(
 		method
 	);
+}
+
+function isHttpExternalEventExtension(
+	extension: ExternalEventExtension
+): extension is HttpExternalEventExtension {
+	return 'routes' in extension;
+}
+
+function isRpcExternalEventExtension(
+	extension: ExternalEventExtension
+): extension is RpcExternalEventExtension {
+	return 'registerRpcHandlers' in extension;
 }
 
 function seedTask(db: BunDatabase): void {
@@ -121,13 +133,11 @@ describe('external event extension startup primitives', () => {
 		const manager = new ExternalEventExtensionManager();
 		const extension = new GitHubEventExtension(db);
 		manager.register(extension);
-		const routeRegistry = new InMemoryExternalEventRouteRegistry();
 		const hub = new MessageHub({ defaultSessionId: 'global' });
 		const changes: Array<{ source: string; spaceId?: string; kind: string }> = [];
 		const context = {
 			publisher: service,
 			config,
-			routeRegistry,
 			onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
 				changes.push(change);
 			},
@@ -137,12 +147,12 @@ describe('external event extension startup primitives', () => {
 			const globalConfig = await context.config.getGlobalConfig(registered.sourceId);
 			if (!globalConfig.globallyEnabled) continue;
 			if (isHttpExternalEventExtension(registered)) {
-				context.routeRegistry.register(registered.routes, context);
+				manager.registerRoutes(registered.routes, context);
 			}
 			if (isRpcExternalEventExtension(registered)) {
-				registered.registerRpcHandlers(hub, context);
+				manager.registerRpcHandlers(registered.sourceId, hub, context);
 			}
-			await registered.start(context);
+			await manager.startExtension(registered.sourceId, context);
 		}
 
 		seedTask(db);
@@ -161,7 +171,11 @@ describe('external event extension startup primitives', () => {
 
 		const payload = githubPayload();
 		const raw = JSON.stringify(payload);
-		const response = await routeRegistry.handle(
+		const route = manager
+			.getRegisteredRoutes()
+			.find((route) => route.path === '/webhook/github/space');
+		expect(route).toBeDefined();
+		const response = await route!.handle(
 			new Request('http://localhost/webhook/github/space', {
 				method: 'POST',
 				headers: {
@@ -240,7 +254,17 @@ describe('external event extension startup primitives', () => {
 		const hub = new MessageHub({ defaultSessionId: 'global' });
 		const context = {
 			publisher: service,
-			config,
+			config: new (class extends ExternalEventExtensionConfigStore {
+				override async getSpaceConfig(spaceId: string, source: string) {
+					const repos = extension.repo.listWatchedRepos(spaceId);
+					return {
+						spaceId,
+						source,
+						enabled: repos.some((repo) => repo.enabled),
+						settings: { watchedRepos: repos },
+					};
+				}
+			})(db),
 			onSourceConfigChanged() {},
 		};
 		extension.registerRpcHandlers(hub, context);
@@ -262,7 +286,7 @@ describe('external event extension startup primitives', () => {
 					{
 						owner: 'acme',
 						repo: 'widgets',
-						polling_enabled: 1,
+						pollingEnabled: true,
 					},
 				],
 			},
@@ -352,7 +376,7 @@ describe('external event extension startup primitives', () => {
 			const globalConfig = await context.config.getGlobalConfig(registered.sourceId);
 			if (!globalConfig.globallyEnabled) continue;
 			if (isRpcExternalEventExtension(registered) && globalConfig.capabilities.rpcConfig) {
-				registered.registerRpcHandlers(hub, context);
+				manager.registerRpcHandlers(registered.sourceId, hub, context);
 			}
 		}
 
@@ -386,12 +410,10 @@ describe('external event extension startup primitives', () => {
 		).run();
 		const manager = new ExternalEventExtensionManager();
 		manager.register(new GitHubEventExtension(db));
-		const routeRegistry = new InMemoryExternalEventRouteRegistry();
 		const hub = new MessageHub({ defaultSessionId: 'global' });
 		const context = {
 			publisher: service,
 			config,
-			routeRegistry,
 			onSourceConfigChanged() {},
 		};
 
@@ -399,19 +421,15 @@ describe('external event extension startup primitives', () => {
 			const globalConfig = await context.config.getGlobalConfig(registered.sourceId);
 			if (!globalConfig.globallyEnabled) continue;
 			if (isHttpExternalEventExtension(registered)) {
-				context.routeRegistry.register(registered.routes, context);
+				manager.registerRoutes(registered.routes, context);
 			}
 			if (isRpcExternalEventExtension(registered)) {
-				registered.registerRpcHandlers(hub, context);
+				manager.registerRpcHandlers(registered.sourceId, hub, context);
 			}
-			await registered.start(context);
+			await manager.startExtension(registered.sourceId, context);
 		}
 
-		expect(
-			await routeRegistry.handle(
-				new Request('http://localhost/webhook/github/space', { method: 'POST' })
-			)
-		).toBeNull();
+		expect(manager.getRegisteredRoutes()).toEqual([]);
 		expect(getRequestHandler(hub, 'space.github.pollOnce')).toBeUndefined();
 	});
 });

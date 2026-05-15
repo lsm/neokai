@@ -9,8 +9,10 @@ import type { MessageHub } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
-import type { DaemonHub } from '../daemon-hub';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { DaemonCommandMap, InternalCommandBus } from '../internal-command-bus';
+import type { ExternalEventStore } from '../external-events/external-event-store';
+import type { ExternalEventService } from '../external-events/external-event-service';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
@@ -41,6 +43,7 @@ import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-ta
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
+import { ReplyRoutingRegistry } from '../space/runtime/reply-routing-registry';
 import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import {
 	setupSpaceWorkflowHandlers,
@@ -54,6 +57,7 @@ import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager'
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
+import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
@@ -96,8 +100,6 @@ import { TaskScheduleRepository } from '../../storage/repositories/task-schedule
 import { SpaceRepository } from '../../storage/repositories/space-repository';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers';
 import { ScheduleService } from '../space/schedule/schedule-service';
-import type { ExternalEventStore } from '../external-events/external-event-store';
-import type { ExternalEventService } from '../external-events/external-event-service';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -105,18 +107,14 @@ export interface RPCHandlerDependencies {
 	authManager: AuthManager;
 	settingsManager: SettingsManager;
 	config: Config;
-	daemonHub: DaemonHub;
-	/**
-	 * Semantic internal event bus for daemon domain events that have been
-	 * migrated off DaemonHub. New publishers/subscribers should use this.
-	 */
+	/** Semantic internal event bus for daemon domain events. */
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
-	db: Database;
-	gitHubService?: GitHubService;
-	/** Source-agnostic external event store for workflow runtime delivery tracking. */
+	commandBus: InternalCommandBus<DaemonCommandMap>;
 	externalEventStore: ExternalEventStore;
 	/** External event service available to runtime subscribers when direct publishing is needed. */
 	externalEventService: ExternalEventService;
+	db: Database;
+	gitHubService?: GitHubService;
 	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
@@ -186,21 +184,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	registerSettingsHandlers(
 		deps.messageHub,
 		deps.settingsManager,
-		deps.daemonHub,
 		deps.internalEventBus,
 		deps.db,
 		deps.mcpImportService
 	);
-	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
 	// Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
 	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
-	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
 
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
 
 	// Question handlers (AskUserQuestion respond / saveDraft / cancel)
-	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
 
 	// Reference handlers (@ mention system — search + resolve tasks, goals, files, folders)
 	const fileIndex = new FileIndex(deps.config.workspaceRoot);
@@ -228,30 +225,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// App-level MCP registry handlers
 	registerAppMcpHandlers(deps.messageHub, {
 		db: deps.db,
-		daemonHub: deps.daemonHub,
 		internalEventBus: deps.internalEventBus,
 	});
 
 	// MCP enablement RPC handlers
-	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.internalEventBus, deps.db);
+	setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db);
 
 	// Per-space MCP enablement RPC handlers + `.mcp.json` import refresh.
-	setupSpaceMcpHandlers(
-		deps.messageHub,
-		deps.daemonHub,
-		deps.internalEventBus,
-		deps.db,
-		deps.spaceManager
-	);
+	setupSpaceMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, deps.spaceManager);
 
 	// Skills registry RPC handlers
-	registerSkillHandlers(
-		deps.messageHub,
-		deps.skillsManager,
-		deps.daemonHub,
-		deps.internalEventBus,
-		undefined
-	);
+	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.internalEventBus, undefined);
 
 	// Workspace history RPC handlers.
 	// The import service is passed in so `workspace.add` can trigger a
@@ -278,8 +262,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
-	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
+	const gateOpenStateRepo = new GateOpenStateRepository(deps.db.getDatabase());
+	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(
+		deps.db.getDatabase(),
+		gateOpenStateRepo
+	);
 	const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
@@ -354,7 +342,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Space agent handlers
 	setupSpaceAgentHandlers(
 		deps.messageHub,
-		deps.daemonHub,
+		deps.internalEventBus,
 		deps.spaceAgentManager,
 		deps.spaceManager
 	);
@@ -363,7 +351,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		deps.spaceManager,
 		spaceWorkflowManager,
-		deps.daemonHub,
+		deps.internalEventBus,
 		deps.spaceAgentManager,
 		spaceWorkflowRunRepo
 	);
@@ -404,9 +392,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Not started yet: TaskAgentManager is created next and injected before start().
 	// gateDataRepo is injected so notifyGateDataChanged() can trigger lazy node activation
 	// after gate data is written externally (e.g. approveGate RPC, writeGateData RPC).
-	// sessionManager and daemonHub are injected so space:chat:${spaceId} sessions are
+	// sessionManager and internalEventBus are injected so space:chat:${spaceId} sessions are
 	// provisioned with MCP tools and system prompts on startup and on space.created.
 	const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
+	// Reply Routing Registry — shared between space-agent-tools (register)
+	// and task-agent-tools / node-agent-tools (lookup).
+	const replyRoutingRegistry = new ReplyRoutingRegistry();
+
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		dbPath: deps.db.getDatabasePath(),
@@ -418,26 +410,27 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		nodeExecutionRepo,
 		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
+		gateOpenStateRepo,
 		channelCycleRepo,
 		sessionManager: deps.sessionManager,
-		daemonHub: deps.daemonHub,
+		internalEventBus: deps.internalEventBus,
 		artifactRepo,
 		pendingMessageRepo,
 		scheduleService,
-		internalEventBus: deps.internalEventBus,
+		commandBus: deps.commandBus,
 		externalEventStore: deps.externalEventStore,
 		externalEventService: deps.externalEventService,
+		replyRoutingRegistry,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
 	// session.create can synchronously call attachSpaceToolsToMemberSession for
-	// ad-hoc Space sessions. Doing this via the daemonHub 'session.created' event
+	// ad-hoc Space sessions. Doing this via the internalEventBus 'session.created' event
 	// would be racy: the query can start (and freeze its MCP config) before the
 	// event handler completes.
 	setupSessionHandlers(
 		deps.messageHub,
 		deps.sessionManager,
-		deps.daemonHub,
 		deps.internalEventBus,
 		deps.spaceManager,
 		spaceRuntimeService
@@ -461,15 +454,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Register Space RPC handlers now that spaceRuntimeService exists.
 	// spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()
-	// directly after session creation, avoiding reliance on the daemonHub event.
+	// directly after session creation, avoiding reliance on the internalEventBus event.
 	setupSpaceHandlers(
 		deps.messageHub,
 		deps.spaceManager,
 		spaceTaskRepo,
 		spaceWorkflowRunRepo,
+		deps.internalEventBus,
 		deps.spaceAgentManager,
 		spaceWorkflowManager,
-		deps.internalEventBus,
 		deps.sessionManager,
 		spaceRuntimeService
 	);
@@ -481,11 +474,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// `space:chat:${spaceId}` session via SessionManager. Shared between
 	// TaskAgentManager (for queue flush) and task-agent tool wiring.
 	const sessionManagerRef = deps.sessionManager;
-	const spaceAgentInjector = async (spaceId: string, message: string): Promise<void> => {
-		const sessionId = `space:chat:${spaceId}`;
-		const session = await sessionManagerRef.getSessionAsync(sessionId);
+	const spaceAgentInjector = async (
+		spaceId: string,
+		message: string,
+		replyToSessionId?: string | null
+	): Promise<void> => {
+		let sessionId = replyToSessionId || `space:chat:${spaceId}`;
+		let session = await sessionManagerRef.getSessionAsync(sessionId);
+		// Fallback: if the routed-to session no longer exists (e.g. ad-hoc member
+		// session ended), fall back to the canonical space chat session so the
+		// reply is not silently dropped.
+		if (!session && replyToSessionId) {
+			sessionId = `space:chat:${spaceId}`;
+			session = await sessionManagerRef.getSessionAsync(sessionId);
+		}
 		if (!session) {
-			throw new Error(`Space Agent chat session not found: ${sessionId}`);
+			throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
 		}
 		const messageId = generateUUID();
 		const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
@@ -519,8 +523,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		gateDataRepo,
+		gateOpenStateRepo,
 		channelCycleRepo,
-		daemonHub: deps.daemonHub,
 		messageHub: deps.messageHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		defaultModel: deps.config.defaultModel,
@@ -535,6 +539,25 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceAgentInjector,
 		scheduleService,
 		internalEventBus: deps.internalEventBus,
+		replyRoutingRegistry,
+	});
+
+	deps.commandBus.register('agent.message.inject', async (command) => {
+		if (!taskAgentManager) {
+			return { ok: false, error: 'TaskAgentManager unavailable' };
+		}
+		try {
+			await taskAgentManager.injectSubSessionMessage(
+				command.sessionId,
+				command.message,
+				true,
+				undefined,
+				command.deliveryMode ?? 'immediate'
+			);
+			return { ok: true };
+		} catch (err) {
+			return { ok: false, error: err };
+		}
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
@@ -559,14 +582,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			await spaceRuntimeService.notifyGateDataChanged(runId, gateId);
 		},
 		onWorkflowRunUpdated: (spaceId: string, runId: string, run: NeoWorkflowRun) => {
-			deps.internalEventBus.publishAsync('space.workflowRun.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId,
-				runId,
-				// NeoWorkflowRun is a subset of SpaceWorkflowRun — cast for event emission
-				run: run as unknown as DaemonInternalEventMap['space.workflowRun.updated']['run'],
-			});
+			deps.internalEventBus
+				.publish('space.workflowRun.updated', {
+					sessionId: 'global',
+					spaceId,
+					runId,
+					// NeoWorkflowRun is a subset of SpaceWorkflowRun — cast for hub emission
+					run: run as unknown as Record<string, unknown>,
+				})
+				.catch((err) => {
+					log.warn('Neo: failed to emit space.workflowRun.updated:', err);
+				});
 		},
 		onGateDataUpdated: (
 			spaceId: string,
@@ -574,14 +600,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			gateId: string,
 			data: Record<string, unknown>
 		) => {
-			deps.internalEventBus.publishAsync('space.gateData.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
-				spaceId,
-				runId,
-				gateId,
-				data,
-			});
+			deps.internalEventBus
+				.publish('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId,
+					runId,
+					gateId,
+					data,
+				})
+				.catch((err) => {
+					log.warn('Neo: failed to emit space.gateData.updated:', err);
+				});
 		},
 		mcpManager: {
 			createMcpServer: (params) => deps.db.appMcpServers.create(params),
@@ -634,7 +663,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowRepo,
 		spaceWorkflowManager,
 		deps.db.getDatabase(),
-		deps.daemonHub
+		deps.internalEventBus
 	);
 
 	// Space workflow run handlers — reuse the same factory pattern as spaceTask handlers

@@ -17,7 +17,7 @@ describe('ExternalEventExtensionConfigStore', () => {
 			.prepare(
 				`SELECT name FROM sqlite_master
 				 WHERE type = 'table' AND name IN (
-					'external_event_source_configs',
+					'external_event_extension_configs',
 					'space_external_event_source_configs'
 				 )
 				 ORDER BY name`
@@ -25,7 +25,7 @@ describe('ExternalEventExtensionConfigStore', () => {
 			.all() as { name: string }[];
 
 		expect(rows.map((row) => row.name)).toEqual([
-			'external_event_source_configs',
+			'external_event_extension_configs',
 			'space_external_event_source_configs',
 		]);
 	});

@@ -23,7 +23,7 @@ describe('Migration 128: external event extension config tables', () => {
 	test('creates global source config table with expected columns', () => {
 		runMigration128(db);
 
-		const columns = columnNames('external_event_source_configs');
+		const columns = columnNames('external_event_extension_configs');
 		expect(columns).toEqual([
 			'source',
 			'globally_enabled',

@@ -188,11 +188,8 @@ describe('Space GitHub integration', () => {
 	test('extension polling uses auth/cursors and publishes to ExternalEventService', async () => {
 		const db = setupDb();
 		seedTask(db);
-		const service = new SpaceGitHubService(db);
 		const published: { spaceId: string; topic: string }[] = [];
-		const extension = new GitHubEventExtension(service.eventExtensionRepo, {
-			githubToken: 'token',
-		});
+		const extension = new GitHubEventExtension(db, 'token');
 		await extension.start({
 			publisher: {
 				publish: async (event: any) => {
@@ -293,11 +290,8 @@ describe('Space GitHub integration', () => {
 	test('extension polling ignores issue comments and keeps watermark stable while draining pages', async () => {
 		const db = setupDb();
 		seedTask(db);
-		const service = new SpaceGitHubService(db);
 		let publishCount = 0;
-		const extension = new GitHubEventExtension(service.eventExtensionRepo, {
-			githubToken: 'token',
-		});
+		const extension = new GitHubEventExtension(db, 'token');
 		await extension.start({
 			publisher: {
 				publish: async () => {

@@ -82,6 +82,10 @@ export class ExternalEventExtensionManager {
 		return this.extensions.get(sourceId);
 	}
 
+	getAll(): ExternalEventExtension[] {
+		return Array.from(this.extensions.values());
+	}
+
 	registerRoutes(routes: readonly Route[], context: ExternalEventExtensionContext): void {
 		const sourceId = this.findSourceIdForRoutes(routes);
 		if (!sourceId) {

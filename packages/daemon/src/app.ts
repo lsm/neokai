@@ -8,25 +8,32 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
-import { ClientEventGateway, MessageHub, MessageHubRouter } from '@neokai/shared';
-import { createDaemonHub } from './lib/daemon-hub';
+import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import {
 	createDaemonInternalEventBus,
 	type DaemonInternalEventMap,
 	type InternalEventBus,
 } from './lib/internal-event-bus';
+import {
+	createInternalCommandBus,
+	type DaemonCommandMap,
+	type InternalCommandBus,
+} from './lib/internal-command-bus';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
-import { getProviderRegistry } from './lib/providers/registry.js';
-import { ExternalEventStore } from './lib/external-events/external-event-store';
-import { ExternalEventService } from './lib/external-events/external-event-service';
+import { ExternalEventService, ExternalEventStore } from './lib/external-events';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store';
 import { ExternalEventExtensionManager } from './lib/external-events/extension-manager';
+import type {
+	HttpExternalEventExtension,
+	RpcExternalEventExtension,
+} from './lib/external-events/types';
 import { GitHubEventExtension } from './lib/external-events/github';
+import { getProviderRegistry } from './lib/providers/registry.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
@@ -48,6 +55,11 @@ import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from 
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
 import { NeoAgentManager } from './lib/neo/neo-agent-manager';
+import {
+	cleanupSuspiciousProcesses,
+	ProcessWatchdog,
+	type ProcessSnapshot,
+} from './lib/process-watchdog';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -74,13 +86,13 @@ export interface DaemonAppContext {
 	settingsManager: SettingsManager;
 	stateManager: StateProjectionService;
 	transport: WebSocketServerTransport;
-	daemonHub: Awaited<ReturnType<typeof createDaemonHub>>;
 	/**
-	 * Semantic internal event bus for migrated daemon domain events.
-	 * New publishers/subscribers should use this instead of DaemonHub.
+	 * Semantic internal event bus for daemon domain events.
 	 * See docs/plans/internal-event-command-query-architecture.md.
 	 */
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+	/** Semantic internal command bus for action dispatch */
+	commandBus: InternalCommandBus<DaemonCommandMap>;
 	/** Semantic internal query bus for point-in-time reads */
 	queryBus: ReturnType<typeof createInternalQueryBus<DaemonQueryMap>>;
 	/**
@@ -183,9 +195,38 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	//       Ephemeral, within a single async call; cleaned up before the call returns.
 	//   • app.ts graceful-shutdown readiness check (this file, waitForPendingCalls)
 	//       One-shot shutdown polling with hard timeout; not a recurring task.
+	//   • ProcessWatchdog timer (process-watchdog.ts)
+	//       Last-resort OS process leak safety net; intentionally independent from the job queue.
 	jobProcessor.setChangeNotifier((table) => {
 		reactiveDb.notifyChange(table);
 	});
+	let sessionManager: SessionManager | null = null;
+	let neoAgentManager: NeoAgentManager | null = null;
+	let taskAgentManager: TaskAgentManager | null = null;
+	const processWatchdog = new ProcessWatchdog(undefined, () =>
+		cleanupSuspiciousProcesses({
+			getRootPids: (snapshot?: ProcessSnapshot[]) => {
+				const live: number[] = [];
+				const exited: number[] = [];
+				if (sessionManager) {
+					const split = sessionManager.getTrackedAgentRootPidsSplit(snapshot);
+					live.push(...split.live);
+					exited.push(...split.exited);
+				}
+				if (neoAgentManager) {
+					const split = neoAgentManager.getTrackedAgentRootPidsSplit();
+					live.push(...split.live);
+					exited.push(...split.exited);
+				}
+				if (taskAgentManager) {
+					const split = taskAgentManager.getTrackedAgentRootPidsSplit();
+					live.push(...split.live);
+					exited.push(...split.exited);
+				}
+				return { live, exited };
+			},
+		})
+	);
 
 	// Initialize Space agent manager
 	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
@@ -245,37 +286,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// 5. Register Transport with MessageHub
 	messageHub.registerTransport(transport);
 
-	// Initialize DaemonHub (TypedHub-based event coordination)
-	const daemonHub = createDaemonHub('daemon');
-	await daemonHub.initialize();
-
-	// Initialize InternalEventBus for migrated daemon domain events.
-	// Subscribers/publishers register here as they migrate off DaemonHub.
+	// Initialize InternalEventBus for daemon domain events.
 	const internalEventBus = createDaemonInternalEventBus();
+
+	// Initialize InternalCommandBus for daemon action dispatch.
+	const commandBus = createInternalCommandBus<DaemonCommandMap>();
 
 	// Initialize InternalQueryBus for point-in-time reads.
 	// Handlers will be registered by domain services as they migrate.
 	const queryBus = createInternalQueryBus<DaemonQueryMap>();
-
-	// Initialize external event services after the internal bus so extensions can
-	// publish source-normalized events into the workflow runtime.
-	const externalEventStore = new ExternalEventStore(db.getDatabase());
-	const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
-	const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
-	const sourceConfigTables: Record<string, string[]> = {
-		github: ['space_github_watched_repos'],
-	};
-	const extensionContext = {
-		publisher: externalEventService,
-		config: extensionConfigStore,
-		onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
-			logInfo('[Daemon] Extension config changed', change);
-			for (const table of sourceConfigTables[change.source] ?? []) {
-				reactiveDb.notifyChange(table);
-			}
-		},
-	};
-	const extensionManager = new ExternalEventExtensionManager();
 
 	// Initialize application-level MCP and Skills managers before SessionManager
 	// so AgentSession can inject skills into SDK query options.
@@ -318,15 +337,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
 	}
 
-	// Initialize session manager (with DaemonHub, SettingsManager, no StateManager dependency!)
+	// Initialize session manager (with InternalEventBus<DaemonInternalEventMap>, SettingsManager, no StateManager dependency!)
 	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
 	// trigger LiveQuery invalidation immediately.
-	const sessionManager = new SessionManager(
+	sessionManager = new SessionManager(
 		reactiveDb.db,
 		messageHub,
 		authManager,
 		settingsManager,
-		daemonHub,
+		internalEventBus,
 		{
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
@@ -335,8 +354,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobQueue,
 		jobProcessor,
 		skillsManager,
-		db.appMcpServers,
-		internalEventBus
+		db.appMcpServers
 	);
 
 	// Register session title generation handler before jobProcessor starts
@@ -344,10 +362,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize Neo agent manager (singleton global AI assistant).
 	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
-	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
+	neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
-	// Initialize StateProjectionService (pure read-model caches from InternalEventBus)
+	// Initialize StateProjectionService (read-model caches from InternalEventBus)
 	const stateManager = new StateProjectionService(
+		messageHub,
 		sessionManager,
 		authManager,
 		settingsManager,
@@ -356,74 +375,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		internalEventBus
 	);
 
-	// Bridge migrated DaemonHub events to InternalEventBus so
-	// StateProjectionService (and future subscribers) receive them without
-	// touching every publisher call site. This is the M5 compatibility path;
-	// publishers will migrate to InternalEventBus directly in later milestones.
-	//
-	// We use publish() (awaited) instead of publishAsync() so cache updates
-	// settle before ClientEventBridge triggers broadcastSystemChange() from
-	// the same DaemonHub event — preserving the ordering between cache write
-	// and broadcast read.
-	const unsubSessionCreated = daemonHub.on('session.created', (data) => {
-		void internalEventBus.publish('session.created', {
-			namespaceId: data.sessionId,
-			session: data.session,
-		});
-	});
-	const unsubSessionUpdated = daemonHub.on('session.updated', (data) => {
-		void internalEventBus.publish('session.updated', {
-			namespaceId: data.sessionId,
-			source: data.source,
-			session: data.session,
-			processingState: data.processingState,
-		});
-	});
-	const unsubSessionDeleted = daemonHub.on('session.deleted', (data) => {
-		void internalEventBus.publish('session.deleted', {
-			namespaceId: data.sessionId,
-		});
-	});
-	const unsubCommandsUpdated = daemonHub.on('commands.updated', (data) => {
-		void internalEventBus.publish('commands.updated', {
-			namespaceId: data.sessionId,
-			commands: data.commands,
-		});
-	});
-	const unsubSessionError = daemonHub.on('session.error', (data) => {
-		void internalEventBus.publish('session.error', {
-			namespaceId: data.sessionId,
-			error: data.error,
-			details: data.details,
-		});
-	});
-	const unsubSessionErrorClear = daemonHub.on('session.errorClear', (data) => {
-		void internalEventBus.publish('session.errorClear', {
-			namespaceId: data.sessionId,
-		});
-	});
-	const unsubApiConnection = daemonHub.on('api.connection', (data) => {
-		// Forward the complete payload so diagnostic fields (errorCount,
-		// lastError, lastSuccessfulCall) are preserved in projections.
-		void internalEventBus.publish('api.connection', {
-			namespaceId: data.sessionId,
-			...data,
-		});
-	});
-
-	// Initialize ClientEventBridge — owns ALL client-facing delivery:
-	// - Event forwarding (space, session, connection, config, error events)
-	// - Versioned state broadcasts (system, settings, session state, SDK messages)
-	// - RPC handler registration (state snapshot queries)
-	// Migrated space events route through InternalEventBus; unmigrated spaceAgent/spaceWorkflow
-	// events remain on DaemonHub.
-	const clientEventGateway = new ClientEventGateway({ hub: messageHub });
+	// Initialize ClientEventBridge — forwards selected InternalEventBus events to
+	// WebSocket clients via ClientEventGateway. This extracts the repetitive
+	// room/space forwarding out of StateProjectionService.
+	const clientEventGateway = stateManager.getClientEventGateway();
 	const clientEventBridge = createClientEventBridge(
-		daemonHub,
-		messageHub,
+		internalEventBus,
 		clientEventGateway,
-		stateManager,
-		internalEventBus
+		stateManager
 	);
 	clientEventBridge.start();
 
@@ -441,7 +400,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		if (apiKey) {
 			gitHubService = createGitHubService({
 				db,
-				daemonHub,
+				internalEventBus,
 				config,
 				apiKey,
 				githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
@@ -464,23 +423,62 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const fileIndex = new FileIndex(config.workspaceRoot);
 	void fileIndex.init();
 
+	const externalEventStore = new ExternalEventStore(db.getDatabase());
+	const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
+	const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
+	const sourceConfigTables: Record<string, string[]> = {
+		github: ['space_github_watched_repos'],
+	};
+	const extensionContext = {
+		publisher: externalEventService,
+		config: extensionConfigStore,
+		onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
+			logInfo('[Daemon] Extension config changed', change);
+			for (const table of sourceConfigTables[change.source] ?? []) {
+				reactiveDb.notifyChange(table);
+			}
+		},
+	};
+	const extensionManager = new ExternalEventExtensionManager();
+	extensionManager.register(new GitHubEventExtension(db.getDatabase()));
+
+	function isHttpExternalEventExtension(
+		extension: unknown
+	): extension is HttpExternalEventExtension {
+		return 'routes' in (extension as Record<string, unknown>);
+	}
+
+	function isRpcExternalEventExtension(extension: unknown): extension is RpcExternalEventExtension {
+		return 'registerRpcHandlers' in (extension as Record<string, unknown>);
+	}
+
+	for (const extension of extensionManager.getAll()) {
+		const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
+		if (!globalConfig.globallyEnabled) continue;
+
+		if (isHttpExternalEventExtension(extension)) {
+			extensionManager.registerRoutes(extension.routes, extensionContext);
+		}
+		if (isRpcExternalEventExtension(extension) && globalConfig.capabilities.rpcConfig) {
+			extensionManager.registerRpcHandlers(extension.sourceId, messageHub, extensionContext);
+		}
+
+		await extensionManager.startExtension(extension.sourceId, extensionContext);
+		logInfo(`[Daemon] Started external event extension: ${extension.sourceId}`);
+	}
+
 	// Setup RPC handlers (returns cleanup function + exposed services)
-	const {
-		cleanup: rpcHandlerCleanup,
-		spaceRuntimeService,
-		taskAgentManager,
-		spaceWorktreeManager,
-	} = setupRPCHandlers({
+	const rpcHandlers = setupRPCHandlers({
 		messageHub,
 		sessionManager,
 		authManager,
 		settingsManager,
 		config,
-		daemonHub,
 		internalEventBus,
+		commandBus,
+		externalEventStore,
 		db,
 		gitHubService: gitHubService ?? undefined,
-		externalEventStore,
 		externalEventService,
 		spaceManager,
 		spaceAgentManager,
@@ -493,25 +491,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		neoAgentManager,
 		mcpImportService,
 	});
-
-	extensionManager.register(new GitHubEventExtension(db.getDatabase()));
-
-	for (const sourceId of ['github']) {
-		const extension = extensionManager.getExtension(sourceId);
-		if (!extension) continue;
-		const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
-		if (!globalConfig.globallyEnabled) continue;
-
-		if ('routes' in extension) {
-			extensionManager.registerRoutes(extension.routes, extensionContext);
-		}
-		if ('registerRpcHandlers' in extension && globalConfig.capabilities.rpcConfig) {
-			extensionManager.registerRpcHandlers(extension.sourceId, messageHub, extensionContext);
-		}
-
-		await extensionManager.startExtension(extension.sourceId, extensionContext);
-		logInfo(`[Daemon] Started external event extension: ${extension.sourceId}`);
-	}
+	const { cleanup: rpcHandlerCleanup, spaceRuntimeService, spaceWorktreeManager } = rpcHandlers;
+	taskAgentManager = rpcHandlers.taskAgentManager;
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
 	// bind the WebSocket/HTTP server. `start()` inside `setupRPCHandlers` kicks
@@ -580,10 +561,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				);
 			}
 
+			// Space-level public-safe GitHub webhook endpoint.
 			const extensionRoute = extensionManager
 				.getRegisteredRoutes()
-				.find((route) => route.method === req.method && route.path === url.pathname);
-			if (extensionRoute) return extensionRoute.handle(req);
+				.find((route) => route.path === url.pathname && route.method === req.method);
+			if (extensionRoute) {
+				return extensionRoute.handle(req);
+			}
 
 			// Legacy room GitHub webhook endpoint (kept as a compatibility alias only).
 			if (url.pathname === '/webhook/github' && req.method === 'POST') {
@@ -661,7 +645,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			jobQueue,
 			spaceRepo: taskScheduleSpaceRepo,
 			taskRepo: taskScheduleTaskRepo,
-			internalEventBus,
+			eventHub: internalEventBus,
 		});
 	});
 
@@ -757,6 +741,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Start job queue processor last (after all handler registrations)
 	jobProcessor.start();
 	logInfo('[Daemon] Job queue processor started');
+	if (process.env.NODE_ENV !== 'test') {
+		processWatchdog.start();
+		logInfo('[Daemon] Process watchdog started');
+	}
 
 	// Provision the Neo agent session (skip in test mode unless explicitly enabled).
 	// Mirrors the spaces agent guard: test runs are clean by default; online/e2e
@@ -828,15 +816,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// while we're tearing down sessions and transport.
 			clientEventBridge.stop();
 
-			// Unsubscribe DaemonHub → InternalEventBus bridge listeners
-			unsubSessionCreated();
-			unsubSessionUpdated();
-			unsubSessionDeleted();
-			unsubCommandsUpdated();
-			unsubSessionError();
-			unsubSessionErrorClear();
-			unsubApiConnection();
-
 			try {
 				server.stop();
 			} catch {
@@ -877,14 +856,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				}
 			}
 
-			// Stop external event extensions before MessageHub cleanup so polling and
-			// webhook handlers stop publishing into a shutting-down bus.
-			for (const sourceId of ['github']) {
-				await extensionManager.stopExtension(sourceId);
-			}
-			logInfo('[Daemon] External event extensions stopped');
-
-			// Stop job queue processor before MessageHub cleanup
+			// Stop background processors before MessageHub cleanup
+			processWatchdog.stop();
+			logInfo('[Daemon] Process watchdog stopped');
 			await jobProcessor.stop();
 			logInfo('[Daemon] Job queue processor stopped');
 
@@ -903,6 +877,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				gitHubService.stop();
 				logInfo('[Daemon] GitHub service stopped');
 			}
+			for (const extension of extensionManager.getAll()) {
+				await extensionManager.stopExtension(extension.sourceId);
+			}
+			logInfo('[Daemon] External event extensions stopped');
 
 			// Stop all Task Agent sessions before sessionManager.cleanup() so that
 			// Task Agent sessions are interrupted cleanly before the session pool drains.
@@ -948,8 +926,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		stateManager,
 		transport,
-		daemonHub,
 		internalEventBus,
+		commandBus,
 		queryBus,
 		gitHubService,
 		externalEventStore,

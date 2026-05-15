@@ -40,7 +40,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
 	readonly repo: GitHubEventExtensionRepository;
 	private context?: ExternalEventExtensionContext;
-	private pollTimer?: ReturnType<typeof setTimeout>;
+	private pollTimer: ReturnType<typeof setTimeout> | null = null;
 	private activePollCycle?: Promise<void>;
 	private stopped = true;
 
@@ -62,7 +62,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 	async stop(): Promise<void> {
 		this.stopped = true;
 		if (this.pollTimer) clearTimeout(this.pollTimer);
-		this.pollTimer = undefined;
+		this.pollTimer = null;
 		await this.activePollCycle;
 	}
 
@@ -221,28 +221,33 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
 	}
 
-	private async pollEnabledSpaces(): Promise<number> {
+	async pollOnce(fetchImpl: typeof fetch = fetch): Promise<number> {
+		return await this.pollEnabledSpaces(fetchImpl);
+	}
+
+	private async pollEnabledSpaces(fetchImpl: typeof fetch = fetch): Promise<number> {
 		if (!this.context) return 0;
 		if (!(await this.isPollingGloballyEnabled())) return 0;
 		const enabledSpaces = await this.context.config.listEnabledSpaces(this.sourceId);
 		if (enabledSpaces.length > 0) {
 			let count = 0;
-			for (const space of enabledSpaces) count += await this.pollSpace(space.spaceId);
+			for (const space of enabledSpaces) count += await this.pollSpace(space.spaceId, fetchImpl);
 			return count;
 		}
 		let count = 0;
-		for (const repo of this.repo.listPollingRepos()) count += await this.pollWatchedRepo(repo);
+		for (const repo of this.repo.listPollingRepos())
+			count += await this.pollWatchedRepo(repo, fetchImpl);
 		return count;
 	}
 
-	private async pollSpace(spaceId: string): Promise<number> {
+	private async pollSpace(spaceId: string, fetchImpl: typeof fetch = fetch): Promise<number> {
 		if (!this.context) return 0;
 		if (!(await this.isPollingGloballyEnabled())) return 0;
 		const spaceConfig = await this.context.config.getSpaceConfig(spaceId, this.sourceId);
 		if (spaceConfig && !spaceConfig.enabled) return 0;
 		let count = 0;
 		for (const repo of this.repo.listPollingRepos(spaceId))
-			count += await this.pollWatchedRepo(repo);
+			count += await this.pollWatchedRepo(repo, fetchImpl);
 		return count;
 	}
 

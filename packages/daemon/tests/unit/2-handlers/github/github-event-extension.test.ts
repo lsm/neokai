@@ -332,18 +332,16 @@ describe('GitHubEventExtension', () => {
 			pollingEnabled: true,
 		});
 
-		const result = (await clientHub.request('space.github.pollOnce', { spaceId: 'space-1' })) as {
-			count: number;
-		};
-
-		expect(result.count).toBe(0);
+		await expect(
+			clientHub.request('space.github.pollOnce', { spaceId: 'space-1' })
+		).rejects.toThrow('GitHub polling capability is disabled');
 		expect(publishCount).toBe(0);
 		await extension.stop();
 	});
 
 	test('stop waits for an active polling cycle before returning', async () => {
 		const db = setupDb();
-		const extension = new GitHubEventExtension(db, { pollIntervalMs: 1 });
+		const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 1 });
 		let releaseFetch!: () => void;
 		let fetchStarted!: Promise<void>;
 		let resolveFetchStarted!: () => void;
