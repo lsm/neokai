@@ -2,6 +2,38 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.24.0] - 2026-05-15
+
+A release adding runtime anti-stuck recovery, external event delivery, reply routing, gate-open caching, and replacing the embedded SDK CLI with runtime download. 20 commits since v0.23.0.
+
+### Added
+
+- **Runtime anti-stuck recovery**: Layer 1 detection for alive-but-silent workflow node agents; nudge before session restart; preserves idle incomplete executions
+- **External event delivery**: Wire workflow runtime external events through extension management; GitHub event extension extraction; workflow topic subscription trie; event interest schema
+- **Reply routing**: Task/node agent replies route back to originating session (not always space:chat); in-memory registry with XML footer for cross-restart durability; TTL purge
+- **Gate-open caching**: Skip re-evaluation on every message once gate is open; cyclic channels exempt; cache evicted on run completion and archive
+- **Configurable task concurrency**: Per-space task concurrency limits
+- **MCP tools**: `publish_task` and `archive_task` for space agent and task agent
+- **Space GitHub events**: Routed through external events pipeline
+
+### Changed
+
+- **SDK CLI**: Runtime auto-download with SHA-512 verification replaces 200 MB embedded binary; compiled binary drops from ~266 MB to ~66 MB
+- **SDK upgrade**: `@anthropic-ai/claude-agent-sdk` 0.2.112 → 0.2.141
+- **App events**: Routed through InternalEventBus
+
+### Removed
+
+- **Google provider support**: All Google provider code removed entirely
+
+### Fixed
+
+- **Auto-scroll**: Reset latch on navigation; direct scrollTop instead of scrollIntoView; re-pin after layout; observe markdown growth and container resize
+- **Review gate**: Fix reset race condition
+- **Task/node replies**: Route replies to originating session instead of always space:chat
+- **Process cleanup**: Clean up agent subprocess groups
+- **Dependencies**: Update Bun workspace dependencies and lockfile
+
 ## [0.23.0] - 2026-05-12
 
 A release completing the InternalEventBus migration, adding space chat subagents, settings URL routing, and fixing task dependency enforcement and mobile Safari composer. 17 commits since v0.22.0.
