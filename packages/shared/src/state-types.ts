@@ -4,7 +4,13 @@
  * Fine-grained state channels - each property has its own channel
  */
 
-import type { AuthStatus, SessionInfo, HealthStatus, NeokaiActionMessage } from './types.ts';
+import type {
+	AuthStatus,
+	MessageContent,
+	SessionInfo,
+	HealthStatus,
+	NeokaiActionMessage,
+} from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
 
@@ -169,6 +175,13 @@ export type AgentProcessingState =
 			isCompacting?: boolean; // True during context compaction
 	  }
 	| { status: 'waiting_for_input'; pendingQuestion: PendingUserQuestion }
+	| {
+			status: 'rate_limit_cooldown';
+			retryCount: number;
+			maxRetries: number;
+			retryAt: number;
+			lastUserMessage: { uuid: string; content: string | MessageContent[] } | null;
+	  }
 	| { status: 'interrupted' };
 
 /**

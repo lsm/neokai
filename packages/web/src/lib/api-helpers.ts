@@ -89,6 +89,16 @@ export async function resetSessionQuery(
 	});
 }
 
+export async function cancelRateLimitRetry(sessionId: string): Promise<{ success: boolean }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ success: boolean }>('session.cancelRateLimitRetry', { sessionId });
+}
+
+export async function retryNowAfterRateLimit(sessionId: string): Promise<{ success: boolean }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ success: boolean }>('session.retryNowAfterRateLimit', { sessionId });
+}
+
 export async function switchCoordinatorMode(
 	sessionId: string,
 	coordinatorMode: boolean

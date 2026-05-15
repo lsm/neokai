@@ -917,6 +917,28 @@ export function setupSessionHandlers(
 		}
 	});
 
+	// Handle cancelling a pending rate limit auto-retry
+	messageHub.onRequest('session.cancelRateLimitRetry', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+		agentSession.cancelRateLimitRetry();
+		return { success: true };
+	});
+
+	// Handle immediately retrying after a rate limit (bypassing cooldown)
+	messageHub.onRequest('session.retryNowAfterRateLimit', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+		await agentSession.retryNowAfterRateLimit();
+		return { success: true };
+	});
+
 	// Handle triggering deferred messages to be sent (manual mode)
 	// Use case: When user wants to manually send all deferred messages
 	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession handles the actual sending

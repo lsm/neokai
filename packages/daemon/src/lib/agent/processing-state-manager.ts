@@ -8,7 +8,7 @@
  * Now persists state to database for recovery after restarts.
  */
 
-import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
+import type { AgentProcessingState, MessageContent, PendingUserQuestion } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SDKAssistantMessage, SDKMessage } from '@neokai/shared/sdk';
 import { isToolUseBlock } from '@neokai/shared/sdk/type-guards';
@@ -58,6 +58,10 @@ export class ProcessingStateManager {
 			if (restoredState.status === 'processing' || restoredState.status === 'queued') {
 				// Active processing states should reset to idle after restart
 				// The SDK query will need to be restarted anyway
+				this.processingState = { status: 'idle' };
+			} else if (restoredState.status === 'rate_limit_cooldown') {
+				// Cooldown timers are not persisted; reset to idle so the user
+				// can manually retry or send a new message.
 				this.processingState = { status: 'idle' };
 			} else if (restoredState.status === 'waiting_for_input') {
 				// IMPORTANT: Preserve waiting_for_input state across restarts
@@ -163,6 +167,25 @@ export class ProcessingStateManager {
 	 */
 	async setWaitingForInput(pendingQuestion: PendingUserQuestion): Promise<void> {
 		await this.setState({ status: 'waiting_for_input', pendingQuestion });
+	}
+
+	/**
+	 * Set state to rate_limit_cooldown
+	 * Called when 429 retry exhaustion is detected and auto-retry is scheduled
+	 */
+	async setRateLimitCooldown(state: {
+		retryCount: number;
+		maxRetries: number;
+		retryAt: number;
+		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null;
+	}): Promise<void> {
+		await this.setState({
+			status: 'rate_limit_cooldown',
+			retryCount: state.retryCount,
+			maxRetries: state.maxRetries,
+			retryAt: state.retryAt,
+			lastUserMessage: state.lastUserMessage,
+		});
 	}
 
 	/**

@@ -161,6 +161,17 @@ export interface QueryRunnerContext {
 
 	/** Consume (clear) the one-shot resumeSessionAt after the query has started. */
 	consumePendingResumeSessionAt?(): string | undefined;
+
+	/**
+	 * Called when a 429 rate limit exhaustion error is detected (all SDK retries exhausted).
+	 * The RateLimitWatchdog uses this to schedule an automatic retry after cooldown.
+	 * @param errorMessage - The error message from the SDK
+	 * @param lastUserMessage - The last consumed user message for re-enqueue on retry
+	 */
+	onRateLimitExhausted?: (
+		errorMessage: string,
+		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+	) => void;
 }
 
 /**
@@ -169,13 +180,22 @@ export interface QueryRunnerContext {
 export class QueryRunner {
 	/**
 	 * Last non-internal user message consumed by the generator, for re-enqueue
-	 * on transient connection error retry.  Set by createMessageGeneratorWrapper()
-	 * when a message is yielded to the SDK; cleared after re-enqueue or on cleanup.
+	 * on transient connection error retry or rate limit auto-retry.
+	 * Set by createMessageGeneratorWrapper() when a message is yielded to the SDK;
+	 * cleared after re-enqueue or on cleanup.
 	 */
-	private lastConsumedUserMessage: {
+	private _lastConsumedUserMessage: {
 		uuid: string;
 		content: string | MessageContent[];
 	} | null = null;
+
+	/**
+	 * Public accessor for the last consumed user message.
+	 * Used by RateLimitWatchdog to re-enqueue on auto-retry.
+	 */
+	get lastConsumedUserMessage() {
+		return this._lastConsumedUserMessage;
+	}
 
 	constructor(private ctx: QueryRunnerContext) {}
 
@@ -737,7 +757,7 @@ export class QueryRunner {
 				// process.  Without this, the message was already shifted out of
 				// MessageQueue by messageGenerator() and the retry starts with an
 				// empty queue, silently dropping the user's request.
-				const lastMsg = this.lastConsumedUserMessage;
+				const lastMsg = this._lastConsumedUserMessage;
 				if (lastMsg) {
 					logger.warn(
 						`Re-enqueueing user message ${lastMsg.uuid} for transient connection error retry.`
@@ -745,7 +765,7 @@ export class QueryRunner {
 					// Fire-and-forget: the promise resolves when the retry's generator
 					// consumes the message, or rejects on timeout/interrupt (harmless).
 					messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
-					this.lastConsumedUserMessage = null;
+					this._lastConsumedUserMessage = null;
 				}
 
 				// Display a sanitized retry message so the user knows what's happening,
@@ -851,6 +871,16 @@ export class QueryRunner {
 					}
 
 					const processingState = stateManager.getState();
+
+					// Notify rate limit watchdog when 429 exhaustion is detected.
+					// Only trigger for 429/rate limit errors (not 402/quota which are
+					// non-retryable billing issues).
+					const is429Error =
+						category === ErrorCategory.RATE_LIMIT &&
+						(errorMessage.includes('429') || errorMessage.includes('rate limit'));
+					if (is429Error && this.ctx.onRateLimitExhausted) {
+						this.ctx.onRateLimitExhausted(errorMessage, this._lastConsumedUserMessage);
+					}
 
 					// For startup timeouts / resume failures, provide actionable recovery hints.
 					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
@@ -1046,7 +1076,7 @@ export class QueryRunner {
 				// already been shifted out of MessageQueue by messageGenerator(),
 				// so without re-enqueue the retry starts with an empty queue and
 				// the user's request is silently dropped.
-				this.lastConsumedUserMessage = {
+				this._lastConsumedUserMessage = {
 					uuid: message.uuid ?? '',
 					content: message.message?.content ?? '',
 				};
