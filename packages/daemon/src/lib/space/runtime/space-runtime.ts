@@ -3385,7 +3385,7 @@ export class SpaceRuntime {
 					`SpaceRuntime: sent runtime nag to stuck agent execution ${execution.id} ` +
 						`(agent ${execution.agentName}, session ${execution.agentSessionId})`
 				);
-				return 'none';
+				continue;
 			}
 
 			if (state.lastAction === 'nag' && state.lastActionAt !== null) {
@@ -3395,7 +3395,7 @@ export class SpaceRuntime {
 						`SpaceRuntime: delaying restart for stuck agent execution ${execution.id}; ` +
 							`runtime nag grace has ${nagGraceMs - elapsedSinceNag}ms remaining`
 					);
-					return 'none';
+					continue;
 				}
 			}
 
