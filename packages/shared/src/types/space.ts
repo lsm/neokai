@@ -266,6 +266,88 @@ export type SpaceBlockReason =
 export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 // ============================================================================
+// SpaceGoal Types
+// ============================================================================
+
+export type SpaceGoalStatus = 'active' | 'paused' | 'completed' | 'archived';
+export type SpaceGoalType = 'one_shot' | 'measurable' | 'recurring';
+
+export type SpaceGoalMetrics = Record<string, string | number | boolean | null>;
+
+export interface SpaceGoal {
+	id: string;
+	spaceId: string;
+	title: string;
+	description: string;
+	status: SpaceGoalStatus;
+	type: SpaceGoalType;
+	priority: SpaceTaskPriority;
+	labels: string[];
+	metrics: SpaceGoalMetrics;
+	summary: string;
+	progress: number;
+	nextSteps: string[];
+	preferredWorkflowId: string | null;
+	taskScheduleId: string | null;
+	autoTriggerNext: boolean;
+	pendingNextRun: boolean;
+	activeTaskId: string | null;
+	lastTaskId: string | null;
+	lastCheckInAt: number | null;
+	nextCheckInAt: number | null;
+	createdAt: number;
+	updatedAt: number;
+	completedAt: number | null;
+}
+
+export interface CreateSpaceGoalParams {
+	spaceId: string;
+	title: string;
+	description?: string;
+	type?: SpaceGoalType;
+	priority?: SpaceTaskPriority;
+	labels?: string[];
+	metrics?: SpaceGoalMetrics;
+	summary?: string;
+	progress?: number;
+	nextSteps?: string[];
+	preferredWorkflowId?: string | null;
+	autoTriggerNext?: boolean;
+	checkInCronExpression?: string | null;
+	checkInTimezone?: string;
+	triggerImmediately?: boolean;
+}
+
+export interface UpdateSpaceGoalParams {
+	title?: string;
+	description?: string;
+	status?: SpaceGoalStatus;
+	type?: SpaceGoalType;
+	priority?: SpaceTaskPriority;
+	labels?: string[];
+	metrics?: SpaceGoalMetrics;
+	summary?: string;
+	progress?: number;
+	nextSteps?: string[];
+	preferredWorkflowId?: string | null;
+	autoTriggerNext?: boolean;
+	pendingNextRun?: boolean;
+	activeTaskId?: string | null;
+	lastTaskId?: string | null;
+	lastCheckInAt?: number | null;
+	nextCheckInAt?: number | null;
+	completedAt?: number | null;
+}
+
+export interface SpaceGoalListParams {
+	spaceId: string;
+	status?: SpaceGoalStatus;
+	includeArchived?: boolean;
+	label?: string;
+	search?: string;
+}
+
+// ============================================================================
 // TaskSchedule Types
 // ============================================================================
 
@@ -318,6 +400,8 @@ export interface TaskSchedule {
 	createdBySession: string | null;
 	/** Creation timestamp (ms since epoch) */
 	createdAt: number;
+	/** SpaceGoal this schedule belongs to, when used for recurring goal check-ins. */
+	goalId?: string | null;
 	/** Last update timestamp (ms since epoch) */
 	updatedAt: number;
 }
@@ -387,6 +471,8 @@ export interface SpaceTask {
 	 * Null for manually created tasks.
 	 */
 	createdByTaskScheduleId?: string | null;
+	/** ID of the SpaceGoal this task is executing toward. */
+	goalId?: string | null;
 	/**
 	 * Which agent session is currently active (generating output).
 	 * Cleared when the session reaches a terminal state.
@@ -581,6 +667,8 @@ export interface CreateSpaceTaskParams {
 	 * Set by the task-schedule.fire job handler.
 	 */
 	createdByTaskScheduleId?: string | null;
+	/** ID of the SpaceGoal this task should be linked to. */
+	goalId?: string | null;
 }
 
 /**
@@ -596,6 +684,8 @@ export interface UpdateSpaceTaskParams {
 	result?: string | null;
 	workflowRunId?: string | null;
 	preferredWorkflowId?: string | null;
+	/** ID of the SpaceGoal this task is linked to; null to clear. */
+	goalId?: string | null;
 	createdByTaskId?: string | null;
 	activeSession?: 'worker' | 'leader' | null;
 	/**

@@ -193,6 +193,7 @@ export async function handleTaskScheduleFire(
 				preferredWorkflowId: schedule.preferredWorkflowId,
 				labels: schedule.labels,
 				createdByTaskScheduleId: schedule.id,
+				goalId: schedule.goalId,
 			});
 
 			let computedNextRunAt: number | null = null;

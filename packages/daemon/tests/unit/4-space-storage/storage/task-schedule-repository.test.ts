@@ -93,6 +93,7 @@ describe('TaskScheduleRepository', () => {
 			expect(schedule.status).toBe('active');
 			expect(schedule.createdByAgent).toBeNull();
 			expect(schedule.createdBySession).toBeNull();
+			expect(schedule.goalId).toBeNull();
 			expect(schedule.createdAt).toBeGreaterThan(0);
 			expect(schedule.updatedAt).toBeGreaterThan(0);
 		});
@@ -104,6 +105,13 @@ describe('TaskScheduleRepository', () => {
 			expect(schedule.triggerType).toBe('at');
 			expect(schedule.runAt).toBe(runAt);
 			expect(schedule.cronExpression).toBeNull();
+		});
+
+		it('persists goal linkage', () => {
+			const schedule = repo.create(makeCronParams({ spaceId, goalId: 'goal-1' }));
+
+			expect(schedule.goalId).toBe('goal-1');
+			expect(repo.getById(schedule.id)?.goalId).toBe('goal-1');
 		});
 
 		it('applies defaults for optional fields', () => {

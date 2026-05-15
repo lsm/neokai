@@ -28,6 +28,7 @@ export interface CreateTaskScheduleParams {
 	nextRunAt?: number | null;
 	createdByAgent?: string | null;
 	createdBySession?: string | null;
+	goalId?: string | null;
 }
 
 export interface UpdateTaskScheduleParams {
@@ -57,8 +58,8 @@ export class TaskScheduleRepository {
 					id, space_id, title, description, priority, preferred_workflow_id,
 					labels, trigger_type, cron_expression, run_at, timezone,
 					next_run_at, last_run_at, last_created_task_id, pending_job_id,
-					status, created_by_agent, created_by_session, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					status, created_by_agent, created_by_session, goal_id, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -79,6 +80,7 @@ export class TaskScheduleRepository {
 				'active',
 				params.createdByAgent ?? null,
 				params.createdBySession ?? null,
+				params.goalId ?? null,
 				now,
 				now
 			);
@@ -385,6 +387,7 @@ export class TaskScheduleRepository {
 			status: row.status as TaskScheduleStatus,
 			createdByAgent: (row.created_by_agent as string | null) ?? null,
 			createdBySession: (row.created_by_session as string | null) ?? null,
+			goalId: (row.goal_id as string | null) ?? null,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};

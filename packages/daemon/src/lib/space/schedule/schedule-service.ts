@@ -39,6 +39,7 @@ export interface CreateScheduleInput {
 	timezone?: string;
 	createdByAgent?: string | null;
 	createdBySession?: string | null;
+	goalId?: string | null;
 }
 
 export interface UpdateScheduleInput {
@@ -152,6 +153,7 @@ export class ScheduleService {
 				nextRunAt,
 				createdByAgent: input.createdByAgent,
 				createdBySession: input.createdBySession,
+				goalId: input.goalId,
 			});
 
 			const job = jobQueue.enqueue({

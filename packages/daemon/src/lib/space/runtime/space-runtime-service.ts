@@ -109,6 +109,12 @@ export interface SpaceRuntimeServiceConfig {
 	 */
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
 	/**
+	 * Space-native goal service — shared business logic for long-horizon goals.
+	 * Passed to space-agent-tools so agents can create/list/update goals and
+	 * trigger concrete goal tasks. Optional.
+	 */
+	goalService?: import('../goals/goal-service').SpaceGoalService;
+	/**
 	 * Optional InternalEventBus for publishing Space runtime domain events.
 	 * When provided, SpaceRuntime publishes typed events alongside the legacy
 	 * NotificationSink path, and SpaceAgentNotificationService is wired per-space
@@ -782,6 +788,7 @@ export class SpaceRuntimeService {
 			mySessionId: session.id,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			goalService: this.config.goalService,
 			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 
@@ -877,6 +884,7 @@ export class SpaceRuntimeService {
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			goalService: this.config.goalService,
 			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 

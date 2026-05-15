@@ -23,8 +23,15 @@ import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import type { SpaceGoalService } from '../space/goals/goal-service';
 
 const log = new Logger('space-task-handlers');
+
+function isTerminalSpaceTaskStatus(status: SpaceTaskStatus): boolean {
+	return (
+		status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived'
+	);
+}
 
 /**
  * Factory that creates a SpaceTaskManager bound to a specific spaceId.
@@ -37,7 +44,8 @@ export function setupSpaceTaskHandlers(
 	spaceManager: SpaceManager,
 	taskManagerFactory: SpaceTaskManagerFactory,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-	spaceRuntimeService?: SpaceRuntimeService
+	spaceRuntimeService?: SpaceRuntimeService,
+	spaceGoalService?: SpaceGoalService
 ): void {
 	// ─── spaceTask.create ───────────────────────────────────────────────────────
 	messageHub.onRequest('spaceTask.create', async (data) => {
@@ -383,6 +391,10 @@ export function setupSpaceTaskHandlers(
 			task = await taskManager.updateTask(taskId, updateParams, {
 				onCascadedTasks: emitCascadedTasks,
 			});
+		}
+
+		if (spaceGoalService && isTerminalSpaceTaskStatus(task.status)) {
+			spaceGoalService.handleTaskTerminal(task.id);
 		}
 
 		if (emitTaskUpdated) {

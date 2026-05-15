@@ -44,8 +44,8 @@ export class SpaceTaskRepository {
 
 			this.db
 				.prepare(
-					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					id,
@@ -59,6 +59,7 @@ export class SpaceTaskRepository {
 					params.workflowRunId ?? null,
 					params.preferredWorkflowId ?? null,
 					params.createdByTaskId ?? null,
+					params.goalId ?? null,
 					JSON.stringify(params.dependsOn ?? []),
 					params.taskAgentSessionId ?? null,
 					params.createdBy ?? null,
@@ -323,6 +324,10 @@ export class SpaceTaskRepository {
 			fields.push('preferred_workflow_id = ?');
 			values.push(params.preferredWorkflowId ?? null);
 		}
+		if (params.goalId !== undefined) {
+			fields.push('goal_id = ?');
+			values.push(params.goalId ?? null);
+		}
 		if (params.createdByTaskId !== undefined) {
 			fields.push('created_by_task_id = ?');
 			values.push(params.createdByTaskId ?? null);
@@ -575,6 +580,7 @@ export class SpaceTaskRepository {
 			createdBy: (row.created_by as string | null) ?? undefined,
 			createdBySession: (row.created_by_session as string | null) ?? undefined,
 			createdByTaskScheduleId: (row.created_by_task_schedule_id as string | null) ?? undefined,
+			goalId: (row.goal_id as string | null) ?? undefined,
 			result: (row.result as string | null) ?? null,
 			dependsOn: JSON.parse((row.depends_on as string | null) ?? '[]') as string[],
 			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,

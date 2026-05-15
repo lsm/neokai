@@ -91,7 +91,7 @@ describe('handleTaskScheduleFire', () => {
 		return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub };
 	}
 
-	function createCronSchedule(): string {
+	function createCronSchedule(goalId?: string): string {
 		const future = Date.now() + 60_000;
 		const schedule = scheduleRepo.create({
 			spaceId,
@@ -101,6 +101,7 @@ describe('handleTaskScheduleFire', () => {
 			cronExpression: '0 9 * * 1-5',
 			timezone: 'UTC',
 			nextRunAt: future,
+			goalId,
 		});
 		return schedule.id;
 	}
@@ -117,7 +118,7 @@ describe('handleTaskScheduleFire', () => {
 	}
 
 	it('creates a SpaceTask from the cron schedule template and re-enqueues itself', async () => {
-		const scheduleId = createCronSchedule();
+		const scheduleId = createCronSchedule('goal-1');
 		// Set pendingJobId so idempotency check sees a match.
 		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 
@@ -132,6 +133,7 @@ describe('handleTaskScheduleFire', () => {
 		const task = taskRepo.getTask(result.taskId as string);
 		expect(task).not.toBeNull();
 		expect(task?.createdByTaskScheduleId).toBe(scheduleId);
+		expect(task?.goalId).toBe('goal-1');
 		expect(task?.title).toBe('Daily Standup');
 
 		// A new fire job was enqueued.

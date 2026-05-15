@@ -71,9 +71,11 @@ describe('ScheduleService', () => {
 				triggerType: 'cron',
 				cronExpression: '0 9 * * 1-5',
 				timezone: 'UTC',
+				goalId: 'goal-1',
 			});
 
 			expect(schedule.status).toBe('active');
+			expect(schedule.goalId).toBe('goal-1');
 			expect(schedule.nextRunAt).not.toBeNull();
 			expect(schedule.pendingJobId).not.toBeNull();
 

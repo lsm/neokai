@@ -25,6 +25,10 @@ import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type {
 	NodeExecution,
+	SpaceGoalListParams,
+	SpaceGoalMetrics,
+	SpaceGoalStatus,
+	SpaceGoalType,
 	SpaceTask,
 	SpaceTaskStatus,
 	SpaceTaskPriority,
@@ -182,6 +186,8 @@ export interface SpaceAgentToolsConfig {
 	 * Optional — when absent, schedule tools are not registered.
 	 */
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
+	/** Space-native goal lifecycle service. */
+	goalService?: import('../goals/goal-service').SpaceGoalService;
 	/**
 	 * Reply routing registry for symmetric message routing. When a member session
 	 * sends a message to a task/node agent, the registry records the sender's
@@ -221,6 +227,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		mySessionId,
 		replyRoutingRegistry,
 	} = config;
+	const goalService = config.goalService;
 
 	const agentNameAliases = new Set(
 		[myAgentName, ...(myAgentNameAliases ?? [])]
@@ -1553,6 +1560,188 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		async create_goal(args: {
+			title: string;
+			description?: string;
+			type?: SpaceGoalType;
+			priority?: SpaceTaskPriority;
+			labels?: string[];
+			metrics?: SpaceGoalMetrics;
+			summary?: string;
+			progress?: number;
+			next_steps?: string[];
+			workflow_id?: string | null;
+			check_in_cron_expression?: string | null;
+			check_in_timezone?: string | null;
+			auto_trigger_next?: boolean;
+			trigger_immediately?: boolean;
+		}): Promise<ToolResult> {
+			if (!goalService)
+				return jsonResult({ success: false, error: 'Goal management not available' });
+			try {
+				const goal = goalService.createGoal({
+					spaceId,
+					title: args.title,
+					description: args.description,
+					type: args.type,
+					priority: args.priority,
+					labels: args.labels,
+					metrics: args.metrics,
+					summary: args.summary,
+					progress: args.progress,
+					nextSteps: args.next_steps,
+					preferredWorkflowId: args.workflow_id ?? null,
+					checkInCronExpression: args.check_in_cron_expression ?? null,
+					checkInTimezone: args.check_in_timezone ?? undefined,
+					autoTriggerNext: args.auto_trigger_next,
+					triggerImmediately: args.trigger_immediately,
+				});
+				logAudit('create_goal', {
+					title: args.title,
+					trigger_immediately: args.trigger_immediately,
+				});
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_goals(args: {
+			status?: SpaceGoalStatus;
+			include_archived?: boolean;
+			label?: string;
+			search?: string;
+		}): Promise<ToolResult> {
+			if (!goalService)
+				return jsonResult({ success: false, error: 'Goal management not available' });
+			try {
+				const params: SpaceGoalListParams = {
+					spaceId,
+					status: args.status,
+					includeArchived: args.include_archived,
+					label: args.label,
+					search: args.search,
+				};
+				return jsonResult({ success: true, goals: goalService.listGoals(params) });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async get_goal(args: { goal_id: string }): Promise<ToolResult> {
+			if (!goalService)
+				return jsonResult({ success: false, error: 'Goal management not available' });
+			try {
+				const goal = goalService.getGoal(args.goal_id);
+				if (!goal || goal.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+				}
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async update_goal(args: {
+			goal_id: string;
+			title?: string;
+			description?: string;
+			status?: SpaceGoalStatus;
+			type?: SpaceGoalType;
+			priority?: SpaceTaskPriority;
+			labels?: string[];
+			metrics?: SpaceGoalMetrics;
+			summary?: string;
+			progress?: number;
+			next_steps?: string[];
+			workflow_id?: string | null;
+			auto_trigger_next?: boolean;
+			pending_next_run?: boolean;
+		}): Promise<ToolResult> {
+			if (!goalService)
+				return jsonResult({ success: false, error: 'Goal management not available' });
+			try {
+				const existing = goalService.getGoal(args.goal_id);
+				if (!existing || existing.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+				}
+				const goal = goalService.updateGoal(args.goal_id, {
+					title: args.title,
+					description: args.description,
+					status: args.status,
+					type: args.type,
+					priority: args.priority,
+					labels: args.labels,
+					metrics: args.metrics,
+					summary: args.summary,
+					progress: args.progress,
+					nextSteps: args.next_steps,
+					preferredWorkflowId: args.workflow_id,
+					autoTriggerNext: args.auto_trigger_next,
+					pendingNextRun: args.pending_next_run,
+				});
+				logAudit('update_goal', { goal_id: args.goal_id });
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async pause_goal(args: { goal_id: string }): Promise<ToolResult> {
+			if (!goalService)
+				return jsonResult({ success: false, error: 'Goal management not available' });
+			try {
+				const existing = goalService.getGoal(args.goal_id);
+				if (!existing || existing.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+				}
+				const goal = goalService.pauseGoal(args.goal_id);
+				logAudit('pause_goal', { goal_id: args.goal_id });
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async resume_goal(args: { goal_id: string }): Promise<ToolResult> {
+			if (!goalService)
+				return jsonResult({ success: false, error: 'Goal management not available' });
+			try {
+				const existing = goalService.getGoal(args.goal_id);
+				if (!existing || existing.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+				}
+				const goal = goalService.resumeGoal(args.goal_id);
+				logAudit('resume_goal', { goal_id: args.goal_id });
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async create_goal_task(args: { goal_id: string }): Promise<ToolResult> {
+			if (!goalService)
+				return jsonResult({ success: false, error: 'Goal management not available' });
+			try {
+				const existing = goalService.getGoal(args.goal_id);
+				if (!existing || existing.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+				}
+				const result = goalService.createImmediateTask(args.goal_id);
+				logAudit('create_goal_task', { goal_id: args.goal_id, queued: result.queued });
+				return jsonResult({ success: true, ...result });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -1946,6 +2135,100 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					schedule_id: z.string().describe('ID of the scheduled task to delete'),
 				},
 				(args) => handlers.delete_scheduled_task(args)
+			)
+		);
+	}
+
+	// Goal lifecycle tools — only registered when goalService is provided.
+	if (config.goalService) {
+		tools.push(
+			tool(
+				'create_goal',
+				'Create a long-horizon Space goal. Goals track rolling state; concrete work is executed through SpaceTasks. Optionally set check_in_cron_expression for recurring check-ins or trigger_immediately to create the first task now.',
+				{
+					title: z.string().describe('Short title for the goal'),
+					description: z.string().optional().describe('Detailed goal description'),
+					type: z.enum(['one_shot', 'measurable', 'recurring']).optional(),
+					priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+					labels: z
+						.array(z.string())
+						.optional()
+						.describe('Labels for filtering and task propagation'),
+					metrics: z
+						.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+						.optional(),
+					summary: z.string().optional().describe('Current rolling summary'),
+					progress: z.number().int().min(0).max(100).optional(),
+					next_steps: z.array(z.string()).optional(),
+					workflow_id: z
+						.string()
+						.nullable()
+						.optional()
+						.describe('Preferred workflow for goal tasks'),
+					check_in_cron_expression: z.string().nullable().optional(),
+					check_in_timezone: z.string().nullable().optional(),
+					auto_trigger_next: z.boolean().optional(),
+					trigger_immediately: z.boolean().optional(),
+				},
+				(args) => handlers.create_goal(args)
+			),
+			tool(
+				'list_goals',
+				'List long-horizon Space goals. Supports filtering by status, label, and search text.',
+				{
+					status: z.enum(['active', 'paused', 'completed', 'archived']).optional(),
+					include_archived: z.boolean().optional(),
+					label: z.string().optional(),
+					search: z.string().optional(),
+				},
+				(args) => handlers.list_goals(args)
+			),
+			tool(
+				'get_goal',
+				'Retrieve a long-horizon Space goal by ID.',
+				{ goal_id: z.string().describe('ID of the goal to retrieve') },
+				(args) => handlers.get_goal(args)
+			),
+			tool(
+				'update_goal',
+				'Update goal metadata or rolling state such as summary, progress, metrics, next steps, labels, status, or preferred workflow.',
+				{
+					goal_id: z.string().describe('ID of the goal to update'),
+					title: z.string().min(1).optional(),
+					description: z.string().optional(),
+					status: z.enum(['active', 'paused', 'completed', 'archived']).optional(),
+					type: z.enum(['one_shot', 'measurable', 'recurring']).optional(),
+					priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+					labels: z.array(z.string()).optional(),
+					metrics: z
+						.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+						.optional(),
+					summary: z.string().optional(),
+					progress: z.number().int().min(0).max(100).optional(),
+					next_steps: z.array(z.string()).optional(),
+					workflow_id: z.string().nullable().optional(),
+					auto_trigger_next: z.boolean().optional(),
+					pending_next_run: z.boolean().optional(),
+				},
+				(args) => handlers.update_goal(args)
+			),
+			tool(
+				'pause_goal',
+				'Pause an active goal and its recurring check-in schedule, if any.',
+				{ goal_id: z.string().describe('ID of the goal to pause') },
+				(args) => handlers.pause_goal(args)
+			),
+			tool(
+				'resume_goal',
+				'Resume a paused goal and its recurring check-in schedule, if any.',
+				{ goal_id: z.string().describe('ID of the goal to resume') },
+				(args) => handlers.resume_goal(args)
+			),
+			tool(
+				'create_goal_task',
+				'Create an immediate concrete SpaceTask for a goal. If another active goal task exists, the trigger is queued instead of creating a concurrent task.',
+				{ goal_id: z.string().describe('ID of the goal to trigger') },
+				(args) => handlers.create_goal_task(args)
 			)
 		);
 	}

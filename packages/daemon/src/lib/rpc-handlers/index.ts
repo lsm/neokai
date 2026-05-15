@@ -99,7 +99,10 @@ import type { NeoActionToolsConfig, NeoWorkflowRun } from '../neo/tools/neo-acti
 import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
 import { SpaceRepository } from '../../storage/repositories/space-repository';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers';
+import { setupSpaceGoalHandlers } from './space-goal-handlers';
 import { ScheduleService } from '../space/schedule/schedule-service';
+import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
+import { SpaceGoalService } from '../space/goals/goal-service';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -272,6 +275,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
 	const pendingMessageRepo = new PendingAgentMessageRepository(deps.db.getDatabase());
 	const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
+	const spaceGoalRepo = new SpaceGoalRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const spaceRepo = new SpaceRepository(deps.db.getDatabase());
 
 	// Centralised TaskSchedule lifecycle service — used by both the RPC
@@ -283,6 +287,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		scheduleRepo: taskScheduleRepo,
 		jobQueue: deps.jobQueue,
 		spaceRepo,
+	});
+	const spaceGoalService = new SpaceGoalService({
+		goalRepo: spaceGoalRepo,
+		taskRepo: spaceTaskRepo,
+		spaceRepo,
+		scheduleService,
 	});
 
 	// When a space is resumed/started, re-seed any of its active schedules
@@ -416,6 +426,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		artifactRepo,
 		pendingMessageRepo,
 		scheduleService,
+		goalService: spaceGoalService,
 		commandBus: deps.commandBus,
 		externalEventStore: deps.externalEventStore,
 		replyRoutingRegistry,
@@ -441,12 +452,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.spaceManager,
 		spaceTaskManagerFactory,
 		deps.internalEventBus,
-		spaceRuntimeService
+		spaceRuntimeService,
+		spaceGoalService
 	);
 
 	// Task schedule handlers — create/list/get/update/pause/resume/delete schedules.
 	setupTaskScheduleHandlers(deps.messageHub, {
 		scheduleService,
+		spaceManager: deps.spaceManager,
+	});
+
+	// Space goal handlers — create/list/get/update/pause/resume/trigger long-horizon goals.
+	setupSpaceGoalHandlers(deps.messageHub, {
+		goalService: spaceGoalService,
 		spaceManager: deps.spaceManager,
 	});
 

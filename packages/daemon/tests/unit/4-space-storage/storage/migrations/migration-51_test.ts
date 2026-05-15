@@ -73,10 +73,11 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 		const indexes = getIndexes(db, 'space_tasks');
 		expect(indexes).toContain('idx_space_tasks_space_id');
 		expect(indexes).toContain('idx_space_tasks_workflow_run_id');
-		// Post-M71: these indexes were removed (their columns were dropped)
+		// Post-M71: these indexes were removed (their columns were dropped).
+		// M131 reintroduces goal linkage for Space-native goals.
 		expect(indexes).not.toContain('idx_space_tasks_status');
 		expect(indexes).not.toContain('idx_space_tasks_workflow_node_id');
-		expect(indexes).not.toContain('idx_space_tasks_goal_id');
+		expect(indexes).toContain('idx_space_tasks_goal_id');
 		expect(indexes).not.toContain('idx_space_tasks_custom_agent_id');
 		expect(indexes).not.toContain('idx_space_tasks_task_agent_session_id');
 	});
