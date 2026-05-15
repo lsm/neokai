@@ -185,7 +185,7 @@ describe('useAutoScroll', () => {
 	});
 
 	describe('auto-scroll behavior', () => {
-		it('should observe the content wrapper for markdown height changes', () => {
+		it('should observe the container and content wrapper for resize-driven anchoring', () => {
 			const { containerRef, endRef } = createMockRefs();
 
 			renderHook(() =>
@@ -197,7 +197,10 @@ describe('useAutoScroll', () => {
 				})
 			);
 
-			expect(resizeObserverInstances[0]?.observedTargets).toEqual([endRef.current!.parentElement]);
+			expect(resizeObserverInstances[0]?.observedTargets).toEqual([
+				containerRef.current,
+				endRef.current!.parentElement,
+			]);
 		});
 
 		it('should scroll on initial load when messages arrive', () => {

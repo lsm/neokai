@@ -162,9 +162,9 @@ export function useAutoScroll({
 			container.addEventListener('scroll', handleScroll, { passive: true });
 
 			// Use ResizeObserver to update when rendered content changes size.
-			// Observe the content wrapper (endRef parent) when available, not only
-			// the scroll container: markdown/code rendering grows inner content while
-			// the container's own box stays the same.
+			// Observe both the scroll container and the content wrapper (endRef parent)
+			// when available: composer padding changes affect container metrics, while
+			// markdown/code rendering grows inner content without resizing the container.
 			// Batch layout reads via rAF to avoid forced reflow on dirty layout.
 			let rafId: number;
 			const resizeObserver = new ResizeObserver(() => {
@@ -190,8 +190,11 @@ export function useAutoScroll({
 					handleScroll();
 				});
 			});
-			const resizeTarget = endRef.current?.parentElement ?? container;
-			resizeObserver.observe(resizeTarget);
+			resizeObserver.observe(container);
+			const contentWrapper = endRef.current?.parentElement;
+			if (contentWrapper && contentWrapper !== container) {
+				resizeObserver.observe(contentWrapper);
+			}
 
 			// Return cleanup function
 			return () => {
