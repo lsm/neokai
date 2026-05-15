@@ -26,11 +26,7 @@ describe('SDKMessageHandler', () => {
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
 	let mockDaemonHub: DaemonHub;
-	const mockInternalEventBus = {
-		publish: emitSpy,
-		publishAsync: emitSpy,
-		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
-	} as unknown as InternalEventBus<any>;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockStateManager: ProcessingStateManager;
 	let mockContextTracker: ContextTracker;
 	let mockMessageQueue: MessageQueue;
@@ -112,6 +108,11 @@ describe('SDKMessageHandler', () => {
 		mockDaemonHub = {
 			emit: emitSpy,
 		} as unknown as DaemonHub;
+		mockInternalEventBus = {
+			publish: emitSpy,
+			publishAsync: emitSpy,
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
 
 		// StateManager spies
 		detectPhaseFromMessageSpy = mock(async () => {});
@@ -707,6 +708,30 @@ describe('SDKMessageHandler', () => {
 		});
 	});
 
+	describe('handleUserMessage', () => {
+		it('should emit production tool-use consumed event for tool_result messages', async () => {
+			const message: SDKMessage = {
+				type: 'user',
+				uuid: 'test-uuid',
+				session_id: 'test-session-id',
+				message: {
+					role: 'user',
+					content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }],
+				},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(emitSpy).toHaveBeenCalledWith(
+				'sdk.toolUse.consumed',
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					toolUseId: 'tool-1',
+				})
+			);
+		});
+	});
+
 	describe('handleAssistantMessage', () => {
 		it('should update tool call count', async () => {
 			const message: SDKMessage = {
@@ -724,6 +749,28 @@ describe('SDKMessageHandler', () => {
 			await handler.handleMessage(message);
 
 			expect(mockSession.metadata?.toolCallCount).toBe(2);
+		});
+
+		it('should emit production tool-use event for runtime recovery guards', async () => {
+			const message: SDKMessage = {
+				type: 'assistant',
+				uuid: 'test-uuid',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: {} }],
+				},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(emitSpy).toHaveBeenCalledWith(
+				'sdk.toolUse.created',
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					toolUseId: 'tool-1',
+					toolName: 'Read',
+				})
+			);
 		});
 
 		it('should emit session.updated event for tool calls', async () => {

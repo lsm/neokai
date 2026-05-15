@@ -2424,11 +2424,11 @@ export class TaskAgentManager {
 		if (!session) {
 			throw new Error(`Cannot restart stuck sub-session; session not found: ${agentSessionId}`);
 		}
+		await this.stopSessionPreserveDb(agentSessionId, session, { strict: true });
 		this.agentSessionIndex.delete(agentSessionId);
 		for (const [, nodeMap] of this.subSessions) {
 			nodeMap.delete(agentSessionId);
 		}
-		await this.stopSessionPreserveDb(agentSessionId, session);
 		await this.config.sessionManager.unregisterSession(agentSessionId);
 	}
 
@@ -3957,7 +3957,11 @@ export class TaskAgentManager {
 	 * `SessionManager.archiveSessionResources` or
 	 * `SessionManager.deleteSessionResources`.
 	 */
-	private async stopSessionPreserveDb(sessionId: string, session: AgentSession): Promise<void> {
+	private async stopSessionPreserveDb(
+		sessionId: string,
+		session: AgentSession,
+		options: { strict?: boolean } = {}
+	): Promise<void> {
 		const unsub = this.sessionListeners.get(sessionId);
 		if (unsub) {
 			unsub();
@@ -3965,16 +3969,25 @@ export class TaskAgentManager {
 		}
 		this.completionCallbacks.delete(sessionId);
 
+		let stopError: unknown;
 		try {
 			await session.handleInterrupt();
 		} catch (err) {
+			stopError = err;
 			log.warn(`TaskAgentManager: failed to interrupt session ${sessionId}:`, err);
 		}
 
 		try {
 			await session.cleanup();
 		} catch (err) {
+			stopError = stopError ?? err;
 			log.warn(`TaskAgentManager: failed to cleanup session ${sessionId}:`, err);
+		}
+
+		if (options.strict && stopError) {
+			throw new Error(
+				`Failed to stop session ${sessionId}: ${stopError instanceof Error ? stopError.message : String(stopError)}`
+			);
 		}
 	}
 

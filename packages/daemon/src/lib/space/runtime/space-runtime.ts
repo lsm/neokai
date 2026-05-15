@@ -67,6 +67,7 @@ import { CompletionDetector } from './completion-detector';
 import {
 	DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
 	DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
+	DEFAULT_TOOL_USE_ACTIVE_TTL_MS,
 	MAX_AGENT_STUCK_NAGS,
 	MAX_AGENT_STUCK_RESTARTS,
 	MAX_BLOCKED_RUN_RETRIES,
@@ -692,6 +693,32 @@ export class SpaceRuntime {
 			this.toolContinuationRepo.ensureSchema();
 		}
 		this.subscribeExternalEventPublished();
+		this.subscribeSdkToolUseCreated();
+	}
+
+	private subscribeSdkToolUseCreated(): void {
+		this.config.internalEventBus?.subscribe(
+			'sdk.toolUse.created',
+			(payload) => {
+				if (typeof payload.toolUseId !== 'string' || typeof payload.sessionId !== 'string') {
+					return;
+				}
+				this.toolContinuationRepo.recordToolUse({
+					toolUseId: payload.toolUseId,
+					sessionId: payload.sessionId,
+					ttlMs: DEFAULT_TOOL_USE_ACTIVE_TTL_MS,
+				});
+			},
+			{ subscriberName: 'SpaceRuntime.toolUseRecovery' }
+		);
+		this.config.internalEventBus?.subscribe(
+			'sdk.toolUse.consumed',
+			(payload) => {
+				if (typeof payload.toolUseId !== 'string') return;
+				this.toolContinuationRepo.markConsumed(payload.toolUseId);
+			},
+			{ subscriberName: 'SpaceRuntime.toolUseRecovery' }
+		);
 	}
 
 	private subscribeExternalEventPublished(): void {
@@ -3221,7 +3248,7 @@ export class SpaceRuntime {
 		const slot = node?.agents?.find((agent) => agent.name === execution.agentName);
 		const slotTimeoutMs = slot?.timeoutMs;
 		if (typeof slotTimeoutMs === 'number' && slotTimeoutMs > 0) {
-			return Math.min(configuredDefault, slotTimeoutMs);
+			return slotTimeoutMs;
 		}
 		return configuredDefault;
 	}

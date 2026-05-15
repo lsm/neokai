@@ -46,6 +46,9 @@ export const MAX_AGENT_STUCK_NAGS = 1;
  */
 export const DEFAULT_AGENT_STUCK_NAG_GRACE_MS = 2 * 60 * 1000;
 
+/** Maximum time an SDK tool_use stays active for runtime recovery guards. */
+export const DEFAULT_TOOL_USE_ACTIVE_TTL_MS = 60 * 60 * 1000;
+
 /** Maximum per-agent session restarts for alive-but-stuck recovery. */
 export const MAX_AGENT_STUCK_RESTARTS = 1;
 

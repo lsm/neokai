@@ -26,6 +26,8 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceWorkflow } from '@neokai/shared';
 
@@ -246,6 +248,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	let spaceManager: SpaceManager;
 	let nodeExecutionRepo: NodeExecutionRepository;
 	let sdkMessageRepo: SDKMessageRepository;
+	let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
 	const SPACE_ID = 'space-tick-1';
 	const SPACE_ID_2 = 'space-tick-2';
@@ -332,6 +335,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		workflowManager = new SpaceWorkflowManager(workflowRepo);
 
 		spaceManager = new SpaceManager(db);
+		internalEventBus = new InternalEventBus<DaemonInternalEventMap>();
 	});
 
 	afterEach(() => {
@@ -359,6 +363,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			taskRepo,
 			nodeExecutionRepo,
 			sdkMessageRepo,
+			internalEventBus,
 			taskAgentManager: tam as never,
 			...overrides,
 		};
@@ -1103,6 +1108,93 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			await rt.executeTick();
 
 			expect(nags).toEqual(['session:slot-timeout']);
+		});
+
+		test('allows per-slot timeout to extend the no-progress threshold', async () => {
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+					return `runtime-nag:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Extended per-slot threshold ${Date.now()}`,
+				description: 'Test',
+				nodes: [
+					{
+						id: STEP_A,
+						name: 'Build',
+						agents: [{ agentId: AGENT_PLANNER, name: 'Planner', timeoutMs: 10 * 60_000 }],
+					},
+				],
+				transitions: [],
+				startNodeId: STEP_A,
+				endNodeId: STEP_A,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:slot-timeout-extended',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			saveAssistantMessage('session:slot-timeout-extended', { minutesAgo: 2, toolUse: true });
+
+			await rt.executeTick();
+
+			expect(nags).toEqual([]);
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+		});
+
+		test('records SDK tool_use events for production active-tool recovery guard', async () => {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+			});
+			new SpaceRuntime(buildConfig(tam));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Run',
+			});
+			workflowRunRepo.updateStatusUnchecked(run.id, 'in_progress');
+			const execution = nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				agentName: 'Plan',
+				agentId: AGENT_PLANNER,
+				status: 'in_progress',
+				agentSessionId: 'session:production-tool',
+			});
+
+			await internalEventBus.publish('sdk.toolUse.created', {
+				sessionId: 'session:production-tool',
+				toolUseId: 'tool-production-path',
+				toolName: 'Bash',
+				timestamp: Date.now(),
+			});
+
+			const repo = new ToolContinuationRecoveryRepository(db);
+			expect(repo.hasActiveToolUseForExecution(execution.id)).toBe(true);
+
+			await internalEventBus.publish('sdk.toolUse.consumed', {
+				sessionId: 'session:production-tool',
+				toolUseId: 'tool-production-path',
+				timestamp: Date.now(),
+			});
+
+			expect(repo.hasActiveToolUseForExecution(execution.id)).toBe(false);
 		});
 
 		test('does not restart while the execution still has an active tool call', async () => {

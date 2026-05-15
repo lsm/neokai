@@ -544,6 +544,10 @@ export class SDKMessageHandler {
 		});
 
 		// Handle specific message types
+		if (isSDKUserMessage(message)) {
+			await this.handleUserMessage(message);
+		}
+
 		if (isSDKSystemMessage(message)) {
 			await this.handleSystemMessage(message);
 		}
@@ -735,6 +739,21 @@ export class SDKMessageHandler {
 		}
 	}
 
+	private async handleUserMessage(message: SDKMessage): Promise<void> {
+		const { internalEventBus } = this.ctx;
+
+		if (!isSDKUserMessage(message)) return;
+		const content = Array.isArray(message.message.content) ? message.message.content : [];
+		for (const block of content) {
+			if (block.type !== 'tool_result') continue;
+			await internalEventBus.publish('sdk.toolUse.consumed', {
+				sessionId: message.session_id ?? this.ctx.session.id,
+				toolUseId: block.tool_use_id,
+				timestamp: Date.now(),
+			});
+		}
+	}
+
 	/**
 	 * Handle assistant message (track tool calls)
 	 *
@@ -747,6 +766,14 @@ export class SDKMessageHandler {
 		if (!isSDKAssistantMessage(message)) return;
 
 		const toolCalls = message.message.content.filter(isToolUseBlock);
+		for (const toolCall of toolCalls) {
+			await internalEventBus.publish('sdk.toolUse.created', {
+				sessionId: session.id,
+				toolUseId: toolCall.id,
+				toolName: toolCall.name,
+				timestamp: Date.now(),
+			});
+		}
 		if (toolCalls.length > 0) {
 			session.metadata = {
 				...session.metadata,

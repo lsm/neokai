@@ -372,6 +372,17 @@ export interface ExternalEventEvents {
  * These events drive StateProjectionService cache updates.
  */
 export interface SessionEvents {
+	'sdk.toolUse.created': {
+		sessionId: string;
+		toolUseId: string;
+		toolName: string;
+		timestamp: number;
+	};
+	'sdk.toolUse.consumed': {
+		sessionId: string;
+		toolUseId: string;
+		timestamp: number;
+	};
 	'session.created': { sessionId: string; session: import('@neokai/shared').Session };
 	'session.updated': {
 		sessionId: string;
