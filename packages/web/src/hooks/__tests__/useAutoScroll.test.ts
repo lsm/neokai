@@ -258,6 +258,37 @@ describe('useAutoScroll', () => {
 			expect(containerRef.current!.scrollTop).toBe(0);
 		});
 
+		it('should cancel deferred re-pin when enabled flips false before next frame', () => {
+			vi.useFakeTimers();
+			const { containerRef, endRef } = createMockRefs();
+
+			const { rerender } = renderHook(
+				({ messageCount, enabled }) =>
+					useAutoScroll({
+						containerRef,
+						endRef,
+						enabled,
+						messageCount,
+						isInitialLoad: false,
+					}),
+				{
+					initialProps: { messageCount: 0, enabled: true },
+				}
+			);
+
+			rerender({ messageCount: 5, enabled: true });
+			expect(containerRef.current!.scrollTop).toBe(1000);
+
+			containerRef.current!.scrollHeight = 1200;
+			rerender({ messageCount: 5, enabled: false });
+			act(() => {
+				vi.advanceTimersByTime(16);
+			});
+
+			expect(containerRef.current!.scrollTop).toBe(1000);
+			vi.useRealTimers();
+		});
+
 		it('should scroll when new messages arrive and enabled', () => {
 			const { containerRef, endRef } = createMockRefs();
 
@@ -306,6 +337,38 @@ describe('useAutoScroll', () => {
 
 			// scrollTop should not have changed (no auto-scroll when disabled).
 			expect(containerRef.current!.scrollTop).toBe(baselineScroll);
+		});
+
+		it('should cancel deferred re-pin when loadingOlder flips true before next frame', () => {
+			vi.useFakeTimers();
+			const { containerRef, endRef } = createMockRefs();
+
+			const { rerender } = renderHook(
+				({ messageCount, loadingOlder }) =>
+					useAutoScroll({
+						containerRef,
+						endRef,
+						enabled: true,
+						messageCount,
+						isInitialLoad: false,
+						loadingOlder,
+					}),
+				{
+					initialProps: { messageCount: 0, loadingOlder: false },
+				}
+			);
+
+			rerender({ messageCount: 5, loadingOlder: false });
+			expect(containerRef.current!.scrollTop).toBe(1000);
+
+			containerRef.current!.scrollHeight = 1200;
+			rerender({ messageCount: 5, loadingOlder: true });
+			act(() => {
+				vi.advanceTimersByTime(16);
+			});
+
+			expect(containerRef.current!.scrollTop).toBe(1000);
+			vi.useRealTimers();
 		});
 
 		it('should not scroll when loading older messages', () => {

@@ -86,10 +86,10 @@ export function useAutoScroll({
 	const enabledRef = useRef<boolean>(enabled);
 	const loadingOlderRef = useRef<boolean>(loadingOlder);
 	const deferredScrollRafRef = useRef<number | null>(null);
-	useEffect(() => {
+	useLayoutEffect(() => {
 		enabledRef.current = enabled;
 	}, [enabled]);
-	useEffect(() => {
+	useLayoutEffect(() => {
 		loadingOlderRef.current = loadingOlder;
 	}, [loadingOlder]);
 
@@ -123,7 +123,7 @@ export function useAutoScroll({
 
 		deferredScrollRafRef.current = requestAnimationFrame(() => {
 			deferredScrollRafRef.current = null;
-			if (!loadingOlderRef.current) {
+			if (enabledRef.current && !loadingOlderRef.current) {
 				scrollToBottom();
 			}
 		});
@@ -275,7 +275,9 @@ export function useAutoScroll({
 			// suppress the auto-scroll and let the caller drive.
 			if (enabled || !isInitialLoad) {
 				scrollToBottom();
-				scrollToBottomAfterLayout();
+				if (enabled) {
+					scrollToBottomAfterLayout();
+				}
 			}
 			return;
 		}
