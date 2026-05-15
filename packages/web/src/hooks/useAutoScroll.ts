@@ -93,17 +93,26 @@ export function useAutoScroll({
 	}, [loadingOlder]);
 
 	// Scroll to bottom function - instant by default during streaming, smooth when user clicks.
-	// Uses `block: 'end'` so the end sentinel is aligned to the container's bottom edge,
-	// which — combined with `scroll-padding-bottom` on the scroll container — parks the last
-	// message just above the floating composer instead of underneath it.
+	// Set the scroll container directly instead of relying on scrollIntoView alignment,
+	// which interacts poorly with scroll-padding-bottom and can stop short of the true bottom.
 	const scrollToBottom = useCallback(
 		(smooth = false) => {
+			const container = containerRef.current;
+			if (container) {
+				if (smooth) {
+					container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+				} else {
+					container.scrollTop = container.scrollHeight;
+				}
+				return;
+			}
+
 			endRef.current?.scrollIntoView({
 				behavior: smooth ? 'smooth' : 'instant',
 				block: 'end',
 			});
 		},
-		[endRef]
+		[containerRef, endRef]
 	);
 
 	// Detect scroll position to show/hide scroll button
@@ -212,6 +221,16 @@ export function useAutoScroll({
 		// to the bottom and clobber that restore.
 		if (loadingOlder) {
 			prevMessageCountRef.current = messageCount;
+			return;
+		}
+
+		// When the message list is cleared (task switch, navigation),
+		// reset the previous-count tracker so the next non-zero count is
+		// seen as new content. Without this, a component that re-renders
+		// in place (no key change) retains a stale prev count and the
+		// 0→M transition is treated as a decrease, not new content.
+		if (messageCount === 0) {
+			prevMessageCountRef.current = 0;
 			return;
 		}
 

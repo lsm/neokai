@@ -14,15 +14,21 @@ import { useAutoScroll } from '../useAutoScroll.ts';
 
 // Helper to create mock refs
 function createMockRefs() {
-	const scrollIntoViewMock = vi.fn(() => {});
+	const scrollIntoViewMock = vi.fn(function (this: HTMLDivElement, options?: ScrollToOptions) {
+		if (typeof options?.top === 'number') {
+			this.scrollTop = options.top;
+		}
+	});
 	const addEventListenerMock = vi.fn(() => {});
 	const removeEventListenerMock = vi.fn(() => {});
+	const scrollToMock = scrollIntoViewMock;
 
 	const containerRef = {
 		current: {
 			scrollTop: 0,
 			scrollHeight: 1000,
 			clientHeight: 500,
+			scrollTo: scrollToMock,
 			addEventListener: addEventListenerMock,
 			removeEventListener: removeEventListenerMock,
 		} as unknown as HTMLDivElement,
@@ -38,6 +44,7 @@ function createMockRefs() {
 		containerRef,
 		endRef,
 		scrollIntoViewMock,
+		scrollToMock,
 		addEventListenerMock,
 		removeEventListenerMock,
 	};
@@ -111,8 +118,8 @@ describe('useAutoScroll', () => {
 	});
 
 	describe('scrollToBottom', () => {
-		it('should call scrollIntoView with instant behavior and block: end by default', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+		it('should scroll the container to its scrollHeight with instant behavior by default', () => {
+			const { containerRef, endRef, scrollToMock, scrollIntoViewMock } = createMockRefs();
 
 			const { result } = renderHook(() =>
 				useAutoScroll({
@@ -127,13 +134,12 @@ describe('useAutoScroll', () => {
 				result.current.scrollToBottom();
 			});
 
-			// block: 'end' combined with the container's scroll-padding-bottom keeps
-			// the last message above the floating composer rather than behind it.
-			expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'instant', block: 'end' });
+			expect(scrollToMock).toHaveBeenCalledWith({ top: 1000, behavior: 'instant' });
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
-		it('should call scrollIntoView with smooth behavior and block: end when specified', () => {
-			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+		it('should scroll the container to its scrollHeight with smooth behavior when specified', () => {
+			const { containerRef, endRef, scrollToMock, scrollIntoViewMock } = createMockRefs();
 
 			const { result } = renderHook(() =>
 				useAutoScroll({
@@ -148,7 +154,8 @@ describe('useAutoScroll', () => {
 				result.current.scrollToBottom(true);
 			});
 
-			expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'smooth', block: 'end' });
+			expect(scrollToMock).toHaveBeenCalledWith({ top: 1000, behavior: 'smooth' });
+			expect(containerRef.current!.scrollTop).toBe(1000);
 		});
 
 		it('should handle null endRef gracefully', () => {
@@ -467,11 +474,12 @@ describe('useAutoScroll', () => {
 			expect(scrollIntoViewMock).not.toHaveBeenCalled();
 		});
 
-		it('should reset mount-scroll latch when isInitialLoad flips back to true', () => {
-			// Preserves the existing reset semantic — a parent can signal
-			// "treat the next non-empty messageCount as a fresh load" by
-			// toggling the prop. Used for in-place session swaps that don't
-			// remount the hook.
+		it('should scroll to bottom on task switch without remount (messageCount N → 0 → M)', () => {
+			// Reproduces the SpaceTaskUnifiedThread task-switch scenario:
+			// Component re-renders in place (no key change), so hasScrolledOnMountRef
+			// stays true from the previous task. When rows are cleared (messageCount→0)
+			// and then repopulated from the new task (messageCount→M), the hook must
+			// still scroll to the bottom via the hasNewContent path.
 			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
 
 			const { rerender } = renderHook(
@@ -479,28 +487,138 @@ describe('useAutoScroll', () => {
 					useAutoScroll({
 						containerRef,
 						endRef,
-						enabled: false,
+						enabled: true,
 						messageCount,
 						isInitialLoad,
 					}),
 				{
-					initialProps: { messageCount: 5, isInitialLoad: false },
+					// Task A: loaded with 10 messages, isInitialLoad=false (loaded)
+					initialProps: { messageCount: 10, isInitialLoad: false },
 				}
 			);
 
-			// Initial mount-scroll fires (messageCount > 0).
-			expect(scrollIntoViewMock).toHaveBeenCalled();
+			// Initial mount-scroll fires (messageCount > 0 on first render)
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
 			scrollIntoViewMock.mockClear();
 
-			// Parent signals "fresh session" by toggling isInitialLoad back to
-			// true with a fresh (empty) messageCount.
+			// Task B: rows cleared, loading starts (isInitialLoad=true)
 			rerender({ messageCount: 0, isInitialLoad: true });
-			rerender({ messageCount: 0, isInitialLoad: false });
 
-			// New session's messages arrive — should scroll again because the
-			// mount-scroll latch was reset by the isInitialLoad → true edge.
-			rerender({ messageCount: 7, isInitialLoad: false });
-			expect(scrollIntoViewMock).toHaveBeenCalled();
+			// Task B: snapshot arrives, loading done (isInitialLoad=false)
+			rerender({ messageCount: 15, isInitialLoad: false });
+
+			// Should have scrolled for the new task's content
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('should scroll to bottom on task switch when new task has fewer messages', () => {
+			// Edge case: switching from a task with many messages to one with fewer.
+			// The hasNewContent path checks messageCount > prevMessageCountRef,
+			// but the 0 → M transition ensures hasNewContent is always true.
+			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+
+			const { rerender } = renderHook(
+				({ messageCount, isInitialLoad }) =>
+					useAutoScroll({
+						containerRef,
+						endRef,
+						enabled: true,
+						messageCount,
+						isInitialLoad,
+					}),
+				{
+					// Task A has 50 messages
+					initialProps: { messageCount: 50, isInitialLoad: false },
+				}
+			);
+
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+			scrollIntoViewMock.mockClear();
+
+			// Task B: rows cleared, loading starts
+			rerender({ messageCount: 0, isInitialLoad: true });
+
+			// Task B: only 5 messages (fewer than task A's 50)
+			rerender({ messageCount: 5, isInitialLoad: false });
+
+			// Should still scroll even though new task has fewer messages
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('should scroll on repeated task switches (N → 0 → M → 0 → K)', () => {
+			// Simulates switching between multiple tasks in sequence.
+			// Each switch goes through: loaded → loading (0) → loaded (new messages).
+			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+
+			const { rerender } = renderHook(
+				({ messageCount, isInitialLoad }) =>
+					useAutoScroll({
+						containerRef,
+						endRef,
+						enabled: true,
+						messageCount,
+						isInitialLoad,
+					}),
+				{
+					initialProps: { messageCount: 10, isInitialLoad: false },
+				}
+			);
+
+			// Task A: initial load
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+			scrollIntoViewMock.mockClear();
+
+			// Switch to task B: loading → loaded
+			rerender({ messageCount: 0, isInitialLoad: true });
+			rerender({ messageCount: 20, isInitialLoad: false });
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+			scrollIntoViewMock.mockClear();
+
+			// Switch to task C: loading → loaded (fewer messages)
+			rerender({ messageCount: 0, isInitialLoad: true });
+			rerender({ messageCount: 3, isInitialLoad: false });
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('should scroll on new content after messageCount drops to 0', () => {
+			// When the message list is cleared (task switch, session navigation),
+			// prevMessageCountRef resets so the next non-zero count is
+			// seen as new content. This is the fix for SpaceTaskUnifiedThread,
+			// which re-renders in place without a key change on task switch.
+			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+
+			const { rerender } = renderHook(
+				({ messageCount, enabled }) =>
+					useAutoScroll({
+						containerRef,
+						endRef,
+						enabled,
+						messageCount,
+						isInitialLoad: false,
+					}),
+				{
+					initialProps: { messageCount: 10, enabled: true },
+				}
+			);
+
+			// Initial mount-scroll fires.
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+			scrollIntoViewMock.mockClear();
+
+			// Messages cleared (e.g., loading state during task switch).
+			rerender({ messageCount: 0, enabled: true });
+			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+			// New task's messages arrive — prevMessageCountRef was reset to 0,
+			// so the 0→7 transition is seen as new content and scrolls.
+			rerender({ messageCount: 7, enabled: true });
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+
+			scrollIntoViewMock.mockClear();
+
+			// Subsequent new-message scrolls use the hasNewContent path.
+			rerender({ messageCount: 8, enabled: true });
+			expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -746,7 +864,7 @@ describe('useAutoScroll', () => {
 					containerRef,
 					endRef,
 					enabled: true,
-					messageCount: 5,
+					messageCount: 0,
 				})
 			);
 
@@ -778,8 +896,9 @@ describe('useAutoScroll', () => {
 					useAutoScroll({
 						containerRef,
 						endRef,
-						enabled: true,
+						enabled: false,
 						messageCount: 5,
+						isInitialLoad: true,
 						loadingOlder,
 					}),
 				{ initialProps: { loadingOlder: false } }
@@ -814,7 +933,7 @@ describe('useAutoScroll', () => {
 					containerRef,
 					endRef,
 					enabled: true,
-					messageCount: 5,
+					messageCount: 0,
 				})
 			);
 
