@@ -85,26 +85,49 @@ export function useAutoScroll({
 	// current value rather than a stale closure capture.
 	const enabledRef = useRef<boolean>(enabled);
 	const loadingOlderRef = useRef<boolean>(loadingOlder);
-	useEffect(() => {
+	const deferredScrollRafRef = useRef<number | null>(null);
+	useLayoutEffect(() => {
 		enabledRef.current = enabled;
 	}, [enabled]);
-	useEffect(() => {
+	useLayoutEffect(() => {
 		loadingOlderRef.current = loadingOlder;
 	}, [loadingOlder]);
 
 	// Scroll to bottom function - instant by default during streaming, smooth when user clicks.
-	// Uses `block: 'end'` so the end sentinel is aligned to the container's bottom edge,
-	// which — combined with `scroll-padding-bottom` on the scroll container — parks the last
-	// message just above the floating composer instead of underneath it.
+	// Set the scroll container directly instead of relying on scrollIntoView alignment,
+	// which interacts poorly with scroll-padding-bottom and can stop short of the true bottom.
 	const scrollToBottom = useCallback(
 		(smooth = false) => {
+			const container = containerRef.current;
+			if (container) {
+				if (smooth) {
+					container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+				} else {
+					container.scrollTop = container.scrollHeight;
+				}
+				return;
+			}
+
 			endRef.current?.scrollIntoView({
 				behavior: smooth ? 'smooth' : 'instant',
 				block: 'end',
 			});
 		},
-		[endRef]
+		[containerRef, endRef]
 	);
+
+	const scrollToBottomAfterLayout = useCallback(() => {
+		if (deferredScrollRafRef.current !== null) {
+			cancelAnimationFrame(deferredScrollRafRef.current);
+		}
+
+		deferredScrollRafRef.current = requestAnimationFrame(() => {
+			deferredScrollRafRef.current = null;
+			if (enabledRef.current && !loadingOlderRef.current) {
+				scrollToBottom();
+			}
+		});
+	}, [scrollToBottom]);
 
 	// Detect scroll position to show/hide scroll button
 	useEffect(() => {
@@ -138,8 +161,11 @@ export function useAutoScroll({
 			// Use passive event listener for better scroll performance
 			container.addEventListener('scroll', handleScroll, { passive: true });
 
-			// Use ResizeObserver to update when content size changes
-			// Batch layout reads via rAF to avoid forced reflow on dirty layout
+			// Use ResizeObserver to update when rendered content changes size.
+			// Observe both the scroll container and the content wrapper (endRef parent)
+			// when available: composer padding changes affect container metrics, while
+			// markdown/code rendering grows inner content without resizing the container.
+			// Batch layout reads via rAF to avoid forced reflow on dirty layout.
 			let rafId: number;
 			const resizeObserver = new ResizeObserver(() => {
 				cancelAnimationFrame(rafId);
@@ -165,6 +191,10 @@ export function useAutoScroll({
 				});
 			});
 			resizeObserver.observe(container);
+			const contentWrapper = endRef.current?.parentElement;
+			if (contentWrapper && contentWrapper !== container) {
+				resizeObserver.observe(contentWrapper);
+			}
 
 			// Return cleanup function
 			return () => {
@@ -175,7 +205,7 @@ export function useAutoScroll({
 		}
 
 		return setupScrollDetection(container);
-	}, [nearBottomThreshold, messageCount]);
+	}, [nearBottomThreshold, messageCount, endRef]);
 
 	// When loadingOlder transitions from true to false, skip the message-count delta
 	// that was introduced by revealing older messages so that auto-scroll doesn't fire.
@@ -215,6 +245,16 @@ export function useAutoScroll({
 			return;
 		}
 
+		// When the message list is cleared (task switch, navigation),
+		// reset the previous-count tracker so the next non-zero count is
+		// seen as new content. Without this, a component that re-renders
+		// in place (no key change) retains a stale prev count and the
+		// 0→M transition is treated as a decrease, not new content.
+		if (messageCount === 0) {
+			prevMessageCountRef.current = 0;
+			return;
+		}
+
 		// First scroll on mount: when messages first become non-empty on this
 		// mount, scroll to the bottom — even if `enabled` is false. This is a
 		// "navigation/visit" scroll, not an auto-scroll on new content; the
@@ -238,6 +278,9 @@ export function useAutoScroll({
 			// suppress the auto-scroll and let the caller drive.
 			if (enabled || !isInitialLoad) {
 				scrollToBottom();
+				if (enabled) {
+					scrollToBottomAfterLayout();
+				}
 			}
 			return;
 		}
@@ -245,10 +288,18 @@ export function useAutoScroll({
 		// Only auto-scroll for new messages if enabled
 		if (enabled && hasNewContent) {
 			scrollToBottom();
+			scrollToBottomAfterLayout();
 		}
 
 		prevMessageCountRef.current = messageCount;
-	}, [messageCount, isInitialLoad, loadingOlder, enabled, scrollToBottom]);
+	}, [
+		messageCount,
+		isInitialLoad,
+		loadingOlder,
+		enabled,
+		scrollToBottom,
+		scrollToBottomAfterLayout,
+	]);
 
 	// Reset the mount-scroll latch when `isInitialLoad` flips back to true.
 	// This preserves the existing reset semantic — a parent can signal "treat
@@ -259,6 +310,14 @@ export function useAutoScroll({
 			hasScrolledOnMountRef.current = false;
 		}
 	}, [isInitialLoad]);
+
+	useEffect(() => {
+		return () => {
+			if (deferredScrollRafRef.current !== null) {
+				cancelAnimationFrame(deferredScrollRafRef.current);
+			}
+		};
+	}, []);
 
 	return {
 		showScrollButton,
