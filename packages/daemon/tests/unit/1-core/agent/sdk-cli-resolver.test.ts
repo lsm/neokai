@@ -71,18 +71,23 @@ describe('sdk-cli-resolver', () => {
 			const execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
 				throw new Error('not found');
 			});
+			const execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+				throw new Error('not found');
+			});
 
 			const result = resolveSDKCliPath();
 
 			expect(result).toBeUndefined();
 			existsSyncSpy.mockRestore();
 			execSyncSpy.mockRestore();
+			execFileSyncSpy.mockRestore();
 		});
 	});
 
 	describe('cache resolution', () => {
 		let existsSyncSpy: ReturnType<typeof spyOn>;
 		let execSyncSpy: ReturnType<typeof spyOn>;
+		let execFileSyncSpy: ReturnType<typeof spyOn>;
 		let lstatSyncSpy: ReturnType<typeof spyOn>;
 
 		beforeEach(() => {
@@ -92,6 +97,7 @@ describe('sdk-cli-resolver', () => {
 		afterEach(() => {
 			existsSyncSpy?.mockRestore();
 			execSyncSpy?.mockRestore();
+			execFileSyncSpy?.mockRestore();
 			lstatSyncSpy?.mockRestore();
 		});
 
@@ -152,6 +158,10 @@ describe('sdk-cli-resolver', () => {
 				throw new Error('download also fails');
 			});
 
+			execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+				throw new Error('download also fails');
+			});
+
 			const result = resolveSDKCliPath();
 			expect(result).toBeUndefined();
 		});
@@ -176,6 +186,10 @@ describe('sdk-cli-resolver', () => {
 				throw new Error('download also fails');
 			});
 
+			execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+				throw new Error('download also fails');
+			});
+
 			const result = resolveSDKCliPath();
 			expect(result).toBeUndefined();
 		});
@@ -184,6 +198,7 @@ describe('sdk-cli-resolver', () => {
 	describe('auto-download', () => {
 		let existsSyncSpy: ReturnType<typeof spyOn>;
 		let execSyncSpy: ReturnType<typeof spyOn>;
+		let execFileSyncSpy: ReturnType<typeof spyOn>;
 		let mkdirSyncSpy: ReturnType<typeof spyOn>;
 		let chmodSyncSpy: ReturnType<typeof spyOn>;
 		let readFileSyncSpy: ReturnType<typeof spyOn>;
@@ -206,6 +221,7 @@ describe('sdk-cli-resolver', () => {
 		afterEach(() => {
 			existsSyncSpy?.mockRestore();
 			execSyncSpy?.mockRestore();
+			execFileSyncSpy?.mockRestore();
 			mkdirSyncSpy.mockRestore();
 			renameSyncSpy.mockRestore();
 			chmodSyncSpy.mockRestore();
@@ -215,7 +231,7 @@ describe('sdk-cli-resolver', () => {
 
 		it('attempts download when node_modules and cache are empty', () => {
 			const originalExistsSync = fs.existsSync.bind(fs);
-			const originalExecSync = childProcess.execSync.bind(childProcess);
+			const originalExecFileSync = childProcess.execFileSync.bind(childProcess);
 
 			existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
 				const p = String(path);
@@ -225,15 +241,22 @@ describe('sdk-cli-resolver', () => {
 			});
 
 			let registryCalled = false;
-			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
-				const c = String(cmd);
-				if (c.includes('registry.npmjs.org')) {
-					registryCalled = true;
-					throw new Error('network error simulating registry failure');
+			execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
+				(file: string, args?: string[]) => {
+					if (file === 'curl') {
+						const url = Array.isArray(args)
+							? args.find((a) => a.includes('registry.npmjs.org'))
+							: '';
+						if (url) {
+							registryCalled = true;
+							throw new Error('network error simulating registry failure');
+						}
+						// Pass through for non-registry curl calls
+						return originalExecFileSync(file, args);
+					}
+					throw new Error(`unexpected execFileSync: ${file}`);
 				}
-				// Pass through to original for non-registry commands
-				return originalExecSync(cmd);
-			});
+			);
 
 			const result = resolveSDKCliPath();
 
@@ -268,20 +291,26 @@ describe('sdk-cli-resolver', () => {
 			});
 
 			let registryFetched = false;
-			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
-				const c = String(cmd);
-				if (c.includes('registry.npmjs.org')) {
-					registryFetched = true;
-					return JSON.stringify({
-						dist: {
-							tarball: `https://registry.npmjs.org/fake/-/fake.tgz`,
-							integrity: expectedIntegrity,
-						},
-					});
+			execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
+				(file: string, args?: string[]) => {
+					if (file === 'curl') {
+						const url = Array.isArray(args)
+							? args.find((a) => a.includes('registry.npmjs.org'))
+							: '';
+						if (url) {
+							registryFetched = true;
+							return JSON.stringify({
+								dist: {
+									tarball: `https://registry.npmjs.org/fake/-/fake.tgz`,
+									integrity: expectedIntegrity,
+								},
+							});
+						}
+						return '';
+					}
+					throw new Error(`unexpected execFileSync: ${file}`);
 				}
-				if (c.includes('curl')) return '';
-				throw new Error(`unexpected execSync: ${cmd}`);
-			});
+			);
 
 			const result = resolveSDKCliPath();
 
@@ -324,19 +353,25 @@ describe('sdk-cli-resolver', () => {
 				}
 			);
 
-			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
-				const c = String(cmd);
-				if (c.includes('registry.npmjs.org')) {
-					return JSON.stringify({
-						dist: {
-							tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
-							integrity: expectedIntegrity,
-						},
-					});
+			execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
+				(file: string, args?: string[]) => {
+					if (file === 'curl') {
+						const url = Array.isArray(args)
+							? args.find((a) => a.includes('registry.npmjs.org'))
+							: '';
+						if (url) {
+							return JSON.stringify({
+								dist: {
+									tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
+									integrity: expectedIntegrity,
+								},
+							});
+						}
+						return '';
+					}
+					throw new Error(`unexpected execFileSync: ${file}`);
 				}
-				if (c.includes('curl')) return '';
-				throw new Error(`unexpected execSync: ${cmd}`);
-			});
+			);
 
 			const result = resolveSDKCliPath();
 
@@ -365,19 +400,25 @@ describe('sdk-cli-resolver', () => {
 				return originalReadFileSync(p);
 			});
 
-			execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation((cmd: string) => {
-				const c = String(cmd);
-				if (c.includes('registry.npmjs.org')) {
-					return JSON.stringify({
-						dist: {
-							tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
-							integrity: expectedIntegrity,
-						},
-					});
+			execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
+				(file: string, args?: string[]) => {
+					if (file === 'curl') {
+						const url = Array.isArray(args)
+							? args.find((a) => a.includes('registry.npmjs.org'))
+							: '';
+						if (url) {
+							return JSON.stringify({
+								dist: {
+									tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
+									integrity: expectedIntegrity,
+								},
+							});
+						}
+						return '';
+					}
+					throw new Error(`unexpected execFileSync: ${file}`);
 				}
-				if (c.includes('curl')) return '';
-				throw new Error(`unexpected execSync: ${cmd}`);
-			});
+			);
 
 			const result = resolveSDKCliPath();
 			expect(result).toBeUndefined();
@@ -394,12 +435,16 @@ describe('sdk-cli-resolver', () => {
 			const execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
 				throw new Error('not found');
 			});
+			const execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+				throw new Error('not found');
+			});
 
 			const result = resolveSDKCliPath();
 			expect(result).toBeUndefined();
 
 			existsSyncSpy.mockRestore();
 			execSyncSpy.mockRestore();
+			execFileSyncSpy.mockRestore();
 		});
 	});
 });

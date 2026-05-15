@@ -25,7 +25,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -295,7 +295,8 @@ function fetchNpmPackageMeta(
 ): { tarballUrl: string; integrity: string } | undefined {
 	const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${version}`;
 	try {
-		const result = execSync(`curl -sf "${url}"`, {
+		// Use execFileSync to avoid shell injection — arguments passed as array
+		const result = execFileSync('curl', ['-sf', url], {
 			encoding: 'utf-8',
 			timeout: 15_000,
 			stdio: ['pipe', 'pipe', 'pipe'],
@@ -322,7 +323,8 @@ function fetchNpmPackageMeta(
  */
 function downloadTarball(url: string, destPath: string): string | undefined {
 	try {
-		execSync(`curl -sfL -o "${destPath}" "${url}"`, {
+		// Use execFileSync to avoid shell injection — arguments passed as array
+		execFileSync('curl', ['-sfL', '-o', destPath, url], {
 			timeout: 120_000,
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
@@ -365,10 +367,12 @@ function extractFileFromTarGz(
 			if (header.every((b: number) => b === 0)) break;
 
 			// Parse header fields (POSIX ustar format)
-			const name = header.subarray(0, 100).toString('utf-8').replace(/\x00/g, '');
-			const sizeOctal = header.subarray(124, 136).toString('utf-8').replace(/\x00/g, '').trim();
+			// oxlint-disable-next-line no-control-regex -- tar headers use NUL-padding; \x00 is intentional
+			const stripNul = (s: string) => s.replace(/\x00/g, '');
+			const name = stripNul(header.subarray(0, 100).toString('utf-8'));
+			const sizeOctal = stripNul(header.subarray(124, 136).toString('utf-8')).trim();
 			const typeFlag = header.subarray(156, 157).toString('utf-8');
-			const prefix = header.subarray(345, 500).toString('utf-8').replace(/\x00/g, '');
+			const prefix = stripNul(header.subarray(345, 500).toString('utf-8'));
 
 			const fullName = prefix ? `${prefix}${name}` : name;
 			const fileSize = sizeOctal ? parseInt(sizeOctal, 8) : 0;
@@ -444,9 +448,10 @@ function downloadSdkBinary(): string | undefined {
 	const binaryName = getCliBinaryName();
 	const cacheDir = dirname(cachePath);
 
+	let tmpDir: string | undefined;
 	try {
 		// Create a temp directory for the download
-		const tmpDir = join(tmpdir(), `neokai-sdk-download-${process.pid}-${Date.now()}`);
+		tmpDir = join(tmpdir(), `neokai-sdk-download-${process.pid}-${Date.now()}`);
 		mkdirSync(tmpDir, { recursive: true });
 
 		// Step 1: Fetch package metadata (tarball URL + integrity hash) from npm
@@ -464,9 +469,6 @@ function downloadSdkBinary(): string | undefined {
 			logWarn(
 				`[sdk-cli-resolver] Integrity mismatch for ${platformPkg}@${version}: expected ${meta.integrity}, got ${actualIntegrity}`
 			);
-			try {
-				unlinkSync(tarballPath);
-			} catch {}
 			return undefined;
 		}
 
@@ -483,18 +485,20 @@ function downloadSdkBinary(): string | undefined {
 		// Copy ripgrep vendor binary for sandbox mode
 		copySystemRipgrepToVendor(cacheDir);
 
-		// Clean up temp directory
-		try {
-			const { rmSync } = require('node:fs');
-			rmSync(tmpDir, { recursive: true });
-		} catch {
-			// Non-critical — temp dir will be cleaned by OS
-		}
-
 		return cachePath;
 	} catch (err) {
 		logWarn(`[sdk-cli-resolver] Unexpected error downloading SDK binary: ${err}`);
 		return undefined;
+	} finally {
+		// Clean up temp directory on all exit paths (success, failure, exception)
+		if (tmpDir) {
+			try {
+				const { rmSync } = require('node:fs');
+				rmSync(tmpDir, { recursive: true });
+			} catch {
+				// Non-critical — temp dir will be cleaned by OS
+			}
+		}
 	}
 }
 
