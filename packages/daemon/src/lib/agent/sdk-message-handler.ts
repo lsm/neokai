@@ -303,6 +303,7 @@ export class SDKMessageHandler {
 			sessionId: session.id,
 			message: sdkReplayMessage,
 		});
+		await this.publishToolResultConsumedEvents(sdkReplayMessage);
 	}
 
 	/**
@@ -333,15 +334,17 @@ export class SDKMessageHandler {
 			});
 
 			const { dbId: _dbId, timestamp, ...sdkUserMessage } = enqueuedUser;
+			const replayedMessage = { ...sdkUserMessage, timestamp } as SDKMessage;
 			messageHub.event(
 				'state.sdkMessages.delta',
 				{
-					added: [{ ...sdkUserMessage, timestamp }],
+					added: [replayedMessage],
 					timestamp: Date.now(),
 					version: ++this.sdkMessageDeltaVersion,
 				},
 				{ channel: `session:${session.id}` }
 			);
+			await this.publishToolResultConsumedEvents(replayedMessage);
 		}
 	}
 
@@ -396,6 +399,10 @@ export class SDKMessageHandler {
 					message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
 				})
 				.catch(() => {});
+			this.publishToolResultConsumedEvents({
+				...sdkMessage,
+				timestamp: consumedAt,
+			} as unknown as SDKMessage).catch(() => {});
 			return;
 		}
 
@@ -439,6 +446,10 @@ export class SDKMessageHandler {
 				message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
 			})
 			.catch(() => {});
+		this.publishToolResultConsumedEvents({
+			...sdkMessage,
+			timestamp: consumedAt,
+		} as unknown as SDKMessage).catch(() => {});
 	}
 
 	/**
@@ -544,6 +555,10 @@ export class SDKMessageHandler {
 		});
 
 		// Handle specific message types
+		if (isSDKUserMessage(message)) {
+			await this.handleUserMessage(message);
+		}
+
 		if (isSDKSystemMessage(message)) {
 			await this.handleSystemMessage(message);
 		}
@@ -735,6 +750,25 @@ export class SDKMessageHandler {
 		}
 	}
 
+	private async handleUserMessage(message: SDKMessage): Promise<void> {
+		await this.publishToolResultConsumedEvents(message);
+	}
+
+	private async publishToolResultConsumedEvents(message: SDKMessage): Promise<void> {
+		const { internalEventBus } = this.ctx;
+
+		if (!isSDKUserMessage(message)) return;
+		const content = Array.isArray(message.message.content) ? message.message.content : [];
+		for (const block of content) {
+			if (block.type !== 'tool_result') continue;
+			await internalEventBus.publish('sdk.toolUse.consumed', {
+				sessionId: message.session_id ?? this.ctx.session.id,
+				toolUseId: block.tool_use_id,
+				timestamp: Date.now(),
+			});
+		}
+	}
+
 	/**
 	 * Handle assistant message (track tool calls)
 	 *
@@ -747,6 +781,14 @@ export class SDKMessageHandler {
 		if (!isSDKAssistantMessage(message)) return;
 
 		const toolCalls = message.message.content.filter(isToolUseBlock);
+		for (const toolCall of toolCalls) {
+			await internalEventBus.publish('sdk.toolUse.created', {
+				sessionId: session.id,
+				toolUseId: toolCall.id,
+				toolName: toolCall.name,
+				timestamp: Date.now(),
+			});
+		}
 		if (toolCalls.length > 0) {
 			session.metadata = {
 				...session.metadata,

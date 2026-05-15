@@ -126,16 +126,6 @@ export class SpaceAgentNotificationService {
 				}
 			),
 			this.internalEventBus.subscribe(
-				'space.agent.autoCompleted',
-				(event) => {
-					if (event.spaceId !== this.spaceId) return;
-					void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel));
-				},
-				{
-					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.agent.autoCompleted`,
-				}
-			),
-			this.internalEventBus.subscribe(
 				'space.agent.crashed',
 				(event) => {
 					if (event.spaceId !== this.spaceId) return;
@@ -333,29 +323,6 @@ function formatWorkflowRunReopened(
 		autonomyLevel,
 	};
 	return buildMessage('workflow_run_reopened', humanReadable, payload);
-}
-
-function formatAgentAutoCompleted(
-	event: {
-		spaceId: string;
-		taskId: string;
-		elapsedMs: number;
-		timestamp: string;
-	},
-	autonomyLevel: SpaceAutonomyLevel
-): string {
-	const elapsedMinutes = Math.round(event.elapsedMs / 60_000);
-	const humanReadable =
-		`Task ${event.taskId} in space ${event.spaceId} was auto-completed after ${elapsedMinutes} minute(s) ` +
-		`because the agent did not set task.reportedStatus within the configured timeout.`;
-	return buildMessage('agent_auto_completed', humanReadable, {
-		kind: 'agent_auto_completed',
-		spaceId: event.spaceId,
-		taskId: event.taskId,
-		elapsedMs: event.elapsedMs,
-		timestamp: event.timestamp,
-		autonomyLevel,
-	});
 }
 
 function formatAgentCrash(

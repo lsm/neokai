@@ -65,7 +65,11 @@ import {
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { CompletionDetector } from './completion-detector';
 import {
-	DEFAULT_NODE_TIMEOUT_MS,
+	DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
+	DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
+	DEFAULT_TOOL_USE_ACTIVE_TTL_MS,
+	MAX_AGENT_STUCK_NAGS,
+	MAX_AGENT_STUCK_RESTARTS,
 	MAX_BLOCKED_RUN_RETRIES,
 	MAX_TASK_AGENT_CRASH_RETRIES,
 } from './constants';
@@ -89,7 +93,7 @@ import {
 	type PostApprovalRouteResult,
 	PostApprovalRouter,
 } from './post-approval-router';
-import { resolveTimeoutForExecution } from './resolve-node-timeout';
+
 import type { TaskAgentManager } from './task-agent-manager';
 import { TopicTrie } from './topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
@@ -147,6 +151,16 @@ export interface SpaceRuntimeConfig {
 	 * Used by start(). Default: 5000 (5 seconds).
 	 */
 	tickIntervalMs?: number;
+	/**
+	 * Silence window for alive node-agent sessions before Layer 1 runtime recovery
+	 * considers a non-terminal last SDK message stuck. Default: 15 minutes.
+	 */
+	agentNoProgressThresholdMs?: number;
+	/**
+	 * Minimum wait after injecting a runtime nag before Layer 1 may restart/block
+	 * the same still-stale session. Default: 2 minutes.
+	 */
+	agentStuckNagGraceMs?: number;
 	/**
 	 * InternalEventBus for publishing typed Space domain events and subscribing to
 	 * external event publications.
@@ -255,6 +269,20 @@ interface PendingExternalEvent {
 	deliveryMode: 'immediate' | 'defer';
 }
 
+interface AgentStuckRecoveryState {
+	nagCount: number;
+	restartCount: number;
+	lastAction: 'nag' | 'restart' | 'blocked' | null;
+	lastActionAt: number | null;
+	lastObservedMessageId: string | null;
+	lastObservedMessageAt: number | null;
+	lastObservedProgressMessageId: string | null;
+	lastObservedProgressMessageAt: number | null;
+	lastRuntimeNagMessageId: string | null;
+	lastSessionId: string | null;
+	pendingRestartNotice: string | null;
+}
+
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
 
@@ -308,13 +336,6 @@ type SpaceNotificationEvent =
 			fromStatus: 'done' | 'cancelled';
 			reason: string;
 			by: string;
-			timestamp: string;
-	  }
-	| {
-			kind: 'agent_auto_completed';
-			spaceId: string;
-			taskId: string;
-			elapsedMs: number;
 			timestamp: string;
 	  }
 	| {
@@ -467,17 +488,6 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 					fromStatus: event.fromStatus,
 					reason: event.reason,
 					by: event.by,
-					timestamp: event.timestamp,
-				},
-			};
-		case 'agent_auto_completed':
-			return {
-				event: 'space.agent.autoCompleted',
-				payload: {
-					namespaceId,
-					spaceId: event.spaceId,
-					taskId: event.taskId,
-					elapsedMs: event.elapsedMs,
 					timestamp: event.timestamp,
 				},
 			};
@@ -647,10 +657,18 @@ export class SpaceRuntime {
 	/**
 	 * Tracks idle executions whose last SDK message was non-terminal.
 	 *
-	 * The counter is intentionally in-memory like crash recovery: transient idle
-	 * ambiguity gets one automatic re-spawn, then escalates if it repeats.
+	 * This is an in-memory duplicate-notification guard only. Naturally idle
+	 * incomplete executions are preserved; Layer 1 no longer respawns or blocks
+	 * them solely because the canonical task remains incomplete.
 	 */
 	private nonTerminalIdleCounts = new Map<string, number>();
+
+	/**
+	 * In-memory Layer 1 recovery state keyed by `${runId}:${nodeExecutionId}`.
+	 * NodeExecution IDs are per agent slot, so a stuck agent in a multi-agent node
+	 * can be nudged/restarted without touching sibling agents.
+	 */
+	private agentStuckRecovery = new Map<string, AgentStuckRecoveryState>();
 	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
 	private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
 	private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
@@ -658,6 +676,8 @@ export class SpaceRuntime {
 	private readonly externalEventRetryCounts = new Map<string, number>();
 	private readonly externalEventDeliveriesInFlight = new Set<string>();
 	private unsubscribeExternalEventPublished?: () => void;
+	private unsubscribeSdkToolUseCreated?: () => void;
+	private unsubscribeSdkToolUseConsumed?: () => void;
 	private acceptingExternalEvents = false;
 
 	/**
@@ -675,6 +695,39 @@ export class SpaceRuntime {
 			this.toolContinuationRepo.ensureSchema();
 		}
 		this.subscribeExternalEventPublished();
+		this.subscribeSdkToolUseCreated();
+	}
+
+	private subscribeSdkToolUseCreated(): void {
+		if (
+			!this.config.internalEventBus ||
+			this.unsubscribeSdkToolUseCreated ||
+			this.unsubscribeSdkToolUseConsumed
+		) {
+			return;
+		}
+		this.unsubscribeSdkToolUseCreated = this.config.internalEventBus.subscribe(
+			'sdk.toolUse.created',
+			(payload) => {
+				if (typeof payload.toolUseId !== 'string' || typeof payload.sessionId !== 'string') {
+					return;
+				}
+				this.toolContinuationRepo.recordToolUse({
+					toolUseId: payload.toolUseId,
+					sessionId: payload.sessionId,
+					ttlMs: DEFAULT_TOOL_USE_ACTIVE_TTL_MS,
+				});
+			},
+			{ subscriberName: 'SpaceRuntime.toolUseRecovery' }
+		);
+		this.unsubscribeSdkToolUseConsumed = this.config.internalEventBus.subscribe(
+			'sdk.toolUse.consumed',
+			(payload) => {
+				if (typeof payload.toolUseId !== 'string') return;
+				this.toolContinuationRepo.markConsumed(payload.toolUseId);
+			},
+			{ subscriberName: 'SpaceRuntime.toolUseRecovery' }
+		);
 	}
 
 	private subscribeExternalEventPublished(): void {
@@ -1828,6 +1881,7 @@ export class SpaceRuntime {
 		if (this.tickTimer !== null) return; // already running
 
 		this.subscribeExternalEventPublished();
+		this.subscribeSdkToolUseCreated();
 		this.acceptingExternalEvents = this.rehydrated;
 		this.rescheduleQueuedExternalEventRetries();
 		// Sweep events that arrived while stopped. On first start this is a
@@ -1863,6 +1917,10 @@ export class SpaceRuntime {
 		this.pollManager?.stopAll();
 		this.unsubscribeExternalEventPublished?.();
 		this.unsubscribeExternalEventPublished = undefined;
+		this.unsubscribeSdkToolUseCreated?.();
+		this.unsubscribeSdkToolUseCreated = undefined;
+		this.unsubscribeSdkToolUseConsumed?.();
+		this.unsubscribeSdkToolUseConsumed = undefined;
 		for (const timer of this.externalEventRetryTimers.values()) {
 			clearTimeout(timer);
 		}
@@ -2161,6 +2219,9 @@ export class SpaceRuntime {
 					this.nonTerminalIdleCounts.delete(key);
 				}
 			}
+			// Clear Layer 1 alive-stuck state so manually recovered workflow runs get
+			// a fresh nag/restart budget instead of inheriting stale recovery attempts.
+			this.clearAgentStuckStateForRun(preTxRunId);
 		}
 
 		const liveSessionIds = new Set<string>();
@@ -2721,7 +2782,9 @@ export class SpaceRuntime {
 				canonicalTask
 			);
 			if (nonTerminalIdleOutcome === 'blocked') return 'blocked';
-			if (nonTerminalIdleOutcome === 'retried') return 'skipped';
+			if (nonTerminalIdleOutcome === 'retried' || nonTerminalIdleOutcome === 'preserved') {
+				return 'skipped';
+			}
 		}
 
 		if (completionSignalled) {
@@ -3151,6 +3214,244 @@ export class SpaceRuntime {
 	 * Process a single workflow run tick: re-read from DB, recreate executor
 	 * with fresh state, detect issues, and spawn/monitor Task Agent sessions.
 	 */
+	private makeAgentStuckKey(runId: string, executionId: string): string {
+		return `${runId}:${executionId}`;
+	}
+
+	private getAgentStuckState(runId: string, execution: NodeExecution): AgentStuckRecoveryState {
+		const key = this.makeAgentStuckKey(runId, execution.id);
+		const existing = this.agentStuckRecovery.get(key);
+		if (existing) return existing;
+		const created: AgentStuckRecoveryState = {
+			nagCount: 0,
+			restartCount: 0,
+			lastAction: null,
+			lastActionAt: null,
+			lastObservedMessageId: null,
+			lastObservedMessageAt: null,
+			lastObservedProgressMessageId: null,
+			lastObservedProgressMessageAt: null,
+			lastRuntimeNagMessageId: null,
+			lastSessionId: execution.agentSessionId,
+			pendingRestartNotice: null,
+		};
+		this.agentStuckRecovery.set(key, created);
+		return created;
+	}
+
+	private consumeAgentRestartNotice(runId: string, execution: NodeExecution): string | null {
+		const state = this.agentStuckRecovery.get(this.makeAgentStuckKey(runId, execution.id));
+		if (!state?.pendingRestartNotice) return null;
+		const notice = state.pendingRestartNotice;
+		state.pendingRestartNotice = null;
+		return notice;
+	}
+
+	private clearAgentStuckState(runId: string, executionId: string): void {
+		this.agentStuckRecovery.delete(this.makeAgentStuckKey(runId, executionId));
+	}
+
+	private clearAgentStuckStateForRun(runId: string): void {
+		for (const key of this.agentStuckRecovery.keys()) {
+			if (key.startsWith(runId + ':')) {
+				this.agentStuckRecovery.delete(key);
+			}
+		}
+		for (const key of this.nonTerminalIdleCounts.keys()) {
+			if (key.startsWith(runId + ':')) {
+				this.nonTerminalIdleCounts.delete(key);
+			}
+		}
+	}
+
+	private getAgentNoProgressThresholdMs(workflow: SpaceWorkflow, execution: NodeExecution): number {
+		const configuredDefault =
+			this.config.agentNoProgressThresholdMs ?? DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS;
+		const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+		const slot = node?.agents?.find((agent) => agent.name === execution.agentName);
+		const slotTimeoutMs = slot?.timeoutMs;
+		if (typeof slotTimeoutMs === 'number' && slotTimeoutMs > 0) {
+			return slotTimeoutMs;
+		}
+		return configuredDefault;
+	}
+
+	private buildRuntimeNagMessage(
+		runId: string,
+		execution: NodeExecution,
+		lastMessageAt: number,
+		reason: string
+	): string {
+		return [
+			'[Runtime recovery notice]',
+			'',
+			`No observable progress has been recorded for workflow run ${runId}, node ${execution.workflowNodeId}, agent ${execution.agentName} since ${new Date(lastMessageAt).toISOString()}.`,
+			`The last SDK message is non-terminal: ${reason}.`,
+			'',
+			'Please continue your assigned work from the current state. If work is complete, report completion through the workflow tools. If you are blocked, report the blocker clearly through the available tools. Do not wait silently.',
+		].join('\n');
+	}
+
+	private buildRuntimeRestartNotice(execution: NodeExecution): string {
+		return [
+			'[Runtime session recovery]',
+			'',
+			`Your previous agent session for node ${execution.workflowNodeId}, agent ${execution.agentName}, stopped making observable progress and was restarted by the runtime.`,
+			'Continue the same task from the current repository and workflow state. Inspect task/workflow status, recent messages, git state, PR state, and artifacts as needed before acting. Do not start from scratch blindly.',
+			'If you are blocked, report the blocker clearly through the available workflow tools.',
+		].join('\n');
+	}
+
+	private async handleAliveStuckExecutions(
+		runId: string,
+		spaceId: string,
+		canonicalTask: SpaceTask,
+		nodeExecutions: NodeExecution[],
+		tam: TaskAgentManager,
+		workflow: SpaceWorkflow
+	): Promise<'none' | 'restarted' | 'blocked'> {
+		const nagGraceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
+		const now = Date.now();
+		for (const execution of nodeExecutions) {
+			if (execution.status !== 'in_progress' || !execution.agentSessionId) {
+				if (execution.status !== 'pending') {
+					this.clearAgentStuckState(runId, execution.id);
+				}
+				continue;
+			}
+
+			if (!tam.isSessionAlive(execution.agentSessionId)) continue;
+			const session = tam.getAgentSessionById?.(execution.agentSessionId);
+			const processingState = session?.getProcessingState();
+			if (processingState?.status === 'waiting_for_input') continue;
+
+			const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(execution.agentSessionId);
+			const classification = classifyLastMessageForIdleAgent(lastMessage);
+			const state = this.getAgentStuckState(runId, execution);
+			const isRuntimeNagMessage =
+				lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNagMessageId;
+			const progressMessage = lastMessage && !isRuntimeNagMessage ? lastMessage : null;
+			const observedAt =
+				progressMessage?.timestamp ?? execution.startedAt ?? state.lastActionAt ?? now;
+			const thresholdMs = this.getAgentNoProgressThresholdMs(workflow, execution);
+
+			if (state.lastSessionId !== execution.agentSessionId) {
+				state.lastSessionId = execution.agentSessionId;
+				state.lastObservedMessageId = lastMessage?.dbId ?? null;
+				state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
+				state.lastObservedProgressMessageId = progressMessage?.dbId ?? null;
+				state.lastObservedProgressMessageAt = progressMessage?.timestamp ?? null;
+				state.lastRuntimeNagMessageId = null;
+				state.lastAction = null;
+				state.lastActionAt = null;
+				state.nagCount = 0;
+				state.restartCount = 0;
+				state.pendingRestartNotice = null;
+			} else if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
+				state.lastObservedMessageId = lastMessage?.dbId ?? null;
+				state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
+				if (progressMessage && state.lastObservedProgressMessageId !== progressMessage.dbId) {
+					state.lastObservedProgressMessageId = progressMessage.dbId;
+					state.lastObservedProgressMessageAt = progressMessage.timestamp;
+					state.lastAction = null;
+					state.lastActionAt = null;
+					state.nagCount = 0;
+					state.restartCount = 0;
+					state.pendingRestartNotice = null;
+				}
+			}
+
+			if (classification.terminal) {
+				this.clearAgentStuckState(runId, execution.id);
+				continue;
+			}
+
+			if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id)) {
+				continue;
+			}
+
+			if (now - observedAt <= thresholdMs) continue;
+
+			if (state.nagCount < MAX_AGENT_STUCK_NAGS) {
+				const nagMessageId = await tam.injectRuntimeRecoveryMessage(
+					execution.agentSessionId,
+					this.buildRuntimeNagMessage(runId, execution, observedAt, classification.reason)
+				);
+				state.lastRuntimeNagMessageId = nagMessageId;
+				state.nagCount += 1;
+				state.lastAction = 'nag';
+				state.lastActionAt = now;
+				log.warn(
+					`SpaceRuntime: sent runtime nag to stuck agent execution ${execution.id} ` +
+						`(agent ${execution.agentName}, session ${execution.agentSessionId})`
+				);
+				continue;
+			}
+
+			if (state.lastAction === 'nag' && state.lastActionAt !== null) {
+				const elapsedSinceNag = now - state.lastActionAt;
+				if (elapsedSinceNag < nagGraceMs) {
+					log.debug(
+						`SpaceRuntime: delaying restart for stuck agent execution ${execution.id}; ` +
+							`runtime nag grace has ${nagGraceMs - elapsedSinceNag}ms remaining`
+					);
+					continue;
+				}
+			}
+
+			if (state.restartCount < MAX_AGENT_STUCK_RESTARTS) {
+				await tam.restartStuckSubSession(execution.agentSessionId);
+				state.restartCount += 1;
+				state.lastAction = 'restart';
+				state.lastActionAt = now;
+				state.pendingRestartNotice = this.buildRuntimeRestartNotice(execution);
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'pending',
+					agentSessionId: null,
+					startedAt: null,
+					completedAt: null,
+					result: 'Runtime restarted agent session after no observable progress.',
+				});
+				log.warn(
+					`SpaceRuntime: restarted stuck agent execution ${execution.id} ` +
+						`(agent ${execution.agentName}, session ${execution.agentSessionId})`
+				);
+				return 'restarted';
+			}
+
+			const reason = `Agent stuck without observable progress after runtime nag/restart recovery: ${classification.reason}`;
+			state.lastAction = 'blocked';
+			state.lastActionAt = now;
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'blocked',
+				result: reason,
+			});
+			await this.transitionRunStatusAndEmit(runId, 'blocked');
+			await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+				status: 'blocked',
+				result: reason,
+				blockReason: 'execution_failed',
+				completedAt: null,
+			});
+			await this.safeNotify({
+				kind: 'task_blocked',
+				spaceId,
+				taskId: canonicalTask.id,
+				reason,
+				timestamp: new Date(now).toISOString(),
+			});
+			await this.safeNotify({
+				kind: 'workflow_run_blocked',
+				spaceId,
+				runId,
+				reason,
+				timestamp: new Date(now).toISOString(),
+			});
+			return 'blocked';
+		}
+		return 'none';
+	}
+
 	private resetWorkflowNodeExecutionForSpawnRetry(
 		runId: string,
 		execution: NodeExecution,
@@ -3195,6 +3496,7 @@ export class SpaceRuntime {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
 		if (run.status === 'cancelled' || run.status === 'done') {
+			this.clearAgentStuckStateForRun(runId);
 			return;
 		}
 
@@ -3360,7 +3662,7 @@ export class SpaceRuntime {
 			let blockedByCrash = false;
 
 			// Snapshot which executions were already pending before this tick's
-			// liveness/auto-complete processing. The repair loop below uses this
+			// liveness processing. The repair loop below uses this
 			// to avoid re-elevating executions that were just force-idled and
 			// then reset to pending within the same tick.
 			const preTickPendingIds = new Set(
@@ -3422,6 +3724,18 @@ export class SpaceRuntime {
 				return;
 			}
 
+			const aliveStuckOutcome = await this.handleAliveStuckExecutions(
+				runId,
+				meta.spaceId,
+				canonicalTask,
+				nodeExecutions,
+				tam,
+				meta.workflow
+			);
+			if (aliveStuckOutcome === 'restarted' || aliveStuckOutcome === 'blocked') {
+				return;
+			}
+
 			const stoppedAfterWaitingRebind = await this.handleWaitingRebindExecutions(
 				runId,
 				run,
@@ -3431,90 +3745,6 @@ export class SpaceRuntime {
 			if (stoppedAfterWaitingRebind) {
 				return;
 			}
-			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-
-			// Step 1.5: Auto-complete alive agents that have exceeded their timeout.
-			// Transitions to 'idle' — the same state as a naturally completing session.
-			//
-			// Part D (task #138): a session in `waiting_for_input` is *legitimately*
-			// blocked on a human, not stuck. Force-completing it here turns the
-			// pending AskUserQuestion card into a dead-end (Submit/Skip have no
-			// resolver to wake) and confuses the user. Skip those sessions; the
-			// long-term fix (Tier 0) removes Step 1.5 entirely.
-			let autoCompleted = 0;
-			let skippedWaitingForInput = 0;
-			const now = Date.now();
-			for (const execution of nodeExecutions) {
-				if (execution.status !== 'in_progress' || !execution.agentSessionId) continue;
-				if (!tam.isSessionAlive(execution.agentSessionId)) continue;
-
-				const timeoutMs =
-					resolveTimeoutForExecution(execution, meta.workflow) ?? DEFAULT_NODE_TIMEOUT_MS;
-				const referenceTime = execution.startedAt ?? execution.createdAt;
-				const elapsedMs = now - referenceTime;
-				if (elapsedMs <= timeoutMs) continue;
-				const toolGraceMs = Math.min(timeoutMs, 60_000);
-				if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id, toolGraceMs)) {
-					const reason =
-						`Agent exceeded timeout with an in-flight tool call; moved to waiting_rebind ` +
-						`for ${Math.round(toolGraceMs / 1000)}s continuation recovery grace`;
-					this.toolContinuationRepo.markExecutionWaitingRebind(execution.id, reason);
-					continue;
-				}
-
-				// Part D guard: spare sessions waiting for user input. The agent is
-				// not stuck — a human is.
-				const liveSession = tam.getAgentSessionById(execution.agentSessionId);
-				if (liveSession?.getProcessingState().status === 'waiting_for_input') {
-					skippedWaitingForInput++;
-					continue;
-				}
-
-				const timeoutMinutes = Math.round(timeoutMs / 60_000);
-
-				// Defensive Part C call: the Part D guard above already skips
-				// `waiting_for_input` sessions, so by construction this code only
-				// runs for sessions that are NOT in `waiting_for_input` — and
-				// `markPendingQuestionOrphaned` is a no-op (returns false) for
-				// those. We keep the call as belt-and-braces against a future
-				// refactor that loosens the guard or introduces an `await`
-				// between the guard and this point. Best-effort: never let
-				// cleanup failure block the auto-complete.
-				if (liveSession) {
-					try {
-						await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
-					} catch (err) {
-						log.warn(
-							`SpaceRuntime: failed to clean up pending question for session ${execution.agentSessionId}:`,
-							err
-						);
-					}
-				}
-
-				this.config.nodeExecutionRepo.update(execution.id, {
-					status: 'idle',
-					result: `Auto-completed: agent timed out after ${timeoutMinutes} minutes`,
-				});
-				await this.safeNotify({
-					kind: 'agent_auto_completed',
-					spaceId: meta.spaceId,
-					taskId: canonicalTask.id,
-					elapsedMs,
-					timestamp: new Date().toISOString(),
-				});
-				autoCompleted++;
-			}
-			if (autoCompleted > 0) {
-				log.warn(
-					`SpaceRuntime: auto-completed ${autoCompleted} stuck node agent(s) for run ${runId}`
-				);
-			}
-			if (skippedWaitingForInput > 0) {
-				log.info(
-					`SpaceRuntime: spared ${skippedWaitingForInput} node agent(s) blocked on waiting_for_input for run ${runId}`
-				);
-			}
-
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
 			const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
@@ -3743,6 +3973,14 @@ export class SpaceRuntime {
 								agentName: execution.agentName,
 								sessionId,
 							});
+							const restartNotice = this.consumeAgentRestartNotice(runId, execution);
+							if (restartNotice) {
+								void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
+									log.warn(
+										`SpaceRuntime: failed to deliver restart recovery notice to session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+									);
+								});
+							}
 						} catch (err) {
 							if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
 								permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
@@ -4175,11 +4413,10 @@ export class SpaceRuntime {
 		runId: string,
 		spaceId: string,
 		canonicalTask: SpaceTask
-	): Promise<'none' | 'retried' | 'blocked'> {
+	): Promise<'none' | 'retried' | 'blocked' | 'preserved'> {
 		// Explicit task completion or pause signals are authoritative. A final tool
 		// call may have set reportedStatus or parked the task for human/post-approval
-		// review even if the SDK result row has not been persisted yet, so never
-		// retry/block when the task already carries one of those lifecycle signals.
+		// review even if the SDK result row has not been persisted yet.
 		if (
 			canonicalTask.reportedStatus !== null ||
 			canonicalTask.status === 'review' ||
@@ -4191,14 +4428,10 @@ export class SpaceRuntime {
 			return 'none';
 		}
 
+		let preservedAny = false;
 		const idleExecutions = this.config.nodeExecutionRepo
 			.listByWorkflowRun(runId)
-			.filter(
-				(execution) =>
-					execution.status === 'idle' &&
-					execution.agentSessionId &&
-					!execution.result?.startsWith('Auto-completed:')
-			);
+			.filter((execution) => execution.status === 'idle' && !!execution.agentSessionId);
 		for (const execution of idleExecutions) {
 			const sessionId = execution.agentSessionId;
 			if (!sessionId) continue;
@@ -4209,12 +4442,13 @@ export class SpaceRuntime {
 				continue;
 			}
 
+			preservedAny = true;
 			const key = `${runId}:${execution.id}`;
-			const retryCount = (this.nonTerminalIdleCounts.get(key) ?? 0) + 1;
-			this.nonTerminalIdleCounts.set(key, retryCount);
+			if (this.nonTerminalIdleCounts.has(key)) continue;
+			this.nonTerminalIdleCounts.set(key, 1);
 			const reason = `Agent went idle without completing — non-terminal last message (${classification.reason})`;
 			log.warn(
-				`Node ${execution.workflowNodeId} went idle with non-terminal last message, not advancing: ` +
+				`Node ${execution.workflowNodeId} went idle with non-terminal last message; preserving idle session: ` +
 					`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
 			);
 			await this.safeNotify({
@@ -4228,67 +4462,8 @@ export class SpaceRuntime {
 				reason,
 				timestamp: new Date().toISOString(),
 			});
-
-			if (retryCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
-				this.config.nodeExecutionRepo.update(execution.id, {
-					status: 'pending',
-					result: reason,
-					completedAt: null,
-					startedAt: null,
-				});
-				await this.safeNotify({
-					kind: 'task_retry',
-					spaceId,
-					taskId: canonicalTask.id,
-					runId,
-					originalReason: reason,
-					attemptNumber: retryCount,
-					maxAttempts: MAX_TASK_AGENT_CRASH_RETRIES,
-					timestamp: new Date().toISOString(),
-				});
-				return 'retried';
-			}
-
-			this.config.nodeExecutionRepo.update(execution.id, {
-				status: 'blocked',
-				result: reason,
-			});
-			await this.transitionRunStatusAndEmit(runId, 'blocked');
-			await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-				status: 'blocked',
-				result: reason,
-				blockReason: 'execution_failed',
-				completedAt: null,
-			});
-			await this.safeNotify({
-				kind: 'task_blocked',
-				spaceId,
-				taskId: canonicalTask.id,
-				reason,
-				timestamp: new Date().toISOString(),
-			});
-			await this.safeNotify({
-				kind: 'workflow_run_blocked',
-				spaceId,
-				runId,
-				reason,
-				timestamp: new Date().toISOString(),
-			});
-			await this.safeNotify({
-				kind: 'workflow_run_needs_attention',
-				spaceId,
-				runId,
-				taskId: canonicalTask.id,
-				reason,
-				retriesExhausted: retryCount - 1,
-				timestamp: new Date().toISOString(),
-			});
-			// Exhaust the blocked-run auto-retry budget so attemptBlockedRunRecovery
-			// escalates immediately instead of re-spawning the agent.
-			this.blockedRetryCounts.set(runId, MAX_BLOCKED_RUN_RETRIES);
-			return 'blocked';
 		}
-		return 'none';
+		return preservedAny ? 'preserved' : 'none';
 	}
 
 	private async handleWaitingRebindExecutions(
@@ -4684,6 +4859,7 @@ export class SpaceRuntime {
 			}
 
 			if (!run || run.status === 'done' || run.status === 'cancelled') {
+				this.clearAgentStuckStateForRun(runId);
 				if (run?.status === 'done') {
 					const meta = this.executorMeta.get(runId);
 					if (meta) {

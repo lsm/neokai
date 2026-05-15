@@ -22,11 +22,7 @@ describe('QueryModeHandler', () => {
 	let mockSession: Session;
 	let mockDb: Database;
 	let mockDaemonHub: DaemonHub;
-	const mockInternalEventBus = {
-		publish: emitSpy,
-		publishAsync: emitSpy,
-		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
-	} as unknown as InternalEventBus<any>;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockMessageQueue: MessageQueue;
 	let mockLogger: Logger;
 
@@ -67,6 +63,11 @@ describe('QueryModeHandler', () => {
 		} as unknown as Database;
 
 		emitSpy = mock(async () => {});
+		mockInternalEventBus = {
+			publish: emitSpy,
+			publishAsync: emitSpy,
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
 		mockDaemonHub = {
 			emit: emitSpy,
 		} as unknown as DaemonHub;

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect } from 'bun:test';
 import { SpaceAgentNotificationService } from '../../../../src/lib/space/runtime/space-agent-notification-service';
 import type { SpaceAgentNotificationServiceConfig } from '../../../../src/lib/space/runtime/space-agent-notification-service';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
@@ -344,28 +344,6 @@ describe('SpaceAgentNotificationService', () => {
 		});
 	});
 
-	describe('space.agent.autoCompleted event', () => {
-		it('formats auto-completed message', async () => {
-			const { factory, bus } = makeService();
-			await bus.publish('space.agent.autoCompleted', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				taskId: 'task-auto',
-				elapsedMs: 300000,
-				timestamp: TIMESTAMP,
-			});
-
-			const { message } = factory.calls[0];
-			expect(message).toContain('[TASK_EVENT] agent_auto_completed');
-			expect(message).toContain('auto-completed');
-			expect(message).toContain('5 minute');
-
-			const json = extractJson(message);
-			expect(json.kind).toBe('agent_auto_completed');
-			expect(json.elapsedMs).toBe(300000);
-		});
-	});
-
 	describe('space.agent.idleNonTerminal event', () => {
 		it('formats idle non-terminal message', async () => {
 			const { factory, bus } = makeService();
@@ -555,10 +533,6 @@ describe('SpaceAgentNotificationService', () => {
 			expect(factory.calls[0].message).toContain('task-1');
 		});
 	});
-
-	// Compatibility tests with SessionNotificationSink output removed — the
-	// session-notification-sink module has been deleted. The notification service
-	// is the sole publisher and its output format is verified by the tests above.
 });
 
 // ---------------------------------------------------------------------------

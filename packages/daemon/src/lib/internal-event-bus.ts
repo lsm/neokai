@@ -372,6 +372,17 @@ export interface ExternalEventEvents {
  * These events drive StateProjectionService cache updates.
  */
 export interface SessionEvents {
+	'sdk.toolUse.created': {
+		sessionId: string;
+		toolUseId: string;
+		toolName: string;
+		timestamp: number;
+	};
+	'sdk.toolUse.consumed': {
+		sessionId: string;
+		toolUseId: string;
+		timestamp: number;
+	};
 	'session.created': { sessionId: string; session: import('@neokai/shared').Session };
 	'session.updated': {
 		sessionId: string;
@@ -469,15 +480,6 @@ export interface SpaceAgentRecoveredEvent {
 	sessionId: string;
 	spaceId: string;
 	taskId: string;
-	timestamp: string;
-}
-
-/** A stuck agent was auto-completed by the runtime after timeout. */
-export interface SpaceAgentAutoCompletedEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	elapsedMs: number;
 	timestamp: string;
 }
 
@@ -591,7 +593,6 @@ export interface SpaceEvents {
 	'space.task.failed': SpaceTaskFailedEvent;
 	'space.agent.crashed': SpaceAgentCrashedEvent;
 	'space.agent.recovered': SpaceAgentRecoveredEvent;
-	'space.agent.autoCompleted': SpaceAgentAutoCompletedEvent;
 	'space.agent.idleNonTerminal': SpaceAgentIdleNonTerminalEvent;
 	'space.workflowRun.completed': SpaceWorkflowRunCompletedEvent;
 	'space.workflowRun.failed': SpaceWorkflowRunFailedEvent;

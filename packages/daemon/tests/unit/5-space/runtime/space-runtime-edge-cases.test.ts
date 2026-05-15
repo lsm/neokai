@@ -37,7 +37,6 @@ type BusEventKind =
 	| 'task_timeout'
 	| 'workflow_run_completed'
 	| 'workflow_run_reopened'
-	| 'agent_auto_completed'
 	| 'agent_crash'
 	| 'agent_idle_non_terminal'
 	| 'task_retry'
@@ -55,7 +54,6 @@ const EVENT_MAP: Record<string, BusEventKind> = {
 	'space.task.timeout': 'task_timeout',
 	'space.workflowRun.completed': 'workflow_run_completed',
 	'space.workflowRun.reopened': 'workflow_run_reopened',
-	'space.agent.autoCompleted': 'agent_auto_completed',
 	'space.agent.crashed': 'agent_crash',
 	'space.agent.idleNonTerminal': 'agent_idle_non_terminal',
 	'space.workflowRun.retry': 'task_retry',
