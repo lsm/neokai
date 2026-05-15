@@ -72,6 +72,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			const params = data as { spaceId: string };
 			if (!params.spaceId) throw new Error('spaceId is required');
 			this.repo.setRepoEnabled(params.spaceId, true);
+			await this.persistSpaceConfig(context, params.spaceId);
 			this.options.onWatchedReposChanged?.();
 			context.onSourceConfigChanged({
 				source: this.sourceId,
@@ -86,6 +87,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			const params = data as { spaceId: string };
 			if (!params.spaceId) throw new Error('spaceId is required');
 			this.repo.setRepoEnabled(params.spaceId, false);
+			await this.persistSpaceConfig(context, params.spaceId);
 			this.options.onWatchedReposChanged?.();
 			context.onSourceConfigChanged({
 				source: this.sourceId,
@@ -118,6 +120,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 				pollingEnabled: params.pollingEnabled,
 				enabled: params.enabled,
 			});
+			await this.persistSpaceConfig(context, watchedRepo.spaceId);
 			this.options.onWatchedReposChanged?.();
 			context.onSourceConfigChanged({
 				source: this.sourceId,
@@ -286,6 +289,33 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		context: ExternalEventExtensionContext
 	): Promise<void> {
 		await context.publisher.publish(toExternalEvent(spaceId, event));
+	}
+
+	private async persistSpaceConfig(
+		context: ExternalEventExtensionContext,
+		spaceId: string
+	): Promise<void> {
+		const repos = this.repo.listWatchedRepos(spaceId);
+		await context.config.setSpaceConfig(spaceId, this.sourceId, {
+			spaceId,
+			source: this.sourceId,
+			enabled: repos.some((repo) => repo.enabled),
+			settings: {
+				watchedRepos: repos.map((repo) => ({
+					id: repo.id,
+					owner: repo.owner,
+					repo: repo.repo,
+					enabled: repo.enabled,
+					webhookEnabled: repo.webhookEnabled,
+					pollingEnabled: repo.pollingEnabled,
+					webhookSecret: repo.webhookSecret ? 'configured' : null,
+					lastWebhookAt: repo.lastWebhookAt,
+					lastPollAt: repo.lastPollAt,
+					createdAt: repo.createdAt,
+					updatedAt: repo.updatedAt,
+				})),
+			},
+		});
 	}
 
 	async pollWatchedRepo(

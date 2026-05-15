@@ -108,6 +108,33 @@ describe('Migration 128: external event extension config tables', () => {
 		expect(JSON.parse(row.capabilities_json)).toEqual({ polling: true, rpcConfig: true });
 	});
 
+	test('falls back to empty capabilities when legacy capabilities JSON is malformed', () => {
+		db.exec(`
+			CREATE TABLE external_event_source_configs (
+				source TEXT PRIMARY KEY,
+				globally_enabled INTEGER NOT NULL,
+				capabilities_json TEXT,
+				secrets_ref TEXT,
+				settings_json TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.prepare(
+			`INSERT INTO external_event_source_configs
+			 (source, globally_enabled, capabilities_json, secrets_ref, settings_json, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		).run('github', 1, '{not valid json', null, null, 1, 2);
+
+		expect(() => runMigration128(db)).not.toThrow();
+		const row = db
+			.prepare(
+				`SELECT capabilities_json FROM external_event_extension_configs WHERE source = 'github'`
+			)
+			.get() as { capabilities_json: string };
+		expect(JSON.parse(row.capabilities_json)).toEqual({ rpcConfig: true });
+	});
+
 	test('seeds GitHub polling disabled by default', () => {
 		runMigration128(db);
 

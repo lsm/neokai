@@ -249,30 +249,24 @@ describe('external event extension startup primitives', () => {
 		});
 	});
 
-	test('listConfig returns space GitHub configuration via RPC handler', async () => {
+	test('listConfig returns persisted space GitHub configuration after watchRepo RPC', async () => {
 		const extension = new GitHubEventExtension(db);
 		const hub = new MessageHub({ defaultSessionId: 'global' });
 		const context = {
 			publisher: service,
-			config: new (class extends ExternalEventExtensionConfigStore {
-				override async getSpaceConfig(spaceId: string, source: string) {
-					const repos = extension.repo.listWatchedRepos(spaceId);
-					return {
-						spaceId,
-						source,
-						enabled: repos.some((repo) => repo.enabled),
-						settings: { watchedRepos: repos },
-					};
-				}
-			})(db),
+			config,
 			onSourceConfigChanged() {},
 		};
 		extension.registerRpcHandlers(hub, context);
-		extension.repo.upsertWatchedRepo({
+
+		const watchRepo = getRequestHandler(hub, 'space.github.watchRepo');
+		expect(watchRepo).toBeDefined();
+		await watchRepo!({
 			spaceId: 'space-1',
 			owner: 'acme',
 			repo: 'widgets',
 			pollingEnabled: true,
+			webhookSecret: 'secret',
 		});
 
 		const listConfig = getRequestHandler(hub, 'space.github.listConfig');
@@ -287,6 +281,7 @@ describe('external event extension startup primitives', () => {
 						owner: 'acme',
 						repo: 'widgets',
 						pollingEnabled: true,
+						webhookSecret: 'configured',
 					},
 				],
 			},
