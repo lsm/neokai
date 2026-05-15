@@ -23,6 +23,7 @@ function createMockRefs() {
 	const removeEventListenerMock = vi.fn(() => {});
 	const scrollToMock = scrollIntoViewMock;
 
+	const contentWrapper = {} as HTMLDivElement;
 	const containerRef = {
 		current: {
 			scrollTop: 0,
@@ -36,6 +37,7 @@ function createMockRefs() {
 
 	const endRef = {
 		current: {
+			parentElement: contentWrapper,
 			scrollIntoView: scrollIntoViewMock,
 		} as unknown as HTMLDivElement,
 	} as RefObject<HTMLDivElement>;
@@ -56,12 +58,15 @@ let resizeObserverInstances: MockResizeObserver[] = [];
 // Mock ResizeObserver
 class MockResizeObserver {
 	callback: ResizeObserverCallback;
+	observedTargets: Element[] = [];
 
 	constructor(callback: ResizeObserverCallback) {
 		this.callback = callback;
 		resizeObserverInstances.push(this);
 	}
-	observe() {}
+	observe(target: Element) {
+		this.observedTargets.push(target);
+	}
 	unobserve() {}
 	disconnect() {}
 	// Helper to trigger resize callback
@@ -180,6 +185,21 @@ describe('useAutoScroll', () => {
 	});
 
 	describe('auto-scroll behavior', () => {
+		it('should observe the content wrapper for markdown height changes', () => {
+			const { containerRef, endRef } = createMockRefs();
+
+			renderHook(() =>
+				useAutoScroll({
+					containerRef,
+					endRef,
+					enabled: true,
+					messageCount: 0,
+				})
+			);
+
+			expect(resizeObserverInstances[0]?.observedTargets).toEqual([endRef.current!.parentElement]);
+		});
+
 		it('should scroll on initial load when messages arrive', () => {
 			vi.useFakeTimers();
 			const { containerRef, endRef } = createMockRefs();

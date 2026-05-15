@@ -161,8 +161,11 @@ export function useAutoScroll({
 			// Use passive event listener for better scroll performance
 			container.addEventListener('scroll', handleScroll, { passive: true });
 
-			// Use ResizeObserver to update when content size changes
-			// Batch layout reads via rAF to avoid forced reflow on dirty layout
+			// Use ResizeObserver to update when rendered content changes size.
+			// Observe the content wrapper (endRef parent) when available, not only
+			// the scroll container: markdown/code rendering grows inner content while
+			// the container's own box stays the same.
+			// Batch layout reads via rAF to avoid forced reflow on dirty layout.
 			let rafId: number;
 			const resizeObserver = new ResizeObserver(() => {
 				cancelAnimationFrame(rafId);
@@ -187,7 +190,8 @@ export function useAutoScroll({
 					handleScroll();
 				});
 			});
-			resizeObserver.observe(container);
+			const resizeTarget = endRef.current?.parentElement ?? container;
+			resizeObserver.observe(resizeTarget);
 
 			// Return cleanup function
 			return () => {
@@ -198,7 +202,7 @@ export function useAutoScroll({
 		}
 
 		return setupScrollDetection(container);
-	}, [nearBottomThreshold, messageCount]);
+	}, [nearBottomThreshold, messageCount, endRef]);
 
 	// When loadingOlder transitions from true to false, skip the message-count delta
 	// that was introduced by revealing older messages so that auto-scroll doesn't fire.
