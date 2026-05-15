@@ -19,11 +19,7 @@ import type { QueryModeHandler } from '../../../../src/lib/agent/query-mode-hand
 describe('EventSubscriptionSetup', () => {
 	let setup: EventSubscriptionSetup;
 	let mockDaemonHub: DaemonHub;
-	const mockInternalEventBus = {
-		publish: emitSpy,
-		publishAsync: emitSpy,
-		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
-	} as unknown as InternalEventBus<any>;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockContext: EventSubscriptionSetupContext;
 
 	let onSpy: ReturnType<typeof mock>;
@@ -42,13 +38,18 @@ describe('EventSubscriptionSetup', () => {
 		registeredCallbacks = new Map();
 		unsubscribeSpy = mock(() => {});
 
-		// Mock daemonHub.on to capture callbacks and return unsubscribe function
+		// Mock subscriptions to capture callbacks and return unsubscribe function
 		onSpy = mock((event: string, callback: (data: unknown) => Promise<void>) => {
 			registeredCallbacks.set(event, callback);
 			return unsubscribeSpy;
 		});
 
 		emitSpy = mock(async () => {});
+		mockInternalEventBus = {
+			publish: emitSpy,
+			publishAsync: emitSpy,
+			subscribe: onSpy,
+		} as unknown as InternalEventBus<any>;
 
 		mockDaemonHub = {
 			on: onSpy,
@@ -121,7 +122,7 @@ describe('EventSubscriptionSetup', () => {
 
 			// All subscriptions should include sessionId option
 			for (const call of onSpy.mock.calls) {
-				expect(call[2]).toEqual({ sessionId: 'test-session-id' });
+				expect(call[2]).toEqual(expect.objectContaining({ sessionId: 'test-session-id' }));
 			}
 		});
 

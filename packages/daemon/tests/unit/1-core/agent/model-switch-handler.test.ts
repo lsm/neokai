@@ -114,11 +114,7 @@ describe('ModelSwitchHandler', () => {
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
 	let mockDaemonHub: DaemonHub;
-	const mockInternalEventBus = {
-		publish: emitSpy,
-		publishAsync: emitSpy,
-		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
-	} as unknown as InternalEventBus<any>;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockContextTracker: ContextTracker;
 	let mockStateManager: ProcessingStateManager;
 	let mockErrorManager: ErrorManager;
@@ -174,6 +170,11 @@ describe('ModelSwitchHandler', () => {
 		// Create mocks
 		publishSpy = mock(async () => {});
 		emitSpy = mock(async () => {});
+		mockInternalEventBus = {
+			publish: emitSpy,
+			publishAsync: emitSpy,
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
 		updateSessionSpy = mock(() => {});
 		setModelSpy = mock(async () => {});
 		handleErrorSpy = mock(async () => {});

@@ -834,3 +834,8 @@ export function getProviderService(): ProviderService {
 	}
 	return providerServiceInstance;
 }
+
+/** Reset singleton — tests only */
+export function resetProviderServiceInstance(): void {
+	providerServiceInstance = null;
+}

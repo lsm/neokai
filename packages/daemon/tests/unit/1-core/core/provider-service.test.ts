@@ -9,7 +9,12 @@ import type { ProviderId } from '@neokai/shared/provider';
 import type { Session } from '@neokai/shared';
 import type { ModelInfo } from '@neokai/shared';
 import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
-import { ProviderService, getProviderService } from '../../../../src/lib/provider-service';
+import {
+	ProviderService,
+	getProviderService,
+	mergeProviderEnvVars,
+	resetProviderServiceInstance,
+} from '../../../../src/lib/provider-service';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { ProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 
@@ -1043,11 +1048,13 @@ describe('ProviderService', () => {
 
 describe('getProviderService', () => {
 	beforeEach(() => {
+		resetProviderServiceInstance();
 		resetProviderRegistry();
 		resetProviderFactory();
 	});
 
 	afterEach(() => {
+		resetProviderServiceInstance();
 		resetProviderRegistry();
 		resetProviderFactory();
 	});
@@ -1079,8 +1086,6 @@ describe('mergeProviderEnvVars', () => {
 	});
 
 	it('should merge provider env vars with process.env', async () => {
-		const { mergeProviderEnvVars } = await import('../../../../src/lib/provider-service');
-
 		// Set a provider env var
 		process.env.TEST_VAR = 'parent';
 
@@ -1097,8 +1102,6 @@ describe('mergeProviderEnvVars', () => {
 	});
 
 	it('should return all process.env when provider env vars is empty', async () => {
-		const { mergeProviderEnvVars } = await import('../../../../src/lib/provider-service');
-
 		process.env.TEST_VAR = 'parent';
 
 		const merged = mergeProviderEnvVars({});
