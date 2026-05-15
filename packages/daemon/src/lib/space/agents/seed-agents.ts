@@ -42,10 +42,8 @@ export const SUB_SESSION_FEATURES = {
 // Tool defaults per preset agent
 // ---------------------------------------------------------------------------
 
-/** Full coding toolset: read, write, shell, search, web */
-const CODER_TOOLS = KNOWN_TOOLS.filter(
-	(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
-) as string[];
+/** Full coding toolset: read, write, shell, search, web, sub-agent */
+const CODER_TOOLS = [...KNOWN_TOOLS];
 
 /** General-purpose worker: full coding toolset */
 const GENERAL_TOOLS = CODER_TOOLS;
@@ -77,7 +75,7 @@ const REVIEWER_TOOLS: string[] = [
 	'TaskStop',
 ];
 
-/** QA: read-only + bash for running tests — no Write or Edit */
+/** QA: read-only + bash for running tests + sub-agent — no Write or Edit */
 const QA_TOOLS: string[] = [
 	'Read',
 	'Bash',
@@ -87,6 +85,9 @@ const QA_TOOLS: string[] = [
 	'WebSearch',
 	'Skill',
 	'ToolSearch',
+	'Task',
+	'TaskOutput',
+	'TaskStop',
 ];
 
 /**
