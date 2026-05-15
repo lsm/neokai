@@ -3963,11 +3963,13 @@ export class TaskAgentManager {
 		options: { strict?: boolean } = {}
 	): Promise<void> {
 		const unsub = this.sessionListeners.get(sessionId);
-		if (unsub) {
+		if (!options.strict && unsub) {
 			unsub();
 			this.sessionListeners.delete(sessionId);
 		}
-		this.completionCallbacks.delete(sessionId);
+		if (!options.strict) {
+			this.completionCallbacks.delete(sessionId);
+		}
 
 		let stopError: unknown;
 		try {
@@ -3988,6 +3990,12 @@ export class TaskAgentManager {
 			throw new Error(
 				`Failed to stop session ${sessionId}: ${stopError instanceof Error ? stopError.message : String(stopError)}`
 			);
+		}
+
+		if (options.strict && unsub) {
+			unsub();
+			this.sessionListeners.delete(sessionId);
+			this.completionCallbacks.delete(sessionId);
 		}
 	}
 

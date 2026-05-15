@@ -1881,6 +1881,7 @@ export class SpaceRuntime {
 		if (this.tickTimer !== null) return; // already running
 
 		this.subscribeExternalEventPublished();
+		this.subscribeSdkToolUseCreated();
 		this.acceptingExternalEvents = this.rehydrated;
 		this.rescheduleQueuedExternalEventRetries();
 		// Sweep events that arrived while stopped. On first start this is a
@@ -3254,6 +3255,11 @@ export class SpaceRuntime {
 		for (const key of this.agentStuckRecovery.keys()) {
 			if (key.startsWith(runId + ':')) {
 				this.agentStuckRecovery.delete(key);
+			}
+		}
+		for (const key of this.nonTerminalIdleCounts.keys()) {
+			if (key.startsWith(runId + ':')) {
+				this.nonTerminalIdleCounts.delete(key);
 			}
 		}
 	}

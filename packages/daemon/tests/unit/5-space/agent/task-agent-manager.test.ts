@@ -1729,6 +1729,27 @@ describe('TaskAgentManager', () => {
 			expect(unregisterCalls).toEqual([]);
 			expect(ctx.manager['agentSessionIndex'].get(sessionId)).toBe(session);
 		});
+
+		test('keeps callbacks wired when strict stop fails', async () => {
+			const sessionId = 'stuck-session-callbacks-stay-wired';
+			const session = makeMockSession(sessionId);
+			session.handleInterrupt = async () => {
+				throw new Error('interrupt failed');
+			};
+			ctx.manager['agentSessionIndex'].set(sessionId, session as unknown as AgentSession);
+			const unsub = mock(() => {});
+			const callback = mock(async () => {});
+			ctx.manager['sessionListeners'].set(sessionId, unsub);
+			ctx.manager['completionCallbacks'].set(sessionId, [callback]);
+
+			await expect(ctx.manager.restartStuckSubSession(sessionId)).rejects.toThrow(
+				'Failed to stop session stuck-session-callbacks-stay-wired: interrupt failed'
+			);
+
+			expect(unsub).not.toHaveBeenCalled();
+			expect(ctx.manager['sessionListeners'].get(sessionId)).toBe(unsub);
+			expect(ctx.manager['completionCallbacks'].get(sessionId)).toEqual([callback]);
+		});
 	});
 
 	describe('cleanup', () => {

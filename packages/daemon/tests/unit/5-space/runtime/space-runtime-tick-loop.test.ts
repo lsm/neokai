@@ -1205,6 +1205,16 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			});
 
 			expect(repo.hasActiveToolUseForExecution(execution.id)).toBe(false);
+
+			rt.start();
+			await rt.stop();
+			await internalEventBus.publish('sdk.toolUse.created', {
+				sessionId: 'session:production-tool',
+				toolUseId: 'tool-after-restart',
+				toolName: 'Bash',
+				timestamp: Date.now(),
+			});
+			expect(repo.hasActiveToolUseForExecution(execution.id)).toBe(false);
 		});
 
 		test('does not restart while the execution still has an active tool call', async () => {
@@ -1428,6 +1438,42 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(rt.getExecutor(run.id)).toBeUndefined();
 			expect(
 				(rt as unknown as { agentStuckRecovery: Map<string, unknown> }).agentStuckRecovery.size
+			).toBe(0);
+		});
+
+		test('clears preserved idle counters when removing done run executor', async () => {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => false,
+			});
+			const rt = new SpaceRuntime(buildConfig(tam));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'idle',
+				agentSessionId: 'session:terminal-idle-state',
+				startedAt: Date.now() - 10 * 60_000,
+			});
+			saveAssistantMessage('session:terminal-idle-state', { minutesAgo: 10, toolUse: true });
+
+			await rt.executeTick();
+			expect(
+				(rt as unknown as { nonTerminalIdleCounts: Map<string, unknown> }).nonTerminalIdleCounts
+					.size
+			).toBe(1);
+
+			for (const task of taskRepo.listByWorkflowRun(run.id)) {
+				taskRepo.updateTask(task.id, { status: 'done' });
+			}
+			workflowRunRepo.transitionStatus(run.id, 'done');
+			await rt.executeTick();
+
+			expect(rt.getExecutor(run.id)).toBeUndefined();
+			expect(
+				(rt as unknown as { nonTerminalIdleCounts: Map<string, unknown> }).nonTerminalIdleCounts
+					.size
 			).toBe(0);
 		});
 
