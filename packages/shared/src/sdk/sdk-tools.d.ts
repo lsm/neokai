@@ -27,7 +27,10 @@ export type ToolInputSchemas =
   | WebFetchInput
   | WebSearchInput
   | AskUserQuestionInput
-  | ConfigInput
+  | TaskCreateInput
+  | TaskGetInput
+  | TaskUpdateInput
+  | TaskListInput
   | EnterWorktreeInput
   | ExitWorktreeInput
   | ToolOutputSchemas;
@@ -49,9 +52,12 @@ export type ToolOutputSchemas =
   | WebFetchOutput
   | WebSearchOutput
   | AskUserQuestionOutput
-  | ConfigOutput
   | EnterWorktreeOutput
-  | ExitWorktreeOutput;
+  | ExitWorktreeOutput
+  | TaskCreateOutput
+  | TaskGetOutput
+  | TaskUpdateOutput
+  | TaskListOutput;
 export type AgentOutput =
   | {
       agentId: string;
@@ -262,7 +268,15 @@ export type ListMcpResourcesOutput = {
 /**
  * MCP tool execution result
  */
-export type McpOutput = string;
+export type McpOutput =
+  | string
+  | {
+      type: string;
+      [k: string]: unknown;
+    }[]
+  | {
+      [k: string]: unknown;
+    };
 
 export interface AgentInput {
   /**
@@ -326,7 +340,7 @@ export interface BashInput {
    */
   description?: string;
   /**
-   * Set to true to run this command in the background. Use Read to read the output later.
+   * Set to true to run this command in the background.
    */
   run_in_background?: boolean;
   /**
@@ -461,6 +475,10 @@ export interface GrepInput {
    * Case insensitive search (rg -i)
    */
   "-i"?: boolean;
+  /**
+   * Print only the matched (non-empty) parts of each matching line, one match per output line (rg -o / --only-matching). Requires output_mode: "content", ignored otherwise. Defaults to false.
+   */
+  "-o"?: boolean;
   /**
    * File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types.
    */
@@ -2140,16 +2158,73 @@ export interface AskUserQuestionInput {
     source?: string;
   };
 }
-export interface ConfigInput {
+export interface TaskCreateInput {
   /**
-   * The setting key (e.g., "theme", "model", "permissions.defaultMode")
+   * A brief title for the task
    */
-  setting: string;
+  subject: string;
   /**
-   * The new value. Omit to get current value.
+   * What needs to be done
    */
-  value?: string | boolean | number;
+  description: string;
+  /**
+   * Present continuous form shown in spinner when in_progress (e.g., "Running tests")
+   */
+  activeForm?: string;
+  /**
+   * Arbitrary metadata to attach to the task
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
 }
+export interface TaskGetInput {
+  /**
+   * The ID of the task to retrieve
+   */
+  taskId: string;
+}
+export interface TaskUpdateInput {
+  /**
+   * The ID of the task to update
+   */
+  taskId: string;
+  /**
+   * New subject for the task
+   */
+  subject?: string;
+  /**
+   * New description for the task
+   */
+  description?: string;
+  /**
+   * Present continuous form shown in spinner when in_progress (e.g., "Running tests")
+   */
+  activeForm?: string;
+  /**
+   * New status for the task
+   */
+  status?: ("pending" | "in_progress" | "completed") | "deleted";
+  /**
+   * Task IDs that this task blocks
+   */
+  addBlocks?: string[];
+  /**
+   * Task IDs that block this task
+   */
+  addBlockedBy?: string[];
+  /**
+   * New owner for the task
+   */
+  owner?: string;
+  /**
+   * Metadata keys to merge into the task. Set a key to null to delete it.
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+}
+export interface TaskListInput {}
 export interface EnterWorktreeInput {
   /**
    * Optional name for a new worktree. Each "/"-separated segment may contain only letters, digits, dots, underscores, and dashes; max 64 chars total. A random name is generated if not provided. Mutually exclusive with `path`.
@@ -2231,6 +2306,10 @@ export interface BashOutput {
    * Model-facing note listing readFileState entries whose mtime bumped during this command (set when WRITE_COMMAND_MARKERS matches)
    */
   staleReadFileStateHint?: string;
+  /**
+   * Model-facing system-reminder appended when a gh command reports a GitHub API rate-limit error
+   */
+  ghRateLimitHint?: string;
 }
 export interface ExitPlanModeOutput {
   /**
@@ -2472,7 +2551,6 @@ export interface TodoWriteOutput {
     status: "pending" | "in_progress" | "completed";
     activeForm: string;
   }[];
-  verificationNudgeNeeded?: boolean;
 }
 export interface WebFetchOutput {
   /**
@@ -2534,6 +2612,10 @@ export interface WebSearchOutput {
    * Time taken to complete the search operation
    */
   durationSeconds: number;
+  /**
+   * Number of web searches performed
+   */
+  searchCount?: number;
 }
 export interface AskUserQuestionOutput {
   /**
@@ -2714,15 +2796,6 @@ export interface AskUserQuestionOutput {
     };
   };
 }
-export interface ConfigOutput {
-  success: boolean;
-  operation?: "get" | "set";
-  setting?: string;
-  value?: unknown;
-  previousValue?: unknown;
-  newValue?: unknown;
-  error?: string;
-}
 export interface EnterWorktreeOutput {
   worktreePath: string;
   worktreeBranch?: string;
@@ -2737,4 +2810,39 @@ export interface ExitWorktreeOutput {
   discardedFiles?: number;
   discardedCommits?: number;
   message: string;
+}
+export interface TaskCreateOutput {
+  task: {
+    id: string;
+    subject: string;
+  };
+}
+export interface TaskGetOutput {
+  task: {
+    id: string;
+    subject: string;
+    description: string;
+    status: "pending" | "in_progress" | "completed";
+    blocks: string[];
+    blockedBy: string[];
+  } | null;
+}
+export interface TaskUpdateOutput {
+  success: boolean;
+  taskId: string;
+  updatedFields: string[];
+  error?: string;
+  statusChange?: {
+    from: string;
+    to: string;
+  };
+}
+export interface TaskListOutput {
+  tasks: {
+    id: string;
+    subject: string;
+    status: "pending" | "in_progress" | "completed";
+    owner?: string;
+    blockedBy: string[];
+  }[];
 }
