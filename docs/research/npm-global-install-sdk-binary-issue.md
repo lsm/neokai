@@ -11,8 +11,10 @@ Task: #390 — Investigate npm global install SDK binary issue
 - `kai --version` prints `0.24.0`.
 - `kai --db-path /tmp/test-neokai-global` starts the server process and stays running past 10 seconds in the container.
 - No `cli.js` import error occurs during startup.
+- Creating a space plus worker session and sending a user message starts the SDK query path.
+- On first SDK query, `~/.neokai/sdk/claude-0.2.141-linux-x64/claude` is downloaded, executable, and reports `2.1.141 (Claude Code)`.
 
-The clean container install confirms npm installs the Linux platform package (`@neokai/cli-linux-x64@0.24.0`) and the compiled Linux binary starts successfully. The installed `neokai` package does not include SDK npm packages as runtime `node_modules`; SDK native CLI resolution is handled by the bundled resolver at first SDK use.
+The clean container install confirms npm installs the Linux platform package (`@neokai/cli-linux-x64@0.24.0`) and the compiled Linux binary starts successfully. The installed `neokai` package does not include SDK npm packages as runtime `node_modules`; SDK native CLI resolution is handled by the bundled resolver at first SDK use. The resolver successfully downloads the SDK native CLI when the SDK query path starts.
 
 SDK 0.2.141 does not ship `cli.js`. It ships SDK JS entrypoints plus platform-native optional dependencies named `@anthropic-ai/claude-agent-sdk-<os>-<arch>[-musl]`, each containing a native `claude`/`claude.exe` binary. The current source tree already has the correct post-0.2.141 approach: `packages/cli/prod-entry.ts` no longer embeds `cli.js`; `packages/daemon/src/lib/agent/sdk-cli-resolver.ts` resolves the platform package, cache, or downloads the binary from npm.
 
@@ -139,7 +141,51 @@ Installed package checks:
 
 Conclusion: published package installs and starts in a clean Linux x64 container. No SDK `cli.js` resolution error appears during startup. The SDK npm packages are not installed into the global package tree because the compiled NeoKai binary bundles JS code and resolves/downloads the native SDK CLI at first SDK use.
 
-### 2. Clean npm global-prefix install on macOS x64
+### 2. Container space/session SDK query and SDK cache check
+
+The deeper container smoke test created a space, created a worker session in that space, sent a user message, and then inspected `~/.neokai/sdk`.
+
+Credential note: this environment had no real Anthropic credential available. To force the SDK query path to initialize without exposing secrets, the container used a dummy `ANTHROPIC_API_KEY=sk-ant-invalid`. This is expected to make Claude Code exit with authentication-related failure, but it still validates that NeoKai starts the SDK query path and resolves/downloads the native Claude binary.
+
+Client flow over WebSocket MessageHub:
+
+```text
+space.create({ name: "SDK Binary Smoke", workspacePath: "/workspace", defaultModel: "claude-sonnet-4-5-20250929" })
+session.create({ title: "SDK Query Smoke", workspacePath: "/workspace", spaceId, config: { model: "claude-sonnet-4-5-20250929" } })
+message.send({ sessionId, content: "Reply with exactly: sdk binary smoke ok", deliveryMode: "immediate" })
+```
+
+Observed RPC output:
+
+```text
+BEFORE_CACHE
+MISSING
+SPACE_ID 5df53a33-7192-4eb8-8e26-e5926a4ef974
+SESSION_ID 8eeb9b9f-41f1-44ef-82ea-5a00887218bc
+MESSAGE_SENT
+AFTER_CACHE
+/root/.neokai/sdk/claude-0.2.141-linux-x64/claude 232572624 mode=755
+CLAUDE_VERSION
+2.1.141 (Claude Code)
+```
+
+Relevant server log lines:
+
+```text
+[kai:daemon:agentsession 8eeb9b9f-41f1-44ef-82ea-5a00887218bc] QueryRunner.start(): session 8eeb9b9f-41f1-44ef-82ea-5a00887218bc mcp servers visible at first turn: [db-query, fetch-mcp, space-agent-tools] {"event":"query.mcp.snapshot","sessionId":"8eeb9b9f-41f1-44ef-82ea-5a00887218bc","sessionType":"worker","spaceId":"5df53a33-7192-4eb8-8e26-e5926a4ef974","mcpServers":["db-query","fetch-mcp","space-agent-tools"]}
+[kai:daemon:agentsession 8eeb9b9f-41f1-44ef-82ea-5a00887218bc] Failed to fetch slash commands: warn: Claude Code process exited with code 1
+error: Claude Code process exited with code 1
+```
+
+Interpretation:
+
+- SDK query path starts (`QueryRunner.start()` appears for the created worker session).
+- The resolver downloads the native SDK CLI into `/root/.neokai/sdk/claude-0.2.141-linux-x64/claude`.
+- The downloaded binary is executable (`mode=755`) and runnable (`2.1.141 (Claude Code)`).
+- The subsequent Claude Code exit is expected with dummy credentials and is not a binary-resolution failure.
+- No `cli.js` missing-file error appears.
+
+### 3. Clean npm global-prefix install on macOS x64
 
 Command shape:
 
@@ -180,7 +226,7 @@ prefix/
 
 Conclusion: published package installs and starts on macOS x64. No `cli.js` error appears at `kai --version` or server startup.
 
-### 3. Linux x64 install-resolution check via npm selectors
+### 4. Linux x64 install-resolution check via npm selectors
 
 Command shape:
 
@@ -218,7 +264,7 @@ linux_kai_start_exit=126
 
 Conclusion: npm can select/install the Linux optional dependency. The Docker test above now confirms real Linux x64 startup too.
 
-### 4. SDK 0.2.141 package structure inspection
+### 5. SDK 0.2.141 package structure inspection
 
 `npm pack @anthropic-ai/claude-agent-sdk@0.2.141` showed no `cli.js` in the SDK tarball. Contents included:
 
@@ -332,12 +378,12 @@ Potential failure points if a user reports breakage:
    - Bundled binary distribution does not include SDK platform binary as npm dependency.
    - Resolver downloads SDK native binary on first use from npm and caches it.
    - If network or `curl` is unavailable, `resolveSDKCliPath()` returns `undefined`; SDK may then fail depending on fallback behavior and local Claude Code install.
-   - This was not exercised by `kai --db-path`; startup does not necessarily invoke SDK query execution.
+   - The online container query smoke confirmed first-use download works when the registry is reachable.
 
-3. **SDK query execution path not covered by startup smoke**
-   - Linux startup now passes in Docker.
-   - `kai --db-path` starts the server but does not necessarily invoke an SDK query.
-   - First-use SDK binary download/cache should be tested separately with credentials or a controlled resolver diagnostic.
+3. **Authentication failure after successful binary resolution**
+   - The deeper container test used dummy credentials because no real credentials were available in the environment.
+   - Claude Code exited with code 1 after `QueryRunner.start()`, but `~/.neokai/sdk/claude-0.2.141-linux-x64/claude` existed and ran `--version` successfully.
+   - This separates credential/query failure from binary-resolution failure.
 
 ## Answers to requested questions
 
@@ -353,7 +399,7 @@ Yes on Linux x64 Docker and macOS x64. `kai --db-path /tmp/test-neokai-global` s
 
 For direct `npm install -g @anthropic-ai/claude-agent-sdk@0.2.141`, yes: npm installs the host-specific SDK platform optional dependency nested under SDK dependencies.
 
-For `npm install -g neokai@0.24.0`, the SDK package is not present as a runtime `node_modules` dependency of the installed `neokai` package because NeoKai ships a compiled binary. Therefore SDK optional dependency installation is not the mechanism used by the global `neokai` package. Runtime SDK binary resolution depends on `sdk-cli-resolver.ts` downloading/caching the platform package, or finding an already installed SDK/platform binary in development contexts.
+For `npm install -g neokai@0.24.0`, the SDK package is not present as a runtime `node_modules` dependency of the installed `neokai` package because NeoKai ships a compiled binary. Therefore SDK optional dependency installation is not the mechanism used by the global `neokai` package. Runtime SDK binary resolution depends on `sdk-cli-resolver.ts` downloading/caching the platform package, or finding an already installed SDK/platform binary in development contexts. The container query smoke verified the download/cache path by creating `/root/.neokai/sdk/claude-0.2.141-linux-x64/claude`.
 
 ### Does `prod-entry.ts` need update?
 
@@ -369,16 +415,18 @@ If an older release branch still has `prod-entry.ts` embedding `cli.js`, that br
    - `npm install -g neokai@0.24.0`
    - `kai --version`
    - `kai --db-path /tmp/test`
-3. Add deeper SDK-path smoke if credentials/proxy allow:
-   - trigger one minimal SDK query or resolver diagnostic path
-   - verify first-use SDK binary download/cache succeeds
-   - verify error message when offline/curl unavailable is actionable
-4. Consider release packaging option: include SDK platform binary in `@neokai/cli-*` packages only if first-use network download is unacceptable. Tradeoff: package size increases by about 60 MB compressed / about 200 MB unpacked per platform.
+3. Add CI coverage for the SDK binary download path:
+   - create a space and worker session
+   - send one message to trigger `QueryRunner.start()`
+   - assert `~/.neokai/sdk/claude-<version>-linux-x64/claude` exists, is executable, and reports expected `--version`
+4. Add a separate credentials-backed smoke test if CI can supply safe credentials, to validate full response streaming beyond binary resolution.
+5. Consider release packaging option: include SDK platform binary in `@neokai/cli-*` packages only if first-use network download is unacceptable. Tradeoff: package size increases by about 60 MB compressed / about 200 MB unpacked per platform.
 
 ## Sources and evidence
 
 - Published npm metadata: `npm view neokai@0.24.0 optionalDependencies version --json`
 - Published package install in Docker: `docker run --rm node:22-bookworm ... npm install -g neokai@0.24.0`
+- Container SDK query/cache smoke: `space.create` → `session.create` → `message.send` → inspect `/root/.neokai/sdk`
 - Published package install on host: `npm_config_prefix=<tmp> npm install -g neokai@0.24.0`
 - SDK package tarball: `npm pack @anthropic-ai/claude-agent-sdk@0.2.141`
 - SDK platform tarball: `npm pack @anthropic-ai/claude-agent-sdk-darwin-arm64@0.2.141`
