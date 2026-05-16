@@ -20,8 +20,8 @@ UI and agents migrate to generic tools.
 ## Goals
 
 - One universal actor-to-actor communication model inside a Space.
-- Support DMs, group DMs, channels/topic threads, task threads, workflow threads, and session
-  threads.
+- Support DMs, group DMs, channel/topic conversations, and Space Session conversations, with
+  task/workflow context captured as audit metadata and future timeline views.
 - Stable internal actor IDs plus human-readable handles such as `@coordinator`, `@task-manager`,
   `#deployments`.
 - Role-based addressing where a role can resolve to one actor now, many actors later, or a fallback.
@@ -38,15 +38,15 @@ UI and agents migrate to generic tools.
 | --- | --- | --- |
 | Space Agent / default space chat agent | Coordinator | Long-term Agent with reserved role `coordinator` and handle `@coordinator`. |
 | Human user in Space UI | Human Actor | Actor type `human`, can own sessions and approve restricted actions. |
-| Space chat / ad-hoc Space session | Space Session | Actor type `space_session`, handle optional, session thread participant. |
+| Space chat / ad-hoc Space session | Space Session | Actor type `space_session`, handle optional, session conversation participant. |
 | New persistent role agents | Long-term Agent | Actor type `long_term_agent`, e.g. `@task-manager`, `@marketing-director`. |
 | Workflow node agent / coder / reviewer | Workflow Worker | Actor type `workflow_worker`, scoped to workflow run/node. |
 | Runtime, scheduler, gate scripts | System Actor | Actor type `system`, emits events and delivery records. |
 | `space-agent-tools` | Space Messaging tools + Space management tools | Messaging part becomes generic substrate tools. |
 | `node-agent send_message` | Wrapper for `send_message` | Adds workflow actor identity and topology checks. |
-| `send_message_to_task` | Wrapper targeting task thread or task participants | Deprecated after task thread UI migrates. |
+| `send_message_to_task` | Wrapper targeting task-bound worker agents or role agents | Deprecated after generic actor addressing exists. |
 | `pending_agent_messages` | Delivery queue | Evolves into per-recipient delivery rows. |
-| `space_task_agent` helper | Legacy Task Agent | Superseded by Coordinator/Task Manager + task threads. |
+| `space_task_agent` helper | Legacy Task Agent | Superseded by Coordinator/Task Manager routing plus worker direct delivery. |
 
 Relevant current implementation anchors:
 
@@ -108,8 +108,8 @@ delivery rows keep the actor ID with redacted display metadata rather than being
 - Ephemeral or persistent session actor representing a human-facing Space chat or ad-hoc session.
 - Stable actor ID derives from session ID: `actor_session_<spaceId>_<sessionId>`.
 - Optional handle: `@session-<shortId>` for internal references; UI displays session title.
-- Can send messages to Long-term Agents and task/workflow threads if session policy allows.
-- Receives replies in the originating session thread by default.
+- Can send messages to Long-term Agents, channels, and addressed Workflow Workers if session policy allows.
+- Receives replies in the originating session conversation by default.
 
 ### Long-term Agent
 
@@ -126,7 +126,7 @@ delivery rows keep the actor ID with redacted display metadata rather than being
 - Stable actor ID within a run/node/session:
   `actor_worker_<spaceId>_<taskId>_<workflowRunId>_<nodeId>_<agentName>`.
 - Handles are scoped, e.g. `@coder`, `@review`, `@workflow/f1089/coder`.
-- Can send direct messages, escalate to roles, post to workflow/task threads, and receive feedback.
+- Can send direct messages, escalate to roles, post to allowed channels, and receive direct feedback.
 - Actor may become inactive when run ends; audit records remain.
 
 ### System Actor
@@ -152,9 +152,9 @@ conversation, or thread targets before delivery.
 | `@worker:<node>` | Workflow Worker in current run | `@worker:Review` | Contextual; requires task/workflow context. |
 | `@worker:<run>/<node>` | Workflow Worker by run | `@worker:f1089/Review` | Stable across tools and UI. |
 | `#channel` | Channel conversation | `#deployments` | Posts to channel. |
-| `task:<number>` | Task thread | `task:401` | Posts into task conversation. |
-| `workflow:<runId>` | Workflow thread | `workflow:f1089...` | Posts to workflow run thread. |
-| `session:<id>` | Session thread | `session:abc123` | Posts to session conversation. |
+| `task:<number>` | Task context | `task:401` | Resolves task context for delivery to addressed actors; not a chat target in the initial model. |
+| `workflow:<runId>` | Workflow context | `workflow:f1089...` | Resolves workflow run context for worker addressing/audit; not a chat target in the initial model. |
+| `session:<id>` | Session conversation | `session:abc123` | Posts to session conversation. |
 | `conversation:<id>` | Existing conversation | `conversation:conv_...` | Explicit continuation. |
 
 ### Resolution order
@@ -201,24 +201,24 @@ Examples:
 
 ## Conversation types
 
-Conversations are durable containers. Threads are ordered message trees within conversations. A
-conversation can have one root thread and many topic/subthreads.
+Conversations are durable containers for LLM-visible message flows. Threads are ordered message trees
+within conversations. A conversation can have one root thread and many topic/subthreads.
 
 ```ts
-type SpaceConversationType =
-	| 'direct_message'
-	| 'group_dm'
-	| 'channel'
-	| 'task_thread'
-	| 'workflow_thread'
-	| 'session_thread';
+type SpaceConversationType = 'direct_message' | 'group_dm' | 'channel' | 'session_conversation';
 ```
+
+Task and workflow are not conversation types in the initial model. Today they are nearly the same
+routing context: messages are delivered directly to worker agents or Task Agent/Space Agent sessions,
+while task/workflow IDs provide scope for authorization, queueing, activation, audit, and UI feeds.
+Future task/workflow timelines are covered in Future considerations.
 
 ### Direct Message
 
 - One sender, one target actor.
 - Stable pair key: sorted participant actor IDs plus Space ID, unless `ephemeral=true`.
-- Used for Long-term Agent ↔ Long-term Agent and Space Session ↔ Long-term Agent private messages.
+- Used for Long-term Agent ↔ Long-term Agent, Workflow Worker ↔ Long-term Agent escalation, and Space
+  Session ↔ Long-term Agent private messages.
 
 ### Group DM
 
@@ -232,23 +232,7 @@ type SpaceConversationType =
 - Membership/subscriptions determine visibility and notifications.
 - Supports mentions, channel-wide notifications, and topic threads.
 
-### Task thread
-
-- Conversation bound to a Space task ID.
-- Participants include task owner, Coordinator, assigned Long-term Agents, active Workflow Workers,
-  and subscribed humans.
-- Replaces hidden task-agent chat semantics.
-- Human messages to a task post here; routing rules decide whether to notify active workers or role
-  agents.
-
-### Workflow thread
-
-- Conversation bound to workflow run ID.
-- Participants include workers, Coordinator, system runtime, and subscribed Long-term Agents.
-- Worker-to-worker messages remain visible here unless sent as private DM.
-- Gate events, artifacts, review handoffs, and blocked states can appear here.
-
-### Session thread
+### Session conversation
 
 - Conversation bound to a Space Session/ad-hoc chat session ID.
 - Default place for replies to messages originating from that session.
@@ -343,7 +327,7 @@ type SpaceArtifactRef = {
 
 ```ts
 type ReplyRouting = {
-	mode: 'same_thread' | 'sender_dm' | 'origin_session_thread' | 'task_thread' | 'workflow_thread';
+	mode: 'same_thread' | 'sender_dm' | 'origin_session_conversation' | 'channel';
 	originMessageId?: string;
 	originConversationId?: string;
 	originThreadId?: string;
@@ -356,10 +340,10 @@ Default rules:
 
 - Reply to a message in a thread stays in same thread.
 - Reply to a DM stays in the DM.
-- Reply to a Space Session-originated escalation defaults to `origin_session_thread` unless sender
-  chooses another visible conversation.
-- Workflow Worker replies to a task-thread human message stay in task thread so audit remains
-  human-visible.
+- Reply to a Space Session-originated escalation defaults to `origin_session_conversation` unless
+  sender chooses another visible conversation.
+- Workflow Worker replies go to the addressed sender/session by default; task/workflow IDs are kept
+  as audit and authorization context, not as LLM-visible chat threads.
 
 ## Delivery schema
 
@@ -461,7 +445,7 @@ type ConversationSubscription = {
 Each actor has a virtual inbox, not a separate conversation type:
 
 - DM deliveries.
-- Mentions in channels/task/workflow/session threads.
+- Mentions in DMs, channels, and session conversations; task/workflow context can raise priority.
 - Subscribed event deliveries.
 - Approval requests and blocked states.
 
@@ -515,23 +499,25 @@ Fallback use must be visible in message metadata and UI badges.
 
 ### Reply routing and thread continuity
 
-- Every message carries `conversationId` and `threadId`; replies default to both.
+- Every conversational message carries `conversationId` and `threadId`; replies default to both.
 - Cross-conversation handoff stores `replyRouting.origin*` metadata.
-- Space Session → Long-term Agent message creates a DM or task/channel post but records origin
-  session thread; agent response can return to session thread.
-- Workflow Worker → Long-term Agent escalation from a workflow thread records workflow run and node;
-  response returns to workflow thread unless actor chooses DM/task thread.
+- Space Session → Long-term Agent message creates a DM or channel post but records origin session
+  conversation; agent response can return to the session conversation.
+- Workflow Worker → Long-term Agent escalation records task/workflow run/node context and delivers as
+  an addressed message. Response returns to the worker sender, origin session conversation, DM, or
+  chosen channel according to routing metadata; task/workflow timelines only receive audit copies if
+  implemented later.
 
 ### Ad-hoc Space Session to Long-term Agent
 
 Flow:
 
 1. User chats in a Space Session and mentions `@task-manager` or calls `send_message` with target.
-2. Session actor posts a message in its session thread with explicit target.
+2. Session actor posts a message in its session conversation with explicit target.
 3. Resolver maps `@task-manager` to Long-term Agent actor ID or fallback.
 4. Router creates delivery to agent inbox and optional DM conversation link.
 5. Agent runtime reads message, with origin session context and allowed reply route.
-6. Agent reply posts to session thread by default so the user sees it in the ad-hoc chat.
+6. Agent reply posts to session conversation by default so the user sees it in the ad-hoc chat.
 
 ### Long-term Agent to Long-term Agent
 
@@ -550,9 +536,9 @@ Flow:
 1. Worker reaches blocked state and calls `send_message({ target: '@task-manager', kind: 'blocked' })`.
 2. Resolver expands role; if missing, fallback to `@coordinator`; if unavailable, fallback to
    `#workflow-triage`.
-3. Message posts to workflow thread or task thread depending on context.
+3. Router preserves workflow run, task, node, and sender context on the message/delivery rows.
 4. Delivery row notifies resolved Long-term Agent/Coordinator inbox.
-5. Agent response returns to workflow thread and target worker, preserving audit trail.
+5. Agent response returns to the target worker or origin session/channel, preserving audit metadata.
 6. If response includes action beyond worker autonomy, approval gate remains enforced.
 
 ## Permissions and autonomy
@@ -578,9 +564,9 @@ messages.
 | --- | --- | --- |
 | Human | Any Space actor/channel/task/session visible to them | Restricted only by Space permissions. |
 | Coordinator | Long-term Agents, Humans, Space Sessions, Workflow Workers, channels | Must honor configured autonomy for external side effects. |
-| Space Session | Coordinator, role agents, channels, task/session threads | Cannot directly control workflow workers unless task context grants it. |
+| Space Session | Coordinator, role agents, channels, session conversations | Cannot directly control workflow workers unless task context grants it. |
 | Long-term Agent | Coordinator, other Long-term Agents, subscribed channels/tasks/workflows | External side effects gated by autonomy level. |
-| Workflow Worker | Workflow peers, Coordinator, allowed roles, task/workflow thread | Cross-Space and unrelated task DMs denied. |
+| Workflow Worker | Workflow peers, Coordinator, allowed roles, allowed channels | Cross-Space and unrelated task DMs denied. |
 | System | System channels, task/workflow events, configured recipients | Cannot impersonate human/agent. |
 
 ### Human approval boundaries
@@ -738,9 +724,9 @@ Keep existing tools while migrating callers:
 - `node-agent-tools.send_message` → calls `send_message` with sender actor type `workflow_worker`,
   sender workflow context, and topology/autonomy policy. Preserve current gated channel behavior by
   converting workflow topology to permissions plus role/channel destinations.
-- `task-agent-tools.send_message` → if Task Agent remains during migration, maps to task thread or
-  Coordinator DM. If task-agent helper is removed, wrapper returns migration guidance or routes from
-  `system`/`coordinator` according to compatibility mode.
+- `task-agent-tools.send_message` → if Task Agent remains during migration, maps to addressed worker
+  delivery, role delivery, or Coordinator DM. If task-agent helper is removed, wrapper returns
+  migration guidance or routes from `system`/`coordinator` according to compatibility mode.
 - `PendingAgentMessageRepository` → becomes compatibility facade over `space_message_deliveries`.
 - `SpaceRuntimeService.attachSpaceToolsToMemberSession` → uses actor/session role resolver to attach
   generic messaging MCP plus only role-appropriate management/query tools.
@@ -783,7 +769,7 @@ Create `SpaceMessagingService` with:
 - Actor registry.
 - Address parser/resolver.
 - Permission/autonomy checker.
-- Conversation/thread resolver.
+- Conversation resolver plus task/workflow context resolver.
 - Delivery writer and queue.
 - Loop guard.
 - Audit writer.
@@ -810,8 +796,8 @@ Refactor wrappers:
 
 - `space-agent-tools.send_message_to_task` delegates to Space Messaging.
 - `node-agent-tools.send_message` delegates to Space Messaging.
-- Human task message RPC posts task-thread messages and delivery rows instead of directly targeting
-  hidden task-agent/node paths.
+- Human task message RPC resolves target worker/role actors and writes delivery rows instead of
+  directly targeting hidden task-agent/node paths.
 - Pending message queues map to delivery rows.
 
 No user-visible behavior should regress during this phase.
@@ -848,8 +834,9 @@ Implement persistent agents:
 
 ### Phase 7: Task-agent removal/retirement
 
-Remove or retire default `space_task_agent` LLM helper after task threads and Coordinator/Task Manager
-routing replace its orchestration role. Keep DB compatibility for existing `taskAgentSessionId` rows.
+Remove or retire default `space_task_agent` LLM helper after direct worker/role delivery and
+Coordinator/Task Manager routing replace its orchestration role. Keep DB compatibility for existing
+`taskAgentSessionId` rows.
 
 ## Proposed follow-up implementation tasks
 
@@ -894,7 +881,7 @@ flowchart TD
 
 2. **Implement Space address resolver and role bindings**
    - Depends on actor persistence.
-   - Supports handles, roles, sessions, workers, channels, task/workflow/session threads, fallback.
+   - Supports handles, roles, sessions, workers, channels, task/workflow context, and fallback.
 
 3. **Implement Space message router and delivery queue**
    - Depends on resolver.
@@ -917,16 +904,17 @@ flowchart TD
 
 7. **Implement Space Session to Long-term Agent messaging**
    - Depends on generic tools.
-   - Ensures ad-hoc sessions can send to role agents and receive replies in session threads.
+   - Ensures ad-hoc sessions can send to role agents and receive replies in session conversations.
 
 8. **Implement Workflow Worker role escalation**
    - Depends on legacy wrappers and resolver.
-   - Supports blocked/question escalation to `@task-manager`, fallback `@coordinator`, and workflow
-     thread continuity.
+   - Supports blocked/question escalation to `@task-manager`, fallback `@coordinator`, and direct
+     delivery back to worker/origin session with task/workflow audit context.
 
 9. **Add actor/channel/conversation UI**
    - Depends on generic RPC and core runtime.
-   - Adds handles, channels, DMs, task/workflow/session thread views, notification settings.
+   - Adds handles, channels, DMs, session conversations, task/workflow delivery context badges, and
+     notification settings.
 
 ### Existing draft task updates
 
@@ -963,17 +951,17 @@ Dependency: short-term can run now; long-term depends on #398 updated scope.
 
 #### #400 — Remove built-in task-agent LLM helper from Space workflows
 
-Update to depend on task threads and generic messaging wrappers. Removing the helper before the
-substrate exists risks losing human task messages and worker escalation paths.
+Update to depend on generic messaging wrappers and direct worker/role delivery. Removing the helper
+before the substrate exists risks losing human task messages and worker escalation paths.
 
 Recommended new scope:
 
-- After task-thread messaging and workflow escalation work, retire default `space_task_agent` LLM
-  helper.
+- After direct worker/role delivery and workflow escalation work, retire default `space_task_agent`
+  LLM helper.
 - Preserve runtime services, workflow worker tools, pending delivery compatibility, and existing DB
   rows.
-- Route human task messages to task threads, Coordinator, Task Manager, or explicit workers through
-  Space Messaging.
+- Route human task messages to Coordinator, Task Manager, or explicit workers through Space
+  Messaging; task/workflow IDs remain context/audit metadata.
 
 Dependency: after tasks 1–5 and 8 above.
 
@@ -985,12 +973,38 @@ Dependency: after tasks 1–5 and 8 above.
 - Replacing provider/session execution engine.
 - Allowing messages to bypass workflow gates or human approval requirements.
 
+## Future considerations: task and workflow timelines
+
+Task and workflow should not become LLM chat threads in the initial messaging substrate. Today task
+and workflow are mostly the same routing context: a task owns/links a workflow run, and messages go
+directly to worker agents, the Task Agent, or the Space Agent. The future model should keep that
+behavior for LLM delivery and add separate non-conversational history surfaces if needed.
+
+Suggested names:
+
+- **Task timeline**: task-scoped audit/feed view for human-visible questions, answers, status changes,
+  artifacts, delivery summaries, and decisions. It can reference messages delivered to actors, but it
+  should not be the message stream injected into an LLM by default.
+- **Workflow execution log**: workflow-run-scoped event log for worker handoffs, gate writes, CI,
+  activation, queued deliveries, retries, artifacts, and runtime/system events. It should support
+  debugging and audit, not conversational turn-taking.
+
+Rules for future timelines:
+
+- LLMs receive addressed messages plus curated task/workflow context, not whole task/workflow logs.
+- Direct worker/role/session delivery remains primary; task/workflow IDs stay as context and audit
+  metadata on messages and delivery rows.
+- Timeline entries can be projections/copies of messages, system events, and artifacts; they do not
+  own reply routing.
+- Replies return to the addressed actor, DM/channel, or origin session conversation unless a user
+  explicitly starts a new conversation.
+
 ## Acceptance criteria mapping
 
 - Avoid hardcoded agent-to-agent assumptions: actors, roles, resolver, conversations, deliveries, and
   wrappers replace one-off paths.
 - Existing concepts mapped: see Existing concept mapping and Actor taxonomy.
-- Space ad-hoc sessions send messages to Long-term Agents: see routing flow and session thread model.
+- Space ad-hoc sessions send messages to Long-term Agents: see routing flow and session conversation model.
 - Long-term Agents send/receive messages from each other: see DM flow and inbox model.
 - Workflow Workers escalate to role agents: see blocked escalation flow and fallback rules.
 - Dependency graph included: see follow-up implementation tasks.
