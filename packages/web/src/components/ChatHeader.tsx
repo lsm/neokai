@@ -62,6 +62,7 @@ export function ChatHeader({
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
 	const rightPanelOpen = rightPanelTargetSignal.value !== null;
+	const rightPanelAvailable = features.worktree && !!session?.id;
 
 	const getHeaderActions = () => {
 		const actions: Array<
@@ -188,7 +189,7 @@ export function ChatHeader({
 		<div
 			class={cn(
 				'relative z-10 flex h-[52px] flex-shrink-0 items-center bg-dark-900 px-4',
-				!rightPanelOpen && 'lg:pr-14'
+				rightPanelAvailable && !rightPanelOpen && 'pr-14'
 			)}
 		>
 			<div class="flex-1 min-w-0 flex items-center gap-3">

@@ -41,6 +41,23 @@ function storePanelWidth(width: number) {
 	}
 }
 
+function useIsDesktopPanel(): boolean {
+	const [isDesktop, setIsDesktop] = useState(() => {
+		if (typeof window === 'undefined') return true;
+		return window.matchMedia('(min-width: 1024px)').matches;
+	});
+
+	useEffect(() => {
+		const mediaQuery = window.matchMedia('(min-width: 1024px)');
+		const update = () => setIsDesktop(mediaQuery.matches);
+		update();
+		mediaQuery.addEventListener('change', update);
+		return () => mediaQuery.removeEventListener('change', update);
+	}, []);
+
+	return isDesktop;
+}
+
 function sessionFeatures(session: Session | null, sessionId: string): SessionFeatures {
 	if (session?.config?.features) return session.config.features;
 	if (sessionId.startsWith('lobby:')) return DEFAULT_LOBBY_FEATURES;
@@ -82,7 +99,7 @@ export function RightPanelToggle() {
 			title={rightPanelOpen ? 'Hide right panel' : 'Show right panel'}
 			onClick={handleToggle}
 			class={cn(
-				'absolute right-3 top-2 z-40 hidden bg-dark-900/80 backdrop-blur lg:inline-flex',
+				'absolute right-3 top-2 z-40 bg-dark-900/80 backdrop-blur',
 				rightPanelOpen && 'bg-white/10 text-gray-100 hover:bg-white/10'
 			)}
 		>
@@ -104,6 +121,7 @@ export function RightPanel() {
 	const [open, setOpen] = useState(target !== null);
 	const [panelWidth, setPanelWidth] = useState(readStoredPanelWidth);
 	const [resizing, setResizing] = useState(false);
+	const isDesktop = useIsDesktopPanel();
 
 	useEffect(() => {
 		let frame = 0;
@@ -130,6 +148,8 @@ export function RightPanel() {
 		window.addEventListener('resize', handleResize);
 		return () => window.removeEventListener('resize', handleResize);
 	}, []);
+
+	const panelWidthValue = isDesktop ? `${panelWidth}px` : 'min(100vw, 420px)';
 
 	const handleResizeStart = (event: MouseEvent) => {
 		if (event.button !== 0) return;
@@ -185,36 +205,47 @@ export function RightPanel() {
 	};
 
 	return (
-		<div
-			class={cn(
-				'hidden h-full flex-shrink-0 overflow-hidden lg:block',
-				!resizing && 'transition-[width] duration-200 ease-out'
-			)}
-			style={{ width: open ? `${panelWidth}px` : '0px' }}
-		>
+		<>
 			<div
 				class={cn(
-					'relative h-full transition-transform duration-200 ease-out',
-					open ? 'translate-x-0' : 'translate-x-full'
+					'fixed inset-0 z-30 bg-black/40 backdrop-blur-[1px] transition-opacity duration-200 lg:hidden',
+					open ? 'opacity-100' : 'pointer-events-none opacity-0'
 				)}
-				style={{ width: `${panelWidth}px` }}
+				onClick={() => {
+					rightPanelTargetSignal.value = null;
+				}}
+			/>
+			<div
+				class={cn(
+					'fixed right-0 top-0 z-30 h-safe-screen overflow-hidden bg-dark-800 shadow-2xl lg:relative lg:top-auto lg:z-auto lg:h-full lg:flex-shrink-0 lg:bg-transparent lg:shadow-none',
+					!resizing && 'transition-[width] duration-200 ease-out'
+				)}
+				style={{ width: open ? panelWidthValue : '0px' }}
 			>
 				<div
-					role="separator"
-					aria-label="Resize right panel"
-					aria-orientation="vertical"
-					aria-valuemin={MIN_PANEL_WIDTH}
-					aria-valuemax={getMaxPanelWidth()}
-					aria-valuenow={panelWidth}
-					tabIndex={0}
-					onMouseDown={handleResizeStart}
-					onKeyDown={handleResizeKeyDown}
-					class="group absolute left-0 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none outline-none lg:block"
+					class={cn(
+						'relative h-full pt-safe transition-transform duration-200 ease-out lg:pt-0',
+						open ? 'translate-x-0' : 'translate-x-full'
+					)}
+					style={{ width: panelWidthValue }}
 				>
-					<div class="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-white/20 group-focus-visible:bg-white/30" />
+					<div
+						role="separator"
+						aria-label="Resize right panel"
+						aria-orientation="vertical"
+						aria-valuemin={MIN_PANEL_WIDTH}
+						aria-valuemax={getMaxPanelWidth()}
+						aria-valuenow={panelWidth}
+						tabIndex={0}
+						onMouseDown={handleResizeStart}
+						onKeyDown={handleResizeKeyDown}
+						class="group absolute left-0 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none outline-none lg:block"
+					>
+						<div class="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-white/20 group-focus-visible:bg-white/30" />
+					</div>
+					{renderedTarget?.type === 'git' && <GitPanel sessionId={renderedTarget.sessionId} />}
 				</div>
-				{renderedTarget?.type === 'git' && <GitPanel sessionId={renderedTarget.sessionId} />}
 			</div>
-		</div>
+		</>
 	);
 }
