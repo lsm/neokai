@@ -915,19 +915,6 @@ export default function ChatContainer({
 		[sessionId]
 	);
 
-	// ========================================
-	// Display Stats
-	// ========================================
-	const displayStats = useMemo(() => {
-		// All stats are calculated and persisted by daemon in session.metadata
-		// UI should only display, never calculate
-		// This ensures cost/token tracking is centralized in one place
-		return {
-			totalTokens: session?.metadata?.totalTokens ?? 0,
-			totalCost: session?.metadata?.totalCost ?? 0,
-		};
-	}, [session?.metadata?.totalTokens, session?.metadata?.totalCost]);
-
 	// Get retry attempts from session store
 	const retryAttempts = sessionStore.retryAttempts.value;
 
@@ -1007,12 +994,7 @@ export default function ChatContainer({
 				aria-label={`${pendingAgent.agentName} chat (starting)`}
 			>
 				{/* Header — mirrors ChatHeader height (h-[65px]) for visual consistency */}
-				<div
-					class={cn(
-						'px-4 min-h-[65px] flex-shrink-0 bg-dark-850 border-b flex items-center gap-3',
-						borderColors.ui.default
-					)}
-				>
+				<div class="px-4 min-h-[65px] flex-shrink-0 bg-dark-900 flex items-center gap-3">
 					{onBack && (
 						<button
 							type="button"
@@ -1135,7 +1117,7 @@ export default function ChatContainer({
 			// anchored to this container, matching the real ChatComposer positioning.
 			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
 				{/* Skeleton header — h-[65px] matches ChatHeader's fixed height exactly */}
-				<div class="flex items-center gap-3 px-4 h-[65px] border-b border-dark-700 flex-shrink-0">
+				<div class="flex items-center gap-3 px-4 h-[65px] flex-shrink-0">
 					<div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
 					<div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
 				</div>
@@ -1217,7 +1199,6 @@ export default function ChatContainer({
 			{/* Header */}
 			<ChatHeader
 				session={session}
-				displayStats={displayStats}
 				features={features}
 				onToolsClick={toolsModal.open}
 				onInfoClick={infoModal.open}
