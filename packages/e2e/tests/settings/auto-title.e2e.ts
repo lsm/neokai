@@ -43,10 +43,7 @@ test.describe('Auto Title Generation', () => {
 		await expect(sessionItem.locator('h3')).toHaveText('New Session', { timeout: 10000 });
 
 		// Send a message that should trigger title generation
-		// Use specific selector to avoid matching Neo panel textbox
-		const messageInput = page
-			.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
-			.first();
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.fill('What is the capital of France?');
 		await messageInput.press('Enter');
 
@@ -97,10 +94,7 @@ test.describe('Auto Title Generation', () => {
 		await expect(sessionItem).toBeVisible({ timeout: 10000 });
 
 		// Send first message
-		// Use specific selector to avoid matching Neo panel textbox
-		const messageInput = page
-			.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
-			.first();
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.fill('Tell me about TypeScript');
 		await messageInput.press('Enter');
 
@@ -153,10 +147,7 @@ test.describe('Auto Title Generation', () => {
 		await expect(sessionItem).toBeVisible({ timeout: 10000 });
 
 		// Send a message
-		// Use specific selector to avoid matching Neo panel textbox
-		const messageInput = page
-			.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
-			.first();
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.fill('Hello');
 		await messageInput.press('Enter');
 

@@ -3,7 +3,7 @@
  *
  * Migration 68: Add 'origin' column to sdk_messages.
  * - NULL default (treated as 'human' by frontend)
- * - CHECK constraint: NULL or one of ('human', 'neo', 'system')
+ * - CHECK constraint: NULL or one of ('human', 'system')
  *
  * Covers:
  * - origin column is added to an existing sdk_messages table
@@ -88,21 +88,6 @@ describe('Migration 68: Add origin column to sdk_messages', () => {
 			origin: string | null;
 		};
 		expect(row.origin).toBeNull();
-	});
-
-	test('origin=neo can be stored after migration', () => {
-		createLegacySdkMessagesTable(db);
-		runMigration68(db);
-
-		db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
-			 VALUES (?, ?, ?, ?, ?, ?)`
-		).run('msg-neo', 'session-1', 'user', '{}', new Date().toISOString(), 'neo');
-
-		const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'msg-neo'`).get() as {
-			origin: string;
-		};
-		expect(row.origin).toBe('neo');
 	});
 
 	test('origin=system can be stored after migration', () => {

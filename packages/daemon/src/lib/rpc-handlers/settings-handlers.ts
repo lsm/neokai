@@ -210,7 +210,7 @@ export function registerSettingsHandlers(
 					COALESCE(SUM(json_extract(metadata, '$.messageCount')), 0) as totalMessages,
 				COUNT(*) as sessionCount
 				FROM sessions
-				WHERE type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
 					  AND json_extract(session_context, '$.roomId') IS NULL
 					  AND json_extract(session_context, '$.spaceId') IS NULL`
 			)
@@ -231,7 +231,7 @@ export function registerSettingsHandlers(
 					json_extract(metadata, '$.totalTokens') as tokens,
 					json_extract(metadata, '$.messageCount') as messages
 				FROM sessions
-				WHERE type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
 				  AND json_extract(session_context, '$.roomId') IS NULL
 				  AND json_extract(session_context, '$.spaceId') IS NULL
 				  AND json_extract(metadata, '$.totalCost') > 0
@@ -253,7 +253,7 @@ export function registerSettingsHandlers(
 					date(created_at) as date,
 					COALESCE(SUM(json_extract(metadata, '$.totalCost')), 0) as cost
 				FROM sessions
-				WHERE type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
 				  AND json_extract(session_context, '$.roomId') IS NULL
 				  AND json_extract(session_context, '$.spaceId') IS NULL
 				  AND created_at >= date('now', '-14 days')

@@ -110,8 +110,7 @@ test.describe('Mobile Input', () => {
 		// Close panel to see the chat area
 		await closeMobilePanel(page);
 
-		// Use specific selector to avoid matching Neo panel textbox
-		const textarea = page.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])').first();
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toBeVisible({ timeout: 10000 });
 	});
 
@@ -125,8 +124,7 @@ test.describe('Mobile Input', () => {
 		// Close panel to see chat area
 		await closeMobilePanel(page);
 
-		// Find textarea - use specific selector to avoid Neo panel
-		const textarea = page.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])').first();
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toBeVisible({ timeout: 10000 });
 
 		// Tap to focus (simulate touch)
@@ -166,8 +164,7 @@ test.describe('Mobile Input', () => {
 		// Close panel to see textarea
 		await closeMobilePanel(page);
 
-		// Use specific selector to avoid matching Neo panel textbox
-		const textarea = page.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])').first();
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toBeVisible({ timeout: 10000 });
 		const textareaBox = await textarea.boundingBox();
 		if (textareaBox) {
@@ -215,9 +212,7 @@ test.describe('Mobile Messages', () => {
 		// Close panel to see chat area
 		await closeMobilePanel(page);
 
-		// Use specific selector to avoid matching Neo panel textbox
-		// Session textareas have "Ask or make anything..." placeholder, not "Ask Neo…"
-		const textarea = page.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])').first();
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toBeVisible({ timeout: 10000 });
 
 		// Type a message to verify input works on narrow screen

@@ -103,15 +103,6 @@ function syntheticPeerMessage(
 	};
 }
 
-function neoOriginMessage(uuid: string, text: string) {
-	return {
-		type: 'user',
-		uuid,
-		origin: 'neo',
-		message: { content: text },
-	};
-}
-
 function replayUserMessage(uuid: string, text: string) {
 	// Replay messages have isReplay: true and may carry no origin metadata —
 	// the agent→agent handoff case the daemon currently emits.
@@ -590,26 +581,6 @@ describe('MinimalThreadFeed', () => {
 		await waitFor(() => {
 			expect(screen.getByText('please address the failing test')).toBeTruthy();
 		});
-	});
-
-	it('labels neo-origin user messages as Neo and marks them as synthetic', () => {
-		const t = Date.now();
-		const rows = [
-			makeRow({
-				id: 'u1',
-				label: 'Task Agent',
-				createdAt: t,
-				message: neoOriginMessage('u1', 'starting up'),
-			}),
-		];
-
-		render(<MinimalThreadFeed parsedRows={rows} />);
-		const messageTurn = screen.getByTestId('minimal-thread-turn');
-		expect(messageTurn.dataset.turnState).toBe('message');
-		expect(messageTurn.dataset.fromLabel).toBe('Neo');
-		expect(messageTurn.dataset.toLabel).toBe('Task Agent');
-		// Synthetic badge replaces the older "handoff" wording.
-		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
 	});
 
 	it('uses row origin to classify runtime user messages when content has no origin', () => {

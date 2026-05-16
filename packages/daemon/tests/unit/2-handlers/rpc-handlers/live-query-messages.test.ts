@@ -46,7 +46,7 @@ interface InsertSdkMessageArgs {
 	/** ISO timestamp (stored TEXT). Default is a fixed known value. */
 	timestamp?: string;
 	sendStatus?: 'deferred' | 'enqueued' | 'consumed' | 'failed';
-	origin?: 'human' | 'neo' | 'system' | null;
+	origin?: 'human' | 'system' | null;
 }
 
 function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {

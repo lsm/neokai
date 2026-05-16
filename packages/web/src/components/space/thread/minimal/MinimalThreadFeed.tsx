@@ -539,7 +539,7 @@ function buildActiveTurn(
  * Resolve the sender of a user-type SDK message.
  *
  * The origin field comes in two shapes in the wild:
- * - Legacy string form ("neo" / "system") — what the daemon currently writes
+ * - Legacy string form ("system") — what the daemon currently writes
  *   to the DB for non-human-typed messages.
  * - Typed `SDKMessageOrigin` object form (`{ kind: 'peer'/'channel'/... }`) —
  *   what the SDK itself emits for richer provenance.
@@ -563,7 +563,6 @@ function extractSenderLabel(
 	const origin = m.origin;
 
 	if (typeof origin === 'string') {
-		if (origin === 'neo') return { label: 'Neo', isSynthetic: true };
 		if (origin === 'system') return { label: 'System', isSynthetic: true };
 		if (origin === 'human') return { label: 'User', isSynthetic: false };
 	}

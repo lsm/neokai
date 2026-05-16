@@ -53,13 +53,12 @@ export interface CreateSessionParams {
 	lobbyId?: string; // Optional lobby ID to assign session to
 	/** Optional Space ID for space_chat sessions (space:chat:${spaceId}) */
 	spaceId?: string;
-	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
+	createdBy?: 'human'; // Creator type (defaults to 'human')
 	// Session types:
 	// - 'worker': Standard coding session with Claude Code system prompt
 	// - 'lobby': Instance-level agent session
 	// - 'space_chat': Per-space coordinator session (space:chat:${spaceId})
-	// - 'neo': Neo global agent session
-	sessionType?: 'worker' | 'lobby' | 'space_chat' | 'neo';
+	sessionType?: 'worker' | 'lobby' | 'space_chat';
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;
@@ -197,7 +196,7 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
-			// Session type: defaults to 'worker', can be set to 'lobby', 'space_chat', 'space_task_agent', or 'neo'
+			// Session type: defaults to 'worker', can be set to 'lobby', 'space_chat', or 'space_task_agent'
 			type: sessionType,
 			config: {
 				model: modelId, // Use validated model ID

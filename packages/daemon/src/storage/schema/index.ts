@@ -97,6 +97,8 @@ export { runMigration127 } from './migrations';
 export { runMigration128 } from './migrations';
 // knip-ignore-next-line
 export { runMigration129 } from './migrations';
+// knip-ignore-next-line
+export { runMigration131 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -124,7 +126,7 @@ export function createTables(db: BunDatabase): void {
         processing_state TEXT,
         archived_at TEXT,
         parent_id TEXT,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat', 'neo')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
         session_context TEXT
       )
     `);
@@ -164,7 +166,7 @@ export function createTables(db: BunDatabase): void {
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
-        origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
+        origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
         is_renderable INTEGER NOT NULL DEFAULT 1,
         is_terminal INTEGER NOT NULL DEFAULT 0,
         parent_tool_use_id TEXT,
@@ -558,23 +560,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Neo activity log — audit log of all Neo agent tool invocations
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS neo_activity_log (
-        id          TEXT PRIMARY KEY,
-        tool_name   TEXT NOT NULL,
-        input       TEXT,
-        output      TEXT,
-        status      TEXT NOT NULL DEFAULT 'success' CHECK(status IN ('success', 'error', 'cancelled')),
-        error       TEXT,
-        target_type TEXT,
-        target_id   TEXT,
-        undoable    INTEGER DEFAULT 0,
-        undo_data   TEXT,
-        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-      )
-    `);
-
 	db.exec(`
       CREATE TABLE IF NOT EXISTS job_queue (
         id TEXT PRIMARY KEY,
@@ -726,9 +711,6 @@ function createIndexes(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
 	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`
-	);
 	// Workspace history index — supports ORDER BY last_used_at DESC in list()
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`

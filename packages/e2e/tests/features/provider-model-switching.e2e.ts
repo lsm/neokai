@@ -40,8 +40,6 @@ async function createSessionViaNewSessionButton(page: Page): Promise<string> {
 	await waitForWebSocketConnected(page);
 
 	// Close any stale modal left open from a previous test.
-	// getModal() excludes the NeoPanel (data-testid="neo-panel") which has role="dialog"
-	// and is permanently in the DOM even when closed.
 	const anyDialog = getModal(page).locator(':visible');
 	if (await anyDialog.isVisible({ timeout: 500 }).catch(() => false)) {
 		await page.keyboard.press('Escape');

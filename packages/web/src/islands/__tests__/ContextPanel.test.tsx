@@ -38,7 +38,7 @@ let mockCurrentSpaceTasksFilterTabSignal!: Signal<
 >;
 let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'tasks' | 'sessions' | 'configure'>;
 let mockSettingsSectionSignal!: Signal<
-	'general' | 'providers' | 'app-mcp-servers' | 'skills' | 'models' | 'neo' | 'usage' | 'about'
+	'general' | 'providers' | 'app-mcp-servers' | 'skills' | 'models' | 'usage' | 'about'
 >;
 let mockConnectionStateSignal!: Signal<'connecting' | 'connected'>;
 let mockSpacesWithTasksSignal!: Signal<Array<Space & { tasks: unknown[]; sessions: unknown[] }>>;

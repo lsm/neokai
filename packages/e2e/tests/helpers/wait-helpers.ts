@@ -266,18 +266,13 @@ export async function waitForSDKSystemInitMessage(
 }
 
 /**
- * Returns a Locator for modal dialogs, excluding the NeoPanel which is always
- * in the DOM (just off-screen when closed via CSS transform -translate-x-full).
+ * Returns a Locator for modal dialogs.
  *
- * Playwright considers CSS-transformed elements "visible" because transforms do
- * not affect layout geometry — using a bare `[role="dialog"]` selector will match
- * both the NeoPanel and any real modal, causing strict-mode violations.
- *
- * Use this instead of `page.locator('[role="dialog"]')` whenever you need to
- * target an application modal dialog.
+ * Use this instead of repeating `page.locator('[role="dialog"]')` whenever you
+ * need to target an application modal dialog.
  */
 export function getModal(page: Page): Locator {
-	return page.locator('[role="dialog"]:not([data-testid="neo-panel"])');
+	return page.locator('[role="dialog"]');
 }
 
 /**

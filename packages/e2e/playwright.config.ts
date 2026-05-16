@@ -239,8 +239,6 @@ export default defineConfig({
 			NEOKAI_WORKSPACE_PATH: e2eWorkspaceDir,
 			NEOKAI_WORKSPACE_ROOT: e2eWorkspaceDir,
 			DB_PATH: e2eDatabasePath,
-			// Enable Neo agent for E2E tests (bypasses test-mode guard in app.ts)
-			NEOKAI_ENABLE_NEO_AGENT: '1',
 			// Disable automatic goal processing to prevent worktree creation spam in E2E tests
 			// Goals can still be created/manually triggered via UI or RPC, but the daemon
 			// won't automatically try to spawn planning groups that require worktrees.

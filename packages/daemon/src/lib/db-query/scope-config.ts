@@ -84,7 +84,6 @@ const COLUMN_BLACKLISTS: Record<string, string[]> = {
 	spaces: ['config'],
 	app_mcp_servers: ['env'],
 	inbox_items: ['raw_event', 'security_check'],
-	neo_activity_log: ['undo_data'],
 	job_queue: ['payload'],
 	space_agents: ['system_prompt'],
 	space_workflows: ['config', 'gates', 'channels'],
@@ -95,7 +94,7 @@ const COLUMN_BLACKLISTS: Record<string, string[]> = {
 // ── Scope configurations ──────────────────────────────────────────────────────
 
 /**
- * Tables visible in the **global** scope (Neo agent / no entity filter).
+ * Tables visible in the **global** scope (no entity filter).
  * No WHERE clause injection — the agent can read all rows.
  */
 const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
@@ -136,12 +135,6 @@ const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
 		tableName: 'inbox_items',
 		blacklistedColumns: COLUMN_BLACKLISTS.inbox_items,
 		description: 'Incoming GitHub events (issues, comments, PRs) routed through the inbox system.',
-	},
-	{
-		tableName: 'neo_activity_log',
-		blacklistedColumns: COLUMN_BLACKLISTS.neo_activity_log,
-		description:
-			'Audit log of Neo agent tool invocations including status, targets, and undo data.',
 	},
 	{
 		tableName: 'job_queue',

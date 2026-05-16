@@ -450,7 +450,7 @@ describe('SessionLifecycle', () => {
 
 		it('should create session with createdBy field', async () => {
 			await lifecycle.create({
-				createdBy: 'neo',
+				createdBy: 'human',
 			});
 
 			// createdBy is stored in metadata

@@ -59,9 +59,8 @@ export type {
  * - 'lobby': Instance-level agent session
  * - 'space_task_agent': Task Agent session that orchestrates a single SpaceTask's workflow
  * - 'space_chat': Per-space coordinator session (space:chat:${spaceId}) — the human-facing interface for a Space
- * - 'neo': Neo global agent session
  */
-export type SessionType = 'worker' | 'lobby' | 'space_task_agent' | 'space_chat' | 'neo';
+export type SessionType = 'worker' | 'lobby' | 'space_task_agent' | 'space_chat';
 
 /**
  * Context for lobby/space sessions.
@@ -73,8 +72,6 @@ export interface SessionContext {
 	spaceId?: string;
 	/** Task ID for Space Task Agent sessions */
 	taskId?: string;
-	/** Neo session ID for the global Neo agent */
-	neoId?: string;
 }
 
 /**
@@ -683,10 +680,9 @@ export type MessageDeliveryMode = 'immediate' | 'defer';
  * Origin of a message — stored as a DB-level annotation on sdk_messages for frontend display.
  * This is NOT injected into the SDK message JSON blob; room/space agents do not see it.
  * - 'human': default for user-sent messages (NULL in DB treated as 'human')
- * - 'neo': message was injected by the Neo global AI agent
  * - 'system': message was injected by the daemon system internally
  */
-export type MessageOrigin = 'human' | 'neo' | 'system';
+export type MessageOrigin = 'human' | 'system';
 
 /**
  * A NeoKai-native action message stored alongside SDK messages in the chat.

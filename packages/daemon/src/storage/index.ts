@@ -40,7 +40,6 @@ import { AppMcpServerRepository } from './repositories/app-mcp-server-repository
 import { TaskRepository } from './repositories/task-repository';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 import { SkillRepository } from './repositories/skill-repository';
-import { NeoActivityLogRepository } from './repositories/neo-activity-log-repository';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
@@ -66,13 +65,6 @@ export { SpaceAgentRepository } from './repositories/space-agent-repository';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 export { SkillRepository } from './repositories/skill-repository';
-export { NeoActivityLogRepository } from './repositories/neo-activity-log-repository';
-export type {
-	NeoActivityLogEntry,
-	InsertNeoActivityParams,
-	UpdateNeoActivityParams,
-	ListNeoActivityParams,
-} from './repositories/neo-activity-log-repository';
 export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
 export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository';
 
@@ -95,7 +87,6 @@ export class Database {
 	private taskRepo!: TaskRepository;
 	private mcpEnablementRepo!: McpEnablementRepository;
 	private skillRepo!: SkillRepository;
-	private neoActivityLogRepo!: NeoActivityLogRepository;
 	private workspaceHistoryRepo!: WorkspaceHistoryRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
@@ -121,7 +112,6 @@ export class Database {
 		this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
 		this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
 		this.skillRepo = new SkillRepository(db, reactiveDb);
-		this.neoActivityLogRepo = new NeoActivityLogRepository(db);
 		this.workspaceHistoryRepo = new WorkspaceHistoryRepository(db);
 	}
 
@@ -522,13 +512,6 @@ export class Database {
 	 */
 	get skills(): SkillRepository {
 		return this.skillRepo;
-	}
-
-	/**
-	 * Get the Neo activity log repository
-	 */
-	get neoActivityLog(): NeoActivityLogRepository {
-		return this.neoActivityLogRepo;
 	}
 
 	/**

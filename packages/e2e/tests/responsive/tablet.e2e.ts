@@ -69,8 +69,7 @@ test.describe('Tablet Responsiveness', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Type a message to verify input works on tablet
-		// Use specific selector to avoid matching Neo panel textbox
-		const textarea = page.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])').first();
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toBeVisible({ timeout: 10000 });
 		await textarea.fill('Hello from tablet');
 
