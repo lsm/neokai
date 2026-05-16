@@ -425,6 +425,151 @@ describe('QueryRunner', () => {
 				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
 			});
 		});
+
+		it('rebuilds query options after member Space MCP self-heal before SDK query creation', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'worker-session-1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = { spaceId: 's1' };
+				mockSession.config.mcpServers = {};
+
+				const repairedServers = {
+					'space-agent-tools': {
+						type: 'sdk',
+						name: 'space-agent-tools',
+						instance: {},
+					},
+				};
+				buildSpy
+					.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+					.mockResolvedValueOnce({
+						model: 'claude-sonnet-4-20250514',
+						mcpServers: repairedServers,
+					});
+				stopAfterRebuiltOptions();
+				const onMissingMemberSpaceMcpServers = mock(async () => {
+					mockSession.config.mcpServers =
+						repairedServers as unknown as Session['config']['mcpServers'];
+				});
+
+				const ctx = createContext({ onMissingMemberSpaceMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('worker-session-1', [
+					'space-agent-tools',
+				]);
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
+			});
+		});
+
+		it('throws when a member Space MCP invariant is missing and no self-heal callback exists', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'worker-session-1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = { spaceId: 's1' };
+				mockSession.config.mcpServers = {};
+				buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
+
+				const ctx = createContext();
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(buildSpy).toHaveBeenCalledTimes(1);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+				expect(handleErrorSpy).toHaveBeenCalled();
+				const error = handleErrorSpy.mock.calls[0][1] as Error;
+				expect(error.message).toContain('[MCP invariant]');
+				expect(error.message).toContain('space-agent-tools');
+				expect(error.message).toContain('member session');
+			});
+		});
+
+		it('does not self-heal when a member Space already has its required MCP server', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'worker-session-1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = { spaceId: 's1' };
+				const servers = {
+					'space-agent-tools': {
+						type: 'sdk',
+						name: 'space-agent-tools',
+						instance: {},
+					},
+				};
+				mockSession.config.mcpServers = servers as unknown as Session['config']['mcpServers'];
+				buildSpy.mockResolvedValueOnce({
+					model: 'claude-sonnet-4-20250514',
+					mcpServers: servers,
+				});
+				const onMissingMemberSpaceMcpServers = mock(async () => {});
+
+				const ctx = createContext({ onMissingMemberSpaceMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
+				expect(buildSpy).toHaveBeenCalledTimes(1);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		it('skips member Space MCP invariant for sessions without spaceId', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'plain-worker-1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = {};
+				mockSession.config.mcpServers = {};
+				buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
+				// Force early exit: make message generator throw so the query fails fast.
+				mockMessageQueue.messageGenerator = mock(async function* () {
+					throw new Error('generator abort for test');
+				});
+
+				const onMissingMemberSpaceMcpServers = mock(async () => {});
+				const ctx = createContext({ onMissingMemberSpaceMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
+				expect(buildSpy).toHaveBeenCalledTimes(1);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		it('skips member Space MCP invariant for workflow sub-sessions', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'space:s1:task:t1:exec:e1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = { spaceId: 's1', taskId: 't1' };
+				mockSession.config.mcpServers = {};
+				buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
+				// Force early exit: make message generator throw so the query fails fast.
+				mockMessageQueue.messageGenerator = mock(async function* () {
+					throw new Error('generator abort for test');
+				});
+
+				const onMissingMemberSpaceMcpServers = mock(async () => {});
+				const ctx = createContext({ onMissingMemberSpaceMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
+				expect(buildSpy).toHaveBeenCalledTimes(1);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+			});
+		});
 	});
 
 	describe('displayErrorAsAssistantMessage', () => {

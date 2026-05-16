@@ -97,6 +97,7 @@ const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
 	'suggest_workflow',
 	'get_workflow_detail',
 ] as const;
+const REQUIRED_MEMBER_SPACE_MCP_SERVERS = ['space-agent-tools'] as const;
 
 /**
  * Context interface - what QueryRunner needs from AgentSession
@@ -158,6 +159,14 @@ export interface QueryRunnerContext {
 	 * resume cannot silently start a degraded Space Agent turn.
 	 */
 	onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+
+	/**
+	 * Self-heal hook for Space member sessions (ad-hoc worker sessions with
+	 * `context.spaceId`) missing their `space-agent-tools` MCP server.
+	 * SpaceRuntimeService wires this in `attachSpaceToolsToMemberSession()` so
+	 * cache eviction / DB reload cannot silently start a degraded turn.
+	 */
+	onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
 	/** Consume (clear) the one-shot resumeSessionAt after the query has started. */
 	consumePendingResumeSessionAt?(): string | undefined;
@@ -357,6 +366,7 @@ export class QueryRunner {
 			);
 
 			queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions);
+			queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions);
 			// P2-6 / P1-5: Self-heal — detect a missing required MCP server for
 			// workflow sub-sessions and recover via the registered callback.
 			// Required server:
@@ -1076,6 +1086,80 @@ export class QueryRunner {
 			`[MCP invariant] Space chat session ${session.id} missing required MCP servers: ` +
 				`[${missingServers.join(', ')}]. Refusing to start a degraded Space Agent turn. ` +
 				`Expected coordination tools: ${REQUIRED_SPACE_CHAT_COORDINATION_TOOLS.join(', ')}.`
+		);
+	}
+
+	/**
+	 * Ensure Space member sessions (ad-hoc worker sessions with `context.spaceId`)
+	 * have their required `space-agent-tools` MCP server attached before the SDK
+	 * query starts.
+	 *
+	 * This is the member-session counterpart to `ensureSpaceChatMcpInvariant`.
+	 * Space chat sessions get their tools + system prompt from
+	 * `setupSpaceAgentSession`; member sessions get only the MCP tools from
+	 * `attachSpaceToolsToMemberSession`. Both paths are vulnerable to losing
+	 * runtime-only MCP config after cache eviction / DB reload, so both need a
+	 * deterministic pre-query guard.
+	 *
+	 * Skipped for:
+	 *   - space_chat sessions (handled by ensureSpaceChatMcpInvariant)
+	 *   - workflow sub-sessions (handled by node-agent self-heal)
+	 *   - sessions without context.spaceId
+	 */
+	private async ensureMemberSpaceMcpInvariant(queryOptions: Options): Promise<Options> {
+		const { session, logger } = this.ctx;
+
+		// Only applies to member sessions that belong to a Space but are not the
+		// Space chat session itself or a workflow sub-session.
+		if (!session.context?.spaceId) return queryOptions;
+		if (session.type === 'space_chat') return queryOptions;
+		if (session.id.includes(':task:') && session.id.includes(':exec:')) return queryOptions;
+
+		const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+		const missingServers = REQUIRED_MEMBER_SPACE_MCP_SERVERS.filter(
+			(name) => !serverNames.includes(name)
+		);
+		if (missingServers.length === 0) return queryOptions;
+
+		const payload = {
+			event: 'member_space.mcp.missing',
+			sessionId: session.id,
+			spaceId: session.context.spaceId,
+			sessionType: session.type,
+			requiredServers: REQUIRED_MEMBER_SPACE_MCP_SERVERS,
+			missingServers,
+			presentServers: serverNames,
+			liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
+			selfHealAttempted: !!this.ctx.onMissingMemberSpaceMcpServers,
+		};
+
+		logger.error(
+			`QueryRunner.start(): Space member session ${session.id} is MISSING required MCP servers. ` +
+				`Missing: [${missingServers.join(', ')}]. Present: [${serverNames.join(', ')}]. ` +
+				`This would remove Space coordination tools after cache eviction / DB reload. ${JSON.stringify(payload)}`
+		);
+
+		if (this.ctx.onMissingMemberSpaceMcpServers) {
+			await this.ctx.onMissingMemberSpaceMcpServers(session.id, missingServers);
+			const rebuilt = await this.ctx.optionsBuilder.build();
+			const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
+			const repairedServerNames = Object.keys(repairedOptions.mcpServers ?? {});
+			const stillMissing = REQUIRED_MEMBER_SPACE_MCP_SERVERS.filter(
+				(name) => !repairedServerNames.includes(name)
+			);
+			if (stillMissing.length > 0) {
+				throw new Error(
+					`[MCP invariant] Space member session ${session.id} still missing required MCP servers ` +
+						`after self-heal: [${stillMissing.join(', ')}]. Refusing to start a degraded ` +
+						`Space member turn.`
+				);
+			}
+			return repairedOptions;
+		}
+
+		throw new Error(
+			`[MCP invariant] Space member session ${session.id} missing required MCP servers: ` +
+				`[${missingServers.join(', ')}]. Refusing to start a degraded Space member turn.`
 		);
 	}
 
