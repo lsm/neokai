@@ -8803,7 +8803,7 @@ export function runMigration127(db: BunDatabase): void {
 /**
  * Migration 128: Add external-event extension configuration tables.
  *
- * external_event_source_configs stores global source enablement, capabilities,
+ * external_event_extension_configs stores global source enablement, capabilities,
  * secrets references, and source-level settings.
  *
  * space_external_event_source_configs stores per-space source enablement and
@@ -8811,17 +8811,45 @@ export function runMigration127(db: BunDatabase): void {
  * extension configuration.
  */
 export function runMigration128(db: BunDatabase): void {
+	const hadLegacyGlobalConfigTable = tableExists(db, 'external_event_source_configs');
+
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS external_event_source_configs (
+		CREATE TABLE IF NOT EXISTS external_event_extension_configs (
 			source TEXT PRIMARY KEY,
-			globally_enabled INTEGER NOT NULL DEFAULT 0,
-			capabilities_json TEXT NOT NULL,
-			secrets_ref TEXT,
-			settings_json TEXT,
+			globally_enabled INTEGER NOT NULL DEFAULT 0 CHECK(globally_enabled IN (0, 1)),
+			capabilities_json TEXT NOT NULL DEFAULT '{}',
+			secrets_ref TEXT DEFAULT NULL,
+			settings_json TEXT NOT NULL DEFAULT '{}',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)
 	`);
+
+	if (hadLegacyGlobalConfigTable) {
+		db.exec(`
+			INSERT OR IGNORE INTO external_event_extension_configs (
+				source, globally_enabled, capabilities_json, secrets_ref,
+				settings_json, created_at, updated_at
+			)
+			SELECT
+				source,
+				globally_enabled,
+				json_set(
+						CASE
+							WHEN json_valid(capabilities_json) AND json_type(capabilities_json) = 'object'
+								THEN capabilities_json
+							ELSE '{}'
+						END,
+						'$.rpcConfig',
+						json('true')
+					),
+				secrets_ref,
+				COALESCE(settings_json, '{}'),
+				created_at,
+				updated_at
+			FROM external_event_source_configs
+		`);
+	}
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
@@ -8835,6 +8863,13 @@ export function runMigration128(db: BunDatabase): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
+
+	const now = Date.now();
+	db.prepare(
+		`INSERT OR IGNORE INTO external_event_extension_configs
+		 (source, globally_enabled, capabilities_json, secrets_ref, settings_json, created_at, updated_at)
+		 VALUES ('github', 1, ?, NULL, '{}', ?, ?)`
+	).run(JSON.stringify({ webhooks: true, polling: false, rpcConfig: true }), now, now);
 }
 
 /**
@@ -8843,6 +8878,21 @@ export function runMigration128(db: BunDatabase): void {
  * Backfills from legacy config.maxConcurrentTasks when present and valid, otherwise
  * defaults to 1. This preserves legacy SpaceConfig-based limits during upgrade.
  */
+export function runMigration129(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
+
+	db.exec(`ALTER TABLE spaces ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 1`);
+	db.exec(`
+		UPDATE spaces
+		SET max_concurrent_tasks = CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER)
+		WHERE config IS NOT NULL
+		  AND json_valid(config)
+		  AND json_type(config, '$.maxConcurrentTasks') = 'integer'
+		  AND CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER) BETWEEN 1 AND 10
+	`);
+}
+
 /**
  * Migration 130: Add `gate_open_state` table.
  *
@@ -8868,21 +8918,6 @@ export function runMigration130(db: BunDatabase): void {
 		)
 	`);
 	db.exec(`CREATE INDEX idx_gate_open_state_run ON gate_open_state(run_id)`);
-}
-
-export function runMigration129(db: BunDatabase): void {
-	if (!tableExists(db, 'spaces')) return;
-	if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
-
-	db.exec(`ALTER TABLE spaces ADD COLUMN max_concurrent_tasks INTEGER NOT NULL DEFAULT 1`);
-	db.exec(`
-		UPDATE spaces
-		SET max_concurrent_tasks = CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER)
-		WHERE config IS NOT NULL
-		  AND json_valid(config)
-		  AND json_type(config, '$.maxConcurrentTasks') = 'integer'
-		  AND CAST(json_extract(config, '$.maxConcurrentTasks') AS INTEGER) BETWEEN 1 AND 10
-	`);
 }
 
 /**

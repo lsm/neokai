@@ -301,6 +301,7 @@ describe('scope-config', () => {
 		it('includes external event bus tables', () => {
 			const excluded = getExcludedTableNames();
 			expect(excluded).toContain('external_event_source_configs');
+			expect(excluded).toContain('external_event_extension_configs');
 			expect(excluded).toContain('space_external_event_source_configs');
 			expect(excluded).toContain('space_external_events');
 			expect(excluded).toContain('space_external_event_deliveries');
