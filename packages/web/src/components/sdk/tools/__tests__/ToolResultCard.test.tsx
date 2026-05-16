@@ -454,7 +454,7 @@ describe('ToolResultCard Component', () => {
 			expect(screen.getByText('File unchanged: /test.ts')).toBeTruthy();
 		});
 
-		it('should render typed FileEditOutput with structuredPatch', () => {
+		it('should render typed FileEditOutput with DiffViewer', () => {
 			render(
 				<ToolResultCard
 					toolName="Edit"
@@ -481,9 +481,41 @@ describe('ToolResultCard Component', () => {
 				/>
 			);
 
-			const viewer = screen.getByTestId('code-viewer');
-			expect(viewer).toBeTruthy();
-			expect(viewer.textContent).toContain('@@ -1,1 +1,1 @@');
+			expect(screen.getByTestId('diff-viewer')).toBeTruthy();
+			// structuredPatch hidden by default (shown only in detailed variant)
+			expect(screen.queryByText('Structured patch')).toBeNull();
+		});
+
+		it('should show structured patch in detailed variant for FileEditOutput', () => {
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-detailed"
+					input={{ file_path: '/test.ts', old_string: 'old', new_string: 'new' }}
+					output={{
+						filePath: '/test.ts',
+						oldString: 'old',
+						newString: 'new',
+						originalFile: 'old',
+						structuredPatch: [
+							{
+								oldStart: 1,
+								oldLines: 1,
+								newStart: 1,
+								newLines: 1,
+								lines: ['-old', '+new'],
+							},
+						],
+						userModified: false,
+						replaceAll: false,
+					}}
+					variant="detailed"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('diff-viewer')).toBeTruthy();
+			expect(screen.getByText('Structured patch')).toBeTruthy();
 		});
 
 		it('should render typed FileWriteOutput create type', () => {

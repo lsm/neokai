@@ -246,6 +246,10 @@ export function ToolResultCard({
 	const lineCountDisplay = getLineCountDisplay();
 
 	// Default & detailed variants - full display with expand/collapse
+	// Note: the running-state arc is rendered by <RunningBorder> as an absolutely
+	// positioned SVG sibling (applied via a wrapper below). It cannot live on this
+	// div because overflow:hidden would clip the SVG that extends slightly past
+	// the card's outer edge.
 	const card = (
 		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
 			{/* Header - clickable to expand/collapse */}
@@ -335,21 +339,25 @@ export function ToolResultCard({
 					toolName === 'Edit' && !isError ? (
 						isFileEditOutput(output) ? (
 							<div class="space-y-3">
-								{output.structuredPatch.length > 0 ? (
-									<CodeViewer
-										code={structuredPatchToDiff(output.structuredPatch)}
-										filePath={output.filePath}
-										language="diff"
-										showLineNumbers={false}
-										showHeader={true}
-										maxHeight="none"
-									/>
-								) : (
-									<DiffViewer
-										oldText={output.oldString}
-										newText={output.newString}
-										filePath={output.filePath}
-									/>
+								<DiffViewer
+									oldText={output.oldString}
+									newText={output.newString}
+									filePath={output.filePath}
+								/>
+								{output.structuredPatch.length > 0 && variant === 'detailed' && (
+									<details>
+										<summary class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+											Structured patch
+										</summary>
+										<CodeViewer
+											code={structuredPatchToDiff(output.structuredPatch)}
+											filePath={output.filePath}
+											language="diff"
+											showLineNumbers={false}
+											showHeader={false}
+											maxHeight="none"
+										/>
+									</details>
 								)}
 								{output.gitDiff && (
 									<div class="text-xs text-gray-500 dark:text-gray-400">
