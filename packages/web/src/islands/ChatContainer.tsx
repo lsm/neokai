@@ -572,19 +572,28 @@ export default function ChatContainer({
 		}
 	}, [session]);
 
-	// Show workspace selector for active worker sessions without a workspace
+	// Show workspace selector for active worker sessions without a workspace —
+	// but only before the conversation starts, so it never covers live messages
+	// (e.g. sessions created via the empty-state "create & send" landing).
 	useEffect(() => {
 		if (
 			session?.type === 'worker' &&
 			session?.status === 'active' &&
 			session?.workspacePath === null &&
+			(session?.metadata.messageCount ?? 0) === 0 &&
 			!readonly
 		) {
 			setShowWorkspaceSelector(true);
 		} else {
 			setShowWorkspaceSelector(false);
 		}
-	}, [session?.type, session?.status, session?.workspacePath, readonly]);
+	}, [
+		session?.type,
+		session?.status,
+		session?.workspacePath,
+		session?.metadata.messageCount,
+		readonly,
+	]);
 
 	// Handler for worktree mode change
 	const handleWorktreeModeChange = (mode: 'worktree' | 'direct') => {
