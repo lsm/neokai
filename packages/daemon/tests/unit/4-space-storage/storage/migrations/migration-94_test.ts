@@ -188,6 +188,11 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
 	let testDir: string;
 	let db: BunDatabase;
 
+	// Generous hook timeout: `runMigrations` replays the full migration chain on
+	// a fresh on-disk DB for every test, which legitimately takes a few seconds
+	// and intermittently exceeded the 5s default under CI load (flaky timeout).
+	const HOOK_TIMEOUT_MS = 30000;
+
 	beforeEach(() => {
 		testDir = join(
 			process.cwd(),
@@ -200,7 +205,7 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
 		db.exec('PRAGMA foreign_keys = ON');
 		runMigrations(db, () => {});
 		insertSpace(db, 'sp-1');
-	});
+	}, HOOK_TIMEOUT_MS);
 
 	afterEach(() => {
 		try {
@@ -213,7 +218,7 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
 		} catch {
 			// ignore
 		}
-	});
+	}, HOOK_TIMEOUT_MS);
 
 	test('hash self-verification: migration stores narrow hash that diverges from expanded computeWorkflowHash', () => {
 		// Migration 94 uses a frozen narrow fingerprint (description + instructions +
