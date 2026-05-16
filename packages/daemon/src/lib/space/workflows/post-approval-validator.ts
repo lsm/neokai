@@ -26,6 +26,16 @@
 import type { PostApprovalRoute, WorkflowNode, WorkflowNodeInput } from '@neokai/shared';
 
 /**
+ * Literal target name for the legacy Task Agent target.
+ * Retained for backward compatibility with persisted workflows that declared
+ * `targetAgent: 'task-agent'`. New workflows should target a concrete node
+ * agent name instead. The PostApprovalRouter will attempt a node-agent spawn
+ * for this target, which will fail gracefully if no agent named 'task-agent'
+ * exists in the workflow.
+ */
+export const POST_APPROVAL_TASK_AGENT_TARGET = 'task-agent';
+
+/**
  * Input shape accepted by the validator. Both the persisted `WorkflowNode`
  * shape and the create-time `WorkflowNodeInput` shape are supported so the
  * validator can be called from both the `create` and `update` code paths of
@@ -55,8 +65,8 @@ export type PostApprovalValidationResult =
 export function collectEligiblePostApprovalTargets(
 	nodes: Array<WorkflowNode | WorkflowNodeInput>
 ): string[] {
-	const targets: string[] = [];
-	const seen = new Set<string>();
+	const targets: string[] = [POST_APPROVAL_TASK_AGENT_TARGET];
+	const seen = new Set<string>(targets);
 	for (const node of nodes) {
 		const agents = node.agents ?? [];
 		for (const agent of agents) {
@@ -73,7 +83,7 @@ export function collectEligiblePostApprovalTargets(
  * Validate a workflow's `postApproval` route against its node graph.
  *
  *   - `route === undefined` → valid (post-approval is optional).
- *   - `route.targetAgent === 'task-agent'` → valid.
+ *   - `route.targetAgent === 'task-agent'` → valid (legacy backward compat).
  *   - `route.targetAgent` matches some `nodes[*].agents[*].name` → valid.
  *   - Any other `targetAgent` → invalid; the error message lists every
  *     eligible target so the caller can surface a helpful repair hint.

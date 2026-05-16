@@ -360,16 +360,18 @@ describe('SpaceWorkflowManager', () => {
 	});
 
 	describe('postApproval validation', () => {
-		it('rejects a postApproval route targeting "task-agent" on create', () => {
-			expect(() =>
-				manager.createWorkflow({
-					spaceId: 'space-1',
-					name: 'WF',
-					nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-					completionAutonomyLevel: 3,
-					postApproval: { targetAgent: 'task-agent', instructions: 'merge {{pr_url}}' },
-				})
-			).toThrow('"task-agent"');
+		it('accepts a postApproval route targeting "task-agent" on create', () => {
+			const wf = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				postApproval: { targetAgent: 'task-agent', instructions: 'merge {{pr_url}}' },
+			});
+			expect(wf.postApproval).toEqual({
+				targetAgent: 'task-agent',
+				instructions: 'merge {{pr_url}}',
+			});
 		});
 
 		it('accepts a postApproval route targeting a node agent name', () => {

@@ -438,10 +438,18 @@ export class TaskAgentManager {
 	 */
 	private async archiveOnTaskArchived(taskId: string): Promise<void> {
 		// 1. Snapshot session IDs BEFORE cleanup clears the maps.
+		const task = this.config.taskRepo.getTask(taskId);
 		const sessionIds = new Set<string>();
 		const nodeMap = this.subSessions.get(taskId);
 		if (nodeMap) {
 			for (const [sid] of nodeMap) sessionIds.add(sid);
+		}
+
+		// Also include legacy taskAgentSessionId for tasks created before the
+		// task-agent LLM removal. After restart, subSessions won't contain this
+		// session but the DB column still references it.
+		if (task?.taskAgentSessionId) {
+			sessionIds.add(task.taskAgentSessionId);
 		}
 
 		// 2. In-memory teardown (DB + worktree + jsonl preserved by cleanup).
@@ -465,7 +473,6 @@ export class TaskAgentManager {
 
 		// 4. Remove the space-level task worktree (disk cleanup). The DB task
 		// row remains so the UI can still display the archived task.
-		const task = this.config.taskRepo.getTask(taskId);
 		if (this.config.worktreeManager && task?.spaceId) {
 			try {
 				await this.config.worktreeManager.removeTaskWorktree(task.spaceId, taskId);

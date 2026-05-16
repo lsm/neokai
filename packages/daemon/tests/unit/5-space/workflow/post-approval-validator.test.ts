@@ -8,6 +8,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { PostApprovalRoute, WorkflowNode } from '@neokai/shared';
 import {
+	POST_APPROVAL_TASK_AGENT_TARGET,
 	collectEligiblePostApprovalTargets,
 	validatePostApproval,
 } from '../../../../src/lib/space/workflows/post-approval-validator.ts';
@@ -25,7 +26,7 @@ const CODING_NODES: WorkflowNode[] = [
 
 describe('collectEligiblePostApprovalTargets', () => {
 	test('returns empty array when no nodes provided', () => {
-		expect(collectEligiblePostApprovalTargets([])).toEqual([]);
+		expect(collectEligiblePostApprovalTargets([])).toEqual([POST_APPROVAL_TASK_AGENT_TARGET]);
 	});
 
 	test('appends each node-agent name in document order, without duplicates', () => {
@@ -36,7 +37,11 @@ describe('collectEligiblePostApprovalTargets', () => {
 			]),
 			node('n2', 'B', [{ agentId: 'a3', name: 'reviewer' }]),
 		];
-		expect(collectEligiblePostApprovalTargets(duplicate)).toEqual(['coder', 'reviewer']);
+		expect(collectEligiblePostApprovalTargets(duplicate)).toEqual([
+			'task-agent',
+			'coder',
+			'reviewer',
+		]);
 	});
 });
 
@@ -55,15 +60,14 @@ describe('validatePostApproval', () => {
 		});
 	});
 
-	test('"task-agent" is no longer a valid target', () => {
+	test('"task-agent" is valid for backward compatibility', () => {
 		const route: PostApprovalRoute = {
 			targetAgent: 'task-agent',
 			instructions: 'merge {{pr_url}}',
 		};
 		const result = validatePostApproval({ postApproval: route, nodes: CODING_NODES });
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toContain('"task-agent"');
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
 	});
 
 	test('unknown target is invalid; error lists every eligible target', () => {
@@ -74,11 +78,11 @@ describe('validatePostApproval', () => {
 		const result = validatePostApproval({ postApproval: route, nodes: CODING_NODES });
 		expect(result.ok).toBe(false);
 		if (result.ok) return; // type narrow
-		expect(result.eligibleTargets).toEqual(['coder', 'reviewer']);
+		expect(result.eligibleTargets).toEqual(['task-agent', 'coder', 'reviewer']);
 		expect(result.error).toContain('"ghost-agent"');
 		// The error surfaces every eligible target so the operator/LLM can fix
 		// the route without a round-trip to the docs.
-		for (const target of ['coder', 'reviewer']) {
+		for (const target of ['task-agent', 'coder', 'reviewer']) {
 			expect(result.error).toContain(`"${target}"`);
 		}
 	});
