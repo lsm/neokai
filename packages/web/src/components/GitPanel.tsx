@@ -5,7 +5,6 @@ import { cn } from '../lib/utils.ts';
 
 interface GitPanelProps {
 	sessionId: string;
-	onClose: () => void;
 }
 
 const STATUS_LABELS: Record<GitFileStatusKind, string> = {
@@ -245,7 +244,7 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
 	);
 }
 
-export function GitPanel({ sessionId, onClose }: GitPanelProps) {
+export function GitPanel({ sessionId }: GitPanelProps) {
 	const [status, setStatus] = useState<GitSessionStatusResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -286,7 +285,7 @@ export function GitPanel({ sessionId, onClose }: GitPanelProps) {
 
 	return (
 		<aside class="hidden w-80 flex-shrink-0 flex-col border-l border-dark-700 bg-dark-800 lg:flex">
-			<div class="flex h-[65px] flex-shrink-0 items-center gap-2 px-4">
+			<div class="flex h-[65px] flex-shrink-0 items-center gap-2 px-4 pr-14">
 				<div class="min-w-0 flex-1">
 					<h2 class="text-sm font-semibold text-gray-100">Git</h2>
 					<p class="truncate text-xs text-gray-500">
@@ -312,22 +311,6 @@ export function GitPanel({ sessionId, onClose }: GitPanelProps) {
 							stroke-linejoin="round"
 							stroke-width={2}
 							d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-						/>
-					</svg>
-				</button>
-				<button
-					type="button"
-					onClick={onClose}
-					class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100"
-					title="Close Git panel"
-					aria-label="Close Git panel"
-				>
-					<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M6 18L18 6M6 6l12 12"
 						/>
 					</svg>
 				</button>

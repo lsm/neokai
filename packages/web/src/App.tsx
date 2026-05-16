@@ -5,7 +5,7 @@ import { useGlobalShortcuts } from './hooks/useGlobalShortcuts.ts';
 
 import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
-import { RightPanel } from './islands/RightPanel.tsx';
+import { RightPanel, RightPanelToggle } from './islands/RightPanel.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
 import { CommandPalette } from './islands/CommandPalette.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
@@ -213,6 +213,7 @@ export function App() {
 				</div>
 
 				<RightPanel />
+				<RightPanelToggle />
 			</div>
 
 			{/* Global Toast Container */}

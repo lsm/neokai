@@ -12,7 +12,6 @@
 import type { Session, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { connectionState } from '../lib/state';
-import { cn } from '../lib/utils';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
 import { MobileMenuButton } from './ui/MobileMenuButton';
@@ -26,11 +25,9 @@ export interface ChatHeaderProps {
 	onResetClick: () => void;
 	onArchiveClick: () => void;
 	onDeleteClick: () => void;
-	onRightPanelToggle?: () => void;
 	archiving?: boolean;
 	resettingAgent?: boolean;
 	readonly?: boolean;
-	rightPanelOpen?: boolean;
 	/**
 	 * When provided, renders a left-arrow back button in the header's left
 	 * slot (replacing the `MobileMenuButton`) that invokes this callback on
@@ -51,11 +48,9 @@ export function ChatHeader({
 	onResetClick,
 	onArchiveClick,
 	onDeleteClick,
-	onRightPanelToggle,
 	archiving = false,
 	resettingAgent = false,
 	readonly = false,
-	rightPanelOpen = false,
 	onBack,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
@@ -182,7 +177,7 @@ export function ChatHeader({
 	};
 
 	return (
-		<div class="flex-shrink-0 bg-dark-900 px-4 h-[65px] flex items-center relative z-10">
+		<div class="relative z-10 flex h-[65px] flex-shrink-0 items-center bg-dark-900 px-4 lg:pr-14">
 			<div class="flex-1 min-w-0 flex items-center gap-3">
 				{onBack ? (
 					<button
@@ -232,26 +227,6 @@ export function ChatHeader({
 						items={getHeaderActions()}
 					/>
 				</div>
-
-				{onRightPanelToggle && (
-					<IconButton
-						title={rightPanelOpen ? 'Hide right panel' : 'Show right panel'}
-						onClick={onRightPanelToggle}
-						class={cn(
-							'hidden lg:inline-flex flex-shrink-0',
-							rightPanelOpen && 'bg-white/10 text-gray-100'
-						)}
-					>
-						<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={1.8}
-								d="M4.75 5.75A2 2 0 016.75 3.75h10.5a2 2 0 012 2v12.5a2 2 0 01-2 2H6.75a2 2 0 01-2-2V5.75zM14.5 4v16"
-							/>
-						</svg>
-					</IconButton>
-				)}
 			</div>
 		</div>
 	);
