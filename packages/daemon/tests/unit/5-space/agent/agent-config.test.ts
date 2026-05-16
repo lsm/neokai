@@ -267,7 +267,7 @@ describe('createCustomAgentInit — sub-session features', () => {
 		expect(init.features).toEqual(SUB_SESSION_FEATURES);
 	});
 
-	it('reviewer init uses agents pattern with restricted tools', () => {
+	it('reviewer init uses agents pattern, restricting tools via disallowedTools', () => {
 		const config = makeConfig(PRESET_AGENT_TOOLS.reviewer);
 		const init = createCustomAgentInit(config);
 
@@ -275,15 +275,17 @@ describe('createCustomAgentInit — sub-session features', () => {
 		expect(init.agent).toBeDefined();
 		expect(init.agents).toBeDefined();
 
-		// The agent definition should use the reviewer's restricted tools
+		// The agent definition must NOT set `tools` — an AgentDefinition.tools
+		// allowlist would exclude MCP tools. The built-in restriction is applied
+		// via `disallowedTools` instead.
 		const agentKey = init.agent as string;
 		const agentDef = init.agents![agentKey];
-		expect(agentDef.tools).toEqual(PRESET_AGENT_TOOLS.reviewer);
-		expect(agentDef.tools).not.toContain('Write');
-		expect(agentDef.tools).not.toContain('Edit');
+		expect(agentDef.tools).toBeUndefined();
+		expect(agentDef.disallowedTools).toContain('Write');
+		expect(agentDef.disallowedTools).toContain('Edit');
 	});
 
-	it('qa init uses agents pattern with restricted tools', () => {
+	it('qa init uses agents pattern, restricting tools via disallowedTools', () => {
 		const config = makeConfig(PRESET_AGENT_TOOLS.qa);
 		const init = createCustomAgentInit(config);
 
@@ -292,9 +294,9 @@ describe('createCustomAgentInit — sub-session features', () => {
 
 		const agentKey = init.agent as string;
 		const agentDef = init.agents![agentKey];
-		expect(agentDef.tools).toEqual(PRESET_AGENT_TOOLS.qa);
-		expect(agentDef.tools).not.toContain('Write');
-		expect(agentDef.tools).not.toContain('Edit');
+		expect(agentDef.tools).toBeUndefined();
+		expect(agentDef.disallowedTools).toContain('Write');
+		expect(agentDef.disallowedTools).toContain('Edit');
 	});
 
 	it('coder init uses agents pattern with full tools', () => {
@@ -306,8 +308,9 @@ describe('createCustomAgentInit — sub-session features', () => {
 
 		const agentKey = init.agent as string;
 		const agentDef = init.agents![agentKey];
-		expect(agentDef.tools).toContain('Write');
-		expect(agentDef.tools).toContain('Edit');
+		expect(agentDef.tools).toBeUndefined();
+		expect(agentDef.disallowedTools).not.toContain('Write');
+		expect(agentDef.disallowedTools).not.toContain('Edit');
 	});
 
 	it('agent without tools uses simple preset path (no agent key)', () => {
