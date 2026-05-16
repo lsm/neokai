@@ -993,8 +993,8 @@ export default function ChatContainer({
 				data-testid="pending-agent-overlay"
 				aria-label={`${pendingAgent.agentName} chat (starting)`}
 			>
-				{/* Header — mirrors ChatHeader height (h-[65px]) for visual consistency */}
-				<div class="px-4 min-h-[65px] flex-shrink-0 bg-dark-900 flex items-center gap-3">
+				{/* Header — mirrors ChatHeader height (h-[52px]) for visual consistency */}
+				<div class="px-4 min-h-[52px] flex-shrink-0 bg-dark-900 flex items-center gap-3">
 					{onBack && (
 						<button
 							type="button"
@@ -1116,8 +1116,8 @@ export default function ChatContainer({
 			// `relative` is required so the absolutely-positioned footer skeleton is
 			// anchored to this container, matching the real ChatComposer positioning.
 			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
-				{/* Skeleton header — h-[65px] matches ChatHeader's fixed height exactly */}
-				<div class="flex items-center gap-3 px-4 h-[65px] flex-shrink-0">
+				{/* Skeleton header — h-[52px] matches ChatHeader's fixed height exactly */}
+				<div class="flex items-center gap-3 px-4 h-[52px] flex-shrink-0">
 					<div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
 					<div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
 				</div>

@@ -51,7 +51,7 @@ export function RightPanelToggle() {
 			title={rightPanelOpen ? 'Hide right panel' : 'Show right panel'}
 			onClick={handleToggle}
 			class={cn(
-				'absolute right-3 top-4 z-40 hidden bg-dark-900/80 backdrop-blur lg:inline-flex',
+				'absolute right-3 top-2 z-40 hidden bg-dark-900/80 backdrop-blur lg:inline-flex',
 				rightPanelOpen && 'bg-white/10 text-gray-100 hover:bg-white/10'
 			)}
 		>

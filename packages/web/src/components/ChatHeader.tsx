@@ -177,7 +177,7 @@ export function ChatHeader({
 	};
 
 	return (
-		<div class="relative z-10 flex h-[65px] flex-shrink-0 items-center bg-dark-900 px-4 lg:pr-14">
+		<div class="relative z-10 flex h-[52px] flex-shrink-0 items-center bg-dark-900 px-4 lg:pr-14">
 			<div class="flex-1 min-w-0 flex items-center gap-3">
 				{onBack ? (
 					<button
