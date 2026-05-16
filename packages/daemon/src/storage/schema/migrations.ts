@@ -4999,6 +4999,18 @@ function runMigration65(db: BunDatabase): void {
  *   created_at  - ISO 8601 timestamp (default: current UTC time)
  */
 export function runMigration66(db: BunDatabase): void {
+	// Skip the entire migration if Neo support has already been removed by M131
+	// (or the table was created fresh at the M131 tip without 'neo' in the CHECK).
+	// Re-running the legacy probe-and-rebuild here would rebuild `sessions` with a
+	// stale CHECK that rejects post-M66 types like 'space_chat', crashing startup
+	// on any DB created or upgraded under the M131 schema.
+	if (tableExists(db, 'sessions')) {
+		const sessionsSql = tableCreateSql(db, 'sessions');
+		if (sessionsSql && !sessionsSql.includes("'neo'")) {
+			return;
+		}
+	}
+
 	// --- Part 1: Expand sessions.type CHECK constraint to include 'neo' ---
 	if (tableExists(db, 'sessions')) {
 		try {

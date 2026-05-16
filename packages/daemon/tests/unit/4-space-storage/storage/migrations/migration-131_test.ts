@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { runMigration131 } from '../../../../../src/storage/schema/index.ts';
+import { runMigration66, runMigration131 } from '../../../../../src/storage/schema/index.ts';
 
 let db: Database;
 
@@ -147,5 +147,57 @@ describe('Migration 131: remove global Neo schema surface', () => {
 				 VALUES (?, ?, ?, ?, ?, ?)`
 			).run('msg-new-neo', 'session-1', 'user', '{}', '2024-01-02', 'neo');
 		}).toThrow();
+	});
+
+	test('runMigration66 is a no-op when sessions CHECK already lacks neo (post-M131 / fresh tip)', () => {
+		// Reproduces the CI failure on daemon restart: after M131 has rebuilt the
+		// sessions table without 'neo' (and rows for newer types like 'space_chat'
+		// exist), re-running the legacy M66 probe-and-rebuild would copy those rows
+		// into a stale CHECK that does not include 'space_chat' and crash startup.
+		db.exec(`
+			CREATE TABLE sessions (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				workspace_path TEXT,
+				created_at TEXT NOT NULL,
+				last_active_at TEXT NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+				config TEXT NOT NULL,
+				metadata TEXT NOT NULL,
+				is_worktree INTEGER DEFAULT 0,
+				worktree_path TEXT,
+				main_repo_path TEXT,
+				worktree_branch TEXT,
+				git_branch TEXT,
+				sdk_session_id TEXT,
+				sdk_origin_path TEXT,
+				available_commands TEXT,
+				processing_state TEXT,
+				archived_at TEXT,
+				parent_id TEXT,
+				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'space_chat', 'space_task_agent')),
+				session_context TEXT
+			)
+		`);
+		db.prepare(
+			`INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		).run('space-chat-1', 'Chat', '2024-01-01', '2024-01-01', 'active', '{}', '{}', 'space_chat');
+
+		expect(() => runMigration66(db)).not.toThrow();
+
+		const sql = tableSql('sessions');
+		expect(sql).not.toContain("'neo'");
+		expect(sql).toContain("'space_chat'");
+
+		const neoLogExists = db
+			.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'neo_activity_log'`)
+			.get();
+		expect(neoLogExists).toBeNull();
+
+		const row = db.prepare(`SELECT type FROM sessions WHERE id = ?`).get('space-chat-1') as {
+			type: string;
+		};
+		expect(row.type).toBe('space_chat');
 	});
 });
