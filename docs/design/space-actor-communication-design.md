@@ -41,7 +41,7 @@ Current behavior must keep working:
 
 | Current feature | v1 generic mapping |
 | --- | --- |
-| Space Agent / default space chat agent | `coordinator` actor with `@coordinator` handle |
+| Space Agent / default space chat agent | `agent` actor with `coordinator` role and `@coordinator` handle |
 | Human Space chat / ad-hoc session | `session` actor with `@session:<id>` address |
 | New persistent role agents | `agent` actor with handle and optional roles |
 | Workflow node agent / coder / reviewer | `worker` actor, scoped by `workflowRunId` + `nodeId` + `agentName` |
@@ -70,7 +70,7 @@ Design data shapes so those can be added later through adapters.
 Actor = addressable identity.
 
 ```ts
-type ActorKind = 'human' | 'coordinator' | 'session' | 'agent' | 'worker' | 'system';
+type ActorKind = 'human' | 'session' | 'agent' | 'worker' | 'system';
 
 type ActorRef = {
 	actorId: string;
@@ -84,6 +84,8 @@ type ActorRef = {
 
 Notes:
 
+- `agent` covers persistent non-human Space actors. Coordinator is an agent role/handle, not a separate
+  kind: `{ kind: 'agent', handle: '@coordinator', roles: ['coordinator'] }`.
 - `archived`: no new routing; stays visible in history.
 - `deleted`: soft-delete for privacy/admin removal; no routing/lookup/autocomplete; history keeps actor
   ID with redacted display metadata.
