@@ -157,23 +157,37 @@ type MessageKind =
 	| 'approval_result'
 	| 'system_event';
 
+type MessageAttachment = {
+	id?: string;
+	type: 'image' | 'file' | 'url';
+	mimeType?: string;
+	name?: string;
+	url?: string;
+	storageKey?: string;
+};
+
 type MessageRecord = {
 	messageId: string;
 	spaceId: string;
 	senderActorId: string;
-	targets: string[]; // raw target strings
+	targets: string[]; // raw target strings after wrapper translation
 	body: string;
 	kind: MessageKind;
 	context: MessageContext;
 	conversationId?: string;
 	replyToMessageId?: string;
+	attachments?: MessageAttachment[];
 	data?: Record<string, unknown>; // structured gate/vote/approval payload
+	idempotencyKey?: string;
 	createdAt: number;
 };
 ```
 
 `data` is required for compatibility with current `node-agent send_message({ data })`: gated channel
-payloads are merged into gate state today and must keep working after cutover.
+payloads are merged into gate state today and must keep working after cutover. `attachments` preserves
+current human task messaging images/files instead of forcing a side channel. `idempotencyKey` is
+persisted on the message and checked per `(spaceId, senderActorId, idempotencyKey)` before insert so
+retry/restart dedupe and pending-message duplicate suppression survive migration.
 
 ### Delivery
 
@@ -210,14 +224,18 @@ Keep resolver deterministic:
 
 1. Parse target string.
 2. Apply current Space/domain context.
-3. Resolve exact `@handle` among active actors.
+3. Resolve exact `@handle` among routable actors: `active` delivers immediately; `inactive` can create
+   queued delivery if activation/retry policy exists; `archived`/`deleted` do not route.
 4. Resolve `@role:<role>` using role binding.
 5. Resolve `@session:<id>` to session actor if session is user-facing/ad-hoc.
 6. Resolve `@worker:<node>` using `workflowRunId` from context.
 7. Resolve `@worker:<run>/<node>` if sender can access that run.
 8. Resolve optional `#<name>` channel/topic if enabled.
-9. If no target exists, use context fallback (`@coordinator`, `@role:task-manager`, or triage channel).
-10. If fallback fails, create failed delivery and return explicit error.
+9. If caller omitted `target`, use context fallback (`@coordinator`, `@role:task-manager`, legacy
+   task-agent coordinator, or triage channel).
+10. If caller provided an explicit target and it does not resolve, return an error. Do not silently
+    fallback; typos and stale handles must not leak content to another actor.
+11. If fallback target cannot resolve, create failed delivery and return explicit error.
 
 Important seeding rule:
 
@@ -231,12 +249,14 @@ Important seeding rule:
 
 ```ts
 type SendMessageInput = {
-	target: string | string[];
+	/** Optional only for context-fallback paths; explicit callers should pass a target. */
+	target?: string | string[];
 	body: string;
 	kind?: MessageKind;
 	context?: Partial<MessageContext>;
 	conversationId?: string;
 	replyToMessageId?: string;
+	attachments?: MessageAttachment[];
 	data?: Record<string, unknown>;
 	idempotencyKey?: string;
 };
@@ -256,7 +276,7 @@ Minimal set:
 - `resolve_address`
 - `list_actors`
 - `read_messages` / `read_conversation` if UI/agent needs history
-- `mark_handled` for delivery/read/handled state
+- Defer `mark_handled` until delivery records grow read/handled timestamps; v1 keeps delivery state to queue/delivery outcomes.
 
 Do not add a full conversation management API until product needs it.
 
@@ -267,8 +287,10 @@ Do not add a full conversation management API until product needs it.
 Maps current workflow messaging into `send_message`:
 
 ```ts
+const translatedTarget = translateLegacyNodeTarget(target, { workflowRunId, nodeId });
+
 send_message({
-	target,
+	target: translatedTarget,
 	body: message,
 	kind: messageKind ?? 'chat',
 	data,
@@ -283,6 +305,15 @@ Preserve:
 - queued delivery for inactive target sessions
 - activation hooks
 - broadcast / node-name / agent-name resolution where supported today
+
+Legacy node targets must be translated before calling generic `send_message`:
+
+| Legacy target | Generic target |
+| --- | --- |
+| `'*'` | expand to topology-permitted `@worker:<run>/<node>` targets before send |
+| bare agent name | matching `@worker:<run>/<agentName>` or configured worker alias |
+| bare node name | `@worker:<run>/<nodeName>` |
+| already generic `@...` / `#...` | pass through |
 
 ### `space-agent-tools.send_message_to_task`
 
@@ -397,22 +428,42 @@ into LLM context.
    - Minimal types, parser, resolver/router/storage interfaces.
 
 2. **Add Space actor registry adapter**
+   - Depends on task 1.
    - Seed Coordinator, Human, Session, Worker, System actors using current data.
 
 3. **Implement Space resolver and delivery facade**
+   - Depends on tasks 1 and 2.
    - Preserve current workflow routing and pending delivery semantics.
 
 4. **Wrap existing MCP/RPC tools**
+   - Depends on task 3.
    - `node-agent send_message`, `send_message_to_task`, human task message RPC.
 
 5. **Add long-term agent inbox / DM activation**
+   - Depends on task 4.
    - Enables agent ↔ agent and session ↔ agent messaging.
 
 6. **Refactor Space MCP attachment by actor/session role**
+   - Depends on task 4.
    - Replace broad `context.spaceId` sweeps and skip guards with explicit policy.
 
 7. **Add UI projections**
+   - Depends on tasks 3 and 4.
    - Actor labels, target resolution badges, delivery state, task timeline projection.
+
+Dependency graph:
+
+```mermaid
+flowchart TD
+	T1[1 contracts + parser] --> T2[2 Space actor registry]
+	T1 --> T3[3 resolver + delivery]
+	T2 --> T3
+	T3 --> T4[4 wrappers]
+	T4 --> T5[5 long-term inbox]
+	T4 --> T6[6 MCP attachment policy]
+	T3 --> T7[7 UI projections]
+	T4 --> T7
+```
 
 ## Updates to draft tasks
 
