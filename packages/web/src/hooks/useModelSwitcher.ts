@@ -125,12 +125,14 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			family = 'openrouter';
 		}
 		const contextWindow = m.contextWindow ?? m.context_window;
-		// Provider precedence: backend-supplied provider wins. If missing, infer
-		// from family/id rather than blanket-defaulting to 'anthropic', which
-		// would lump GLM/Kimi/etc. models under the Anthropic group whenever the
-		// backend (or a buggy intermediate) drops the provider field.
+		// Provider precedence: backend-supplied provider wins. If missing, prefer
+		// ID-based inference (mirrors backend `inferProviderForModel` rules so
+		// edge cases like `openai/gpt-*`, `gpt-oss:*`, `kimi-*:latest`, and
+		// `claude-*/preview` route correctly) before falling back to the
+		// family map and finally anthropic. Without this, dropping the
+		// provider field would lump GLM/Kimi/etc. models under Anthropic.
 		const inferredProvider =
-			m.provider || PROVIDER_FROM_FAMILY[family] || inferProviderFromModelId(mid) || 'anthropic';
+			m.provider || inferProviderFromModelId(mid) || PROVIDER_FROM_FAMILY[family] || 'anthropic';
 		return {
 			id: m.id,
 			name: m.display_name,
@@ -172,15 +174,39 @@ const PROVIDER_FROM_FAMILY: Record<string, string> = {
  * tag. The backend is the source of truth — this exists so a missing or
  * stale provider field never makes a non-Anthropic model appear under the
  * Anthropic group in the picker.
+ *
+ * Rules mirror the daemon's `inferProviderForModel` (registry.ts) so the
+ * frontend fallback never disagrees with backend routing:
+ *   - colon-tagged IDs are Ollama (or Ollama Cloud when `:cloud` suffix or
+ *     `:NNNb` size > 99B), even for `kimi-*`/`moonshot-*`/`gpt-oss:*`
+ *     prefixes that otherwise map to other providers
+ *   - canonical `claude-*` always stays anthropic, including slash-suffixed
+ *     variants like `claude-sonnet-4.6/preview`
+ *   - `openai/gpt-*` and other `provider/model` refs route to openrouter
  */
 export function inferProviderFromModelId(modelId: string): string | undefined {
 	const id = modelId.toLowerCase();
+
+	// Anthropic claims canonical claude-* IDs — including slash-suffixed variants
+	if (id.startsWith('claude-')) return 'anthropic';
+
+	// Colon-tagged IDs are Ollama-family. Decide cloud vs local first so
+	// `gpt-oss:120b-cloud`, `qwen3:480b`, etc. route correctly.
+	if (id.includes(':')) {
+		if (id === 'ollama-cloud' || id.endsWith(':cloud')) return 'ollama-cloud';
+		if (/^[\w.-]+:[1-9]\d{2,}b$/i.test(id)) return 'ollama-cloud';
+		if (id.startsWith('gpt-oss:')) return id.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
+		return 'ollama';
+	}
+
 	if (id.startsWith('glm-') || id === 'glm') return 'glm';
 	if (id.startsWith('moonshot-') || id.startsWith('kimi-') || id === 'kimi') return 'kimi';
 	if (id.startsWith('minimax-')) return 'minimax';
+	if (id === 'ollama') return 'ollama';
 	if (id === 'openrouter/auto') return 'openrouter';
+	// Any other `provider/model` slash ref (e.g. `openai/gpt-5.4`) is OpenRouter
+	if (id.includes('/')) return 'openrouter';
 	if (id.startsWith('gpt-')) return 'anthropic-codex';
-	if (id.includes('/') && !id.startsWith('claude-')) return 'openrouter';
 	return undefined;
 }
 

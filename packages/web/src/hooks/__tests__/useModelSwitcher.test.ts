@@ -1103,11 +1103,45 @@ describe('mapRawModelsToModelInfos', () => {
 	it('infers kimi/minimax providers when backend omits the provider field', () => {
 		const result = mapRawModelsToModelInfos([
 			{ id: 'kimi-k2', display_name: 'Kimi', description: '' },
-			{ id: 'minimax-m2', display_name: 'MiniMax', description: '' },
+			{ id: 'MiniMax-M2.5', display_name: 'MiniMax', description: '' },
 		]);
 		const byId = Object.fromEntries(result.map((m) => [m.id, m.provider]));
 		expect(byId['kimi-k2']).toBe('kimi');
-		expect(byId['minimax-m2']).toBe('minimax');
+		expect(byId['MiniMax-M2.5']).toBe('minimax');
+	});
+
+	// Regression for review feedback on PR #1925: the ID-inference fallback
+	// must mirror the daemon's `inferProviderForModel` so frontend grouping
+	// never disagrees with backend routing.
+	it('routes openai/gpt-* refs to openrouter, not anthropic-codex', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'openai/gpt-5.4', display_name: 'GPT-5.4 (OR)', description: '' },
+		]);
+		expect(result[0].provider).toBe('openrouter');
+	});
+
+	it('routes gpt-oss:* (Ollama) to ollama, not anthropic-codex', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'gpt-oss:20b', display_name: 'gpt-oss 20B', description: '' },
+			{ id: 'gpt-oss:120b-cloud', display_name: 'gpt-oss 120B cloud', description: '' },
+		]);
+		const byId = Object.fromEntries(result.map((m) => [m.id, m.provider]));
+		expect(byId['gpt-oss:20b']).toBe('ollama');
+		expect(byId['gpt-oss:120b-cloud']).toBe('ollama-cloud');
+	});
+
+	it('routes colon-tagged kimi/moonshot IDs to ollama, not kimi', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'kimi-k2:latest', display_name: 'Kimi K2 local', description: '' },
+		]);
+		expect(result[0].provider).toBe('ollama');
+	});
+
+	it('keeps slash-suffixed claude IDs under anthropic', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-sonnet-4.6/preview', display_name: 'Sonnet preview', description: '' },
+		]);
+		expect(result[0].provider).toBe('anthropic');
 	});
 
 	it('preserves GPT-5.5 context window metadata from models.list', () => {

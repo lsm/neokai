@@ -305,7 +305,7 @@ describe('AnthropicProvider', () => {
 					displayName: 'Haiku',
 					description: 'Haiku 4.5 · ...',
 				},
-				{ value: 'minimax-m2', displayName: 'MiniMax', description: 'mm · ...' },
+				{ value: 'MiniMax-M2.5', displayName: 'MiniMax', description: 'mm · ...' },
 			];
 
 			const converted = provider.convertSdkModels(sdkModels);
@@ -313,7 +313,7 @@ describe('AnthropicProvider', () => {
 
 			expect(ids).toContain('opus');
 			expect(ids).toContain('claude-haiku-4-5-20251001');
-			expect(ids).not.toContain('minimax-m2');
+			expect(ids).not.toContain('MiniMax-M2.5');
 		});
 	});
 });

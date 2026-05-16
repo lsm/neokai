@@ -238,7 +238,6 @@ export class AnthropicProvider implements Provider {
 		// override (e.g. left over from a GLM session) can cause foreign model
 		// IDs to appear here. Tagging them as `provider: 'anthropic'` would make
 		// GLM/other-provider models show up under the Anthropic group in the UI.
-		// See: https://… (root cause for task: "GLM models shown under Anthropic")
 		sdkModels = sdkModels.filter((m) => isAnthropicSdkModelId(m.value));
 
 		// Track which model families we've seen with canonical IDs
