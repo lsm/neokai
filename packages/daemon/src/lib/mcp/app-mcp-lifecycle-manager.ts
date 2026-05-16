@@ -77,7 +77,7 @@ export class AppMcpLifecycleManager {
 	 * pure {@link resolveMcpServers} function.
 	 *
 	 * This is the canonical entry point for all session-spawn paths (space ad-hoc,
-	 * `space_task_agent`node-agent). Legacy variant
+	 * node-agent). Legacy variant
 	 * ({@link getEnabledMcpConfigs}) remains for backward compatibility with
 	 * callers that don't yet have a Session object.
 	 */
