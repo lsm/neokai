@@ -16,6 +16,7 @@ import {
 	getCustomRenderer,
 	shouldExpandByDefault,
 } from './tool-utils.ts';
+import { isFileReadOutput, isFileEditOutput, isFileWriteOutput } from './sdk-tool-types.ts';
 import { cn } from '../../../lib/utils.ts';
 import { RunningBorder } from '../RunningBorder.tsx';
 import { connectionManager } from '../../../lib/connection-manager.ts';
@@ -33,6 +34,26 @@ function stripLineNumbers(content: string): string {
 			// Match pattern: optional spaces, digits, →, then content
 			const match = line.match(/^\s*\d+→(.*)$/);
 			return match ? match[1] : line;
+		})
+		.join('\n');
+}
+
+/**
+ * Build a unified diff string from a structured patch for display fallback
+ */
+function structuredPatchToDiff(
+	patch: {
+		oldStart: number;
+		oldLines: number;
+		newStart: number;
+		newLines: number;
+		lines: string[];
+	}[]
+): string {
+	return patch
+		.map((hunk) => {
+			const header = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+			return [header, ...hunk.lines].join('\n');
 		})
 		.join('\n');
 }
@@ -178,7 +199,14 @@ export function ToolResultCard({
 	// Calculate line counts for Read, Write, Edit tools
 	const getLineCountDisplay = () => {
 		if (toolName === 'Read') {
-			// Count lines in output
+			if (isFileReadOutput(output) && output.type === 'text') {
+				return (
+					<span class="text-xs text-gray-600 dark:text-gray-400 font-mono">
+						{output.file.numLines}
+					</span>
+				);
+			}
+			// Fallback for legacy string/object output
 			const content =
 				typeof output === 'string'
 					? output
@@ -282,53 +310,150 @@ export function ToolResultCard({
 			{/* Expanded content - input and output details */}
 			{isExpanded && (
 				<div class={cn('p-3 border-t bg-white dark:bg-gray-900 space-y-3', colors.border)}>
+					{/* Error display takes priority when tool failed */}
+					{isError && output !== undefined && output !== null && (
+						<div>
+							<div class="text-xs font-semibold text-red-600 dark:text-red-400 mb-2">
+								Error
+								{inputRecord?.file_path && (
+									<span class="font-normal text-gray-500 dark:text-gray-400 ml-1">
+										— {String(inputRecord.file_path)}
+									</span>
+								)}
+							</div>
+							<pre
+								class={cn(
+									'text-xs p-3 rounded overflow-x-auto border',
+									'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
+								)}
+							>
+								{getOutputDisplayText(output)}
+							</pre>
+						</div>
+					)}
+
 					{/* Custom renderer takes priority */}
 					{customRenderer ? (
 						customRenderer({ toolName, input, output, isError, variant })
 					) : /* Special handling for Edit tool - show diff view */
-					toolName === 'Edit' && inputRecord?.old_string && inputRecord?.new_string ? (
-						<DiffViewer
-							oldText={inputRecord.old_string as string}
-							newText={inputRecord.new_string as string}
-							filePath={inputRecord.file_path as string | undefined}
-						/>
-					) : /* Special handling for Read tool - show syntax-highlighted code */
-					toolName === 'Read' &&
-						output &&
-						(typeof output === 'string' ||
-							(typeof output === 'object' &&
-								'content' in output &&
-								output.content &&
-								typeof (output as Record<string, unknown>).content === 'string')) ? (
-						<CodeViewer
-							code={stripLineNumbers(
-								typeof output === 'string'
-									? output
-									: ((output as Record<string, unknown>).content as string)
-							)}
-							filePath={inputRecord?.file_path as string | undefined}
-							showLineNumbers={true}
-							showHeader={true}
-							maxHeight="none"
-						/>
-					) : /* Special handling for Write tool - show syntax-highlighted code */
-					toolName === 'Write' &&
-						inputRecord?.content &&
-						typeof inputRecord.content === 'string' ? (
-						<div>
-							{variant === 'detailed' && (
-								<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-									File Content:
-								</div>
-							)}
-							<CodeViewer
-								code={inputRecord.content as string}
+					toolName === 'Edit' && !isError ? (
+						isFileEditOutput(output) ? (
+							<div class="space-y-3">
+								<DiffViewer
+									oldText={output.oldString}
+									newText={output.newString}
+									filePath={output.filePath}
+								/>
+								{output.structuredPatch.length > 0 && variant === 'detailed' && (
+									<details>
+										<summary class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+											Structured patch
+										</summary>
+										<CodeViewer
+											code={structuredPatchToDiff(output.structuredPatch)}
+											filePath={output.filePath}
+											language="diff"
+											showLineNumbers={false}
+											showHeader={false}
+											maxHeight="none"
+										/>
+									</details>
+								)}
+								{output.gitDiff && (
+									<div class="text-xs text-gray-500 dark:text-gray-400">
+										Git: {output.gitDiff.additions} additions, {output.gitDiff.deletions} deletions
+									</div>
+								)}
+							</div>
+						) : inputRecord?.old_string && inputRecord?.new_string ? (
+							<DiffViewer
+								oldText={inputRecord.old_string as string}
+								newText={inputRecord.new_string as string}
 								filePath={inputRecord.file_path as string | undefined}
+							/>
+						) : null
+					) : /* Special handling for Read tool - show syntax-highlighted code */
+					toolName === 'Read' && !isError ? (
+						isFileReadOutput(output) ? (
+							output.type === 'text' ? (
+								<CodeViewer
+									code={stripLineNumbers(output.file.content)}
+									filePath={output.file.filePath}
+									showLineNumbers={true}
+									showHeader={true}
+									maxHeight="none"
+								/>
+							) : output.type === 'file_unchanged' ? (
+								<div class="text-xs text-gray-500 dark:text-gray-400 italic">
+									File unchanged: {output.file.filePath}
+								</div>
+							) : output.type === 'image' ? (
+								<img
+									src={`data:${output.file.type};base64,${output.file.base64}`}
+									alt="Read tool result"
+									class="max-w-full rounded border"
+								/>
+							) : (
+								<pre class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">
+									{JSON.stringify(output, null, 2)}
+								</pre>
+							)
+						) : output &&
+							(typeof output === 'string' ||
+								(typeof output === 'object' &&
+									'content' in output &&
+									output.content &&
+									typeof (output as Record<string, unknown>).content === 'string')) ? (
+							<CodeViewer
+								code={stripLineNumbers(
+									typeof output === 'string'
+										? output
+										: ((output as Record<string, unknown>).content as string)
+								)}
+								filePath={inputRecord?.file_path as string | undefined}
 								showLineNumbers={true}
 								showHeader={true}
 								maxHeight="none"
 							/>
-						</div>
+						) : null
+					) : /* Special handling for Write tool - show syntax-highlighted code */
+					toolName === 'Write' && !isError ? (
+						isFileWriteOutput(output) ? (
+							<div>
+								{variant === 'detailed' && (
+									<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+										{output.type === 'create' ? 'New File' : 'Updated File'}: {output.filePath}
+									</div>
+								)}
+								<CodeViewer
+									code={output.content}
+									filePath={output.filePath}
+									showLineNumbers={true}
+									showHeader={true}
+									maxHeight="none"
+								/>
+								{output.gitDiff && (
+									<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+										Git: {output.gitDiff.additions} additions, {output.gitDiff.deletions} deletions
+									</div>
+								)}
+							</div>
+						) : inputRecord?.content && typeof inputRecord.content === 'string' ? (
+							<div>
+								{variant === 'detailed' && (
+									<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+										File Content:
+									</div>
+								)}
+								<CodeViewer
+									code={inputRecord.content as string}
+									filePath={inputRecord.file_path as string | undefined}
+									showLineNumbers={true}
+									showHeader={true}
+									maxHeight="none"
+								/>
+							</div>
+						) : null
 					) : /* Special handling for Thinking tool - just show the content */
 					toolName === 'Thinking' ? (
 						<div>
@@ -376,12 +501,11 @@ export function ToolResultCard({
 							</div>
 
 							{/* Output/Result */}
-							{output !== undefined && output !== null && (
+							{!isError && output !== undefined && output !== null && (
 								<div>
 									<div class="flex items-center justify-between mb-2">
 										<div class="text-xs font-semibold text-gray-600 dark:text-gray-400">
 											Output:
-											{isError && <span class="ml-2 text-red-600 dark:text-red-400">(Error)</span>}
 										</div>
 										{messageUuid && sessionId && !isOutputRemoved && (
 											<button

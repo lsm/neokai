@@ -338,6 +338,15 @@ export class AgentSession
 	onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
 	/**
+	 * Self-heal callback for Space member sessions (ad-hoc worker sessions with
+	 * `context.spaceId`): invoked by `QueryRunner.start()` when it detects that
+	 * the `space-agent-tools` MCP server is absent before a turn starts (notably
+	 * after cache eviction / DB reload). Set by SpaceRuntimeService in
+	 * `attachSpaceToolsToMemberSession()`.
+	 */
+	onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+
+	/**
 	 * Unified per-scope MCP enablement repo — exposed on the context so the
 	 * QueryOptionsBuilder can resolve the session > space > registry
 	 * precedence for skill-wrapped MCP servers (MCP M6).
