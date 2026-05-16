@@ -840,6 +840,39 @@ describe('SpaceRuntimeService', () => {
 
 			await svc.stop();
 		});
+
+		test('sets onMissingMemberSpaceMcpServers self-heal callback on member sessions', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+			await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+			expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			expect(typeof (agent as unknown as AgentSession).onMissingMemberSpaceMcpServers).toBe(
+				'function'
+			);
+		});
+
+		test('onMissingMemberSpaceMcpServers self-heal callback re-attaches tools', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+			await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+			expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			expect(typeof (agent as unknown as AgentSession).onMissingMemberSpaceMcpServers).toBe(
+				'function'
+			);
+
+			await (agent as unknown as AgentSession).onMissingMemberSpaceMcpServers?.(
+				'worker-session-1',
+				['space-agent-tools']
+			);
+
+			// Self-heal should re-call attachSpaceToolsToMemberSession, which calls merge again
+			expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
+		});
 	});
 
 	// ─── internalEventBus session.created subscription regression (Task #137) ───────

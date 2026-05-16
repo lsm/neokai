@@ -809,6 +809,16 @@ export class SpaceRuntimeService {
 		// Merge rather than replace — other subsystems (e.g., room tools) may
 		// have already attached their own MCP servers on this session.
 		agentSession.mergeRuntimeMcpServers(additional);
+
+		// Wire self-heal callback so QueryRunner can recover if this session is
+		// evicted from cache and reloaded from DB (losing runtime-only MCP config).
+		agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
+			log.warn(
+				`Space member session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
+			);
+			await this.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
+		};
+
 		if (options.replayPendingMessages !== false) {
 			await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
 		}
