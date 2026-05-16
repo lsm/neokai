@@ -705,8 +705,37 @@ describe('QueryOptionsBuilder', () => {
 
 			const options = await builder.build();
 			expect(options.allowedTools).toEqual(
-				expect.arrayContaining(['space-agent-tools__*', 'db-query__*'])
+				expect.arrayContaining([
+					'space-agent-tools__*',
+					'mcp__space-agent-tools__*',
+					'db-query__*',
+					'mcp__db-query__*',
+				])
 			);
+		});
+
+		it('should auto-allow fully-qualified MCP wildcards for workflow node agents', async () => {
+			mockSession.id = 'space:space-1:task:task-1:exec:node-exec-1';
+			mockSession.context = { spaceId: 'space-1', taskId: 'task-1' };
+			mockSession.config.agent = 'coder';
+			mockSession.config.agents = {
+				coder: {
+					description: 'Coder',
+					prompt: 'Code things',
+					tools: ['Read', 'Bash'],
+				},
+			};
+			mockSession.config.allowedTools = ['Read', 'Bash'];
+			mockSession.config.mcpServers = {
+				'node-agent': { command: 'node-agent-cmd' },
+			};
+
+			const options = await builder.build();
+			expect(options.allowedTools).toEqual(
+				expect.arrayContaining(['Read', 'Bash', 'node-agent__*', 'mcp__node-agent__*'])
+			);
+			expect(options.agents?.coder?.tools).toBeUndefined();
+			expect(options.agents?.coder?.mcpServers).toEqual(expect.arrayContaining(['node-agent']));
 		});
 
 		it('should disable Claude Code preset system prompt for space chat sessions', async () => {
