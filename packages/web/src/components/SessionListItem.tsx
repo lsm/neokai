@@ -47,20 +47,12 @@ function StatusIndicator({ sessionId }: { sessionId: string }) {
 	return null;
 }
 
-function CodexArrowsIcon() {
+function WorktreeBranchIcon() {
 	return (
-		<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<svg class="w-4 h-4" fill="none" viewBox="0 0 15 15">
 			<path
-				stroke-linecap="square"
-				stroke-linejoin="miter"
-				stroke-width={2}
-				d="M5.5 17.5 18 5m0 0H9.5M18 5v8.5"
-			/>
-			<path
-				stroke-linecap="square"
-				stroke-linejoin="miter"
-				stroke-width={2}
-				d="M5.5 6.5 18 19m0 0H9.5M18 19v-8.5"
+				d="M2.5 4.5C1.39543 4.5 0.5 3.60457 0.5 2.5C0.5 1.39543 1.39543 0.5 2.5 0.5C3.60457 0.5 4.5 1.39543 4.5 2.5C4.5 3.60457 3.60457 4.5 2.5 4.5ZM2.5 4.5V10.5M4.5 12.5C4.5 13.6046 3.60457 14.5 2.5 14.5C1.39543 14.5 0.5 13.6046 0.5 12.5C0.5 11.3954 1.39543 10.5 2.5 10.5M4.5 12.5C4.5 11.3954 3.60457 10.5 2.5 10.5M4.5 12.5H9.5C11.1569 12.5 12.5 11.1569 12.5 9.5V7.5M12.5 7.5C11.3954 7.5 10.5 6.60457 10.5 5.5C10.5 4.39543 11.3954 3.5 12.5 3.5C13.6046 3.5 14.5 4.39543 14.5 5.5C14.5 6.60457 13.6046 7.5 12.5 7.5Z"
+				stroke="currentColor"
 			/>
 		</svg>
 	);
@@ -120,7 +112,7 @@ export default function SessionListItem({
 						class="text-gray-400 flex-shrink-0"
 						title={`Worktree: ${session.worktree.branch}`}
 					>
-						<CodexArrowsIcon />
+						<WorktreeBranchIcon />
 					</span>
 				)}
 				{session.status === 'archived' && (
