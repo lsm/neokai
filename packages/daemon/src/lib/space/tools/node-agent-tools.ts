@@ -1654,7 +1654,12 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			: []),
 	];
 
-	return createSdkMcpServer({ name: 'node-agent', tools });
+	// alwaysLoad: node-agent tools (send_message, list_peers, gates, …) are
+	// mandatory workflow infrastructure that the agent's task prompt references
+	// by name. Without this, the CLI defers them behind tool search whenever a
+	// session has tool search active, so they never enter the turn-1 prompt and
+	// the agent sees "No such tool available" for mcp__node-agent__* calls.
+	return createSdkMcpServer({ name: 'node-agent', tools, alwaysLoad: true });
 }
 
 export type NodeAgentMcpServer = ReturnType<typeof createNodeAgentMcpServer>;

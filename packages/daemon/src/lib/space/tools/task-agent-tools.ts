@@ -1345,7 +1345,10 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 		),
 	];
 
-	return createSdkMcpServer({ name: 'task-agent', tools });
+	// alwaysLoad: task-agent tools are mandatory workflow infrastructure the
+	// agent prompt references by name. Without this they are deferred behind
+	// tool search and never enter the turn-1 prompt. See node-agent-tools.ts.
+	return createSdkMcpServer({ name: 'task-agent', tools, alwaysLoad: true });
 }
 
 export type TaskAgentMcpServer = ReturnType<typeof createTaskAgentMcpServer>;
