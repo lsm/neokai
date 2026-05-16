@@ -815,6 +815,21 @@ describe('SpaceTaskPane — canvas toggle', () => {
 			const errEl = await findByTestId('edit-task-error');
 			expect(errEl.textContent).toContain('Server error');
 		});
+
+		it('closes edit modal when task becomes terminal', async () => {
+			mockTasks.value = [makeTask({ status: 'in_progress' })];
+			const { getByTestId, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-edit-button'));
+			expect(getByTestId('edit-task-modal-content')).toBeTruthy();
+
+			// Simulate task transitioning to done via another client
+			mockTasks.value = [makeTask({ status: 'done' })];
+
+			// Modal should be closed after the effect processes the status change
+			await waitFor(() => {
+				expect(queryByTestId('edit-task-modal-content')).toBeNull();
+			});
+		});
 	});
 	it('canvas node click matches by role (slot name), not by label — regression for Review node bug', () => {
 		// This test reproduces the bug where clicking a "Review" node opened the Task Agent

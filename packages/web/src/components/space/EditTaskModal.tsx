@@ -56,7 +56,9 @@ export function EditTaskModal({
 	}, [isOpen, initialTitle, initialDescription, initialPriority]);
 
 	const hasChanges =
-		title !== initialTitle || description !== initialDescription || priority !== initialPriority;
+		title.trim() !== initialTitle.trim() ||
+		description.trim() !== initialDescription.trim() ||
+		priority !== initialPriority;
 
 	const trimmedTitle = title.trim();
 	const canConfirm = hasChanges && trimmedTitle.length > 0 && !busy;

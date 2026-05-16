@@ -359,6 +359,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
 
+	// Close edit modal if the task becomes terminal while the modal is open
+	// (e.g. another client transitions the task to done/cancelled/archived).
+	useEffect(() => {
+		if (isTerminalTask && showEditTaskModal) {
+			setShowEditTaskModal(false);
+		}
+	}, [isTerminalTask]);
+
 	// Per-agent activity. Each member that's currently executing (not idle /
 	// completed / failed / interrupted) contributes its label to the active set.
 	// The thread feed keys the live rail off this set so that, in multi-session

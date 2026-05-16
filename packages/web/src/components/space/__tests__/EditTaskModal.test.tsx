@@ -113,6 +113,17 @@ describe('EditTaskModal', () => {
 		expect(confirm.disabled).toBe(true);
 	});
 
+	it('confirm is disabled when only whitespace changes are made (semantic no-op)', () => {
+		const { getByTestId } = renderModal();
+		// Add surrounding whitespace — after trim, value equals initial
+		fireEvent.input(getByTestId('edit-task-title'), { target: { value: '  My Task  ' } });
+		fireEvent.input(getByTestId('edit-task-description'), {
+			target: { value: '  Do the thing  ' },
+		});
+		const confirm = getByTestId('edit-task-confirm') as HTMLButtonElement;
+		expect(confirm.disabled).toBe(true);
+	});
+
 	it('confirm forwards trimmed title and description', () => {
 		const { getByTestId, onConfirm } = renderModal();
 		fireEvent.input(getByTestId('edit-task-title'), {
