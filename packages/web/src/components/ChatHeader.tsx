@@ -11,7 +11,9 @@
 
 import type { ChatMessage, Session, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
+import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { connectionState } from '../lib/state';
+import { cn } from '../lib/utils.ts';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
 import { MobileMenuButton } from './ui/MobileMenuButton';
@@ -59,6 +61,7 @@ export function ChatHeader({
 	onBack,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
+	const rightPanelOpen = rightPanelTargetSignal.value !== null;
 
 	const getHeaderActions = () => {
 		const actions: Array<
@@ -182,7 +185,12 @@ export function ChatHeader({
 	};
 
 	return (
-		<div class="relative z-10 flex h-[52px] flex-shrink-0 items-center bg-dark-900 px-4 lg:pr-14">
+		<div
+			class={cn(
+				'relative z-10 flex h-[52px] flex-shrink-0 items-center bg-dark-900 px-4',
+				!rightPanelOpen && 'lg:pr-14'
+			)}
+		>
 			<div class="flex-1 min-w-0 flex items-center gap-3">
 				{onBack ? (
 					<button
