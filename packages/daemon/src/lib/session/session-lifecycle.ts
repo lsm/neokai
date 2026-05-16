@@ -102,8 +102,8 @@ export class SessionLifecycle {
 
 		// Guard: when no workspace path is available (daemon started without --workspace and
 		// session provides no explicit workspacePath), skip git-support detection and worktree
-		// creation. This protects sessions that intentionally omit workspacePath
-		// (e.g., neo) from causing detectGitSupport(undefined) to crash.
+		// creation. This protects unbound sessions from causing
+		// detectGitSupport(undefined) to crash.
 		let gitSupport: Awaited<ReturnType<typeof this.worktreeManager.detectGitSupport>> | undefined;
 		let isGitRepo = false;
 		if (baseWorkspacePath !== undefined) {
@@ -552,7 +552,7 @@ export class SessionLifecycle {
 	// (which cascades to `sdk_messages`). Every other lifecycle event —
 	// task done, task cancelled, workflow end-node short-circuit, spawn
 	// rollback, duplicate-task reconciliation, `space.stop`, daemon
-	// shutdown/restart, Neo recovery — must preserve all persisted artifacts
+	// shutdown/restart, session recovery — must preserve all persisted artifacts
 	// and only interrupt the in-memory SDK subprocess (see
 	// `SessionManager.interruptInMemorySession` and `TaskAgentManager.cleanup`).
 	//

@@ -14,7 +14,7 @@
  * change.
  *
  * Each mutation emits `mcp.registry.changed` so any daemon-internal
- * subscribers (e.g. neo bootstrap) refresh, and relies on the
+ * subscribers refresh, and relies on the
  * `McpEnablementRepository` to `reactiveDb.notifyChange('mcp_enablement')`
  * which drives the `mcpEnablement.bySpace` LiveQuery.
  */

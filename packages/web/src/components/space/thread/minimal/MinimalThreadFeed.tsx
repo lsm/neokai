@@ -201,7 +201,7 @@ interface ActiveFeedTurn {
 interface MessageFeedTurn {
 	state: 'message';
 	id: string;
-	/** Human-readable sender label (e.g. "User", "Reviewer Agent", "Neo"). */
+	/** Human-readable sender label (e.g. "User", "Reviewer Agent"). */
 	fromLabel: string;
 	/** Recipient agent label — the session this row belongs to. */
 	toLabel: string;

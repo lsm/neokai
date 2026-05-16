@@ -545,7 +545,7 @@ export class SessionManager {
 	 * keeping the DB row and all `sdk_messages` intact.
 	 *
 	 * **UI-only invariant (Task #85):** every non-UI lifecycle event (task
-	 * done/cancelled, spawn rollback, workflow end, daemon shutdown, Neo
+	 * done/cancelled, spawn rollback, workflow end, daemon shutdown, session
 	 * recovery, etc.) must preserve session data and must only interrupt the
 	 * in-memory SDK subprocess via {@link interruptInMemorySession}. This
 	 * method is callable exclusively from the two UI archive RPC paths —
@@ -576,7 +576,7 @@ export class SessionManager {
 	 * `sessions` DB row.
 	 *
 	 * This is the primitive non-UI callers (TaskAgentManager cleanup,
-	 * spawn-rollback, space-runtime reconciliation, Neo recovery, ...) must
+	 * spawn-rollback, space-runtime reconciliation, session recovery, ...) must
 	 * use instead of the old `deleteSession`. The next `getSessionAsync()`
 	 * will hydrate a fresh `AgentSession` from the DB row.
 	 */

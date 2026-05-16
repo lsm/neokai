@@ -2970,7 +2970,7 @@ export class TaskAgentManager {
 	 *
 	 * Task #85: this is the only primitive non-UI code paths may use to stop
 	 * a task agent / sub-session. Task completion, cancellation, workflow end,
-	 * spawn rollback, daemon shutdown, and Neo recovery all route through here
+	 * spawn rollback, daemon shutdown, and session recovery all route through here
 	 * so that `rehydrate()` (or a subsequent UI visit) can restore the session.
 	 * Worktree/DB/jsonl removal happens only via
 	 * `SessionManager.archiveSessionResources` or

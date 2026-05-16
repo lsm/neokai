@@ -369,7 +369,7 @@ async function resolveTask(
 
 	// When a room context is present, confirm the task belongs to that room
 	// (prevent cross-room access via UUID). Without room context, UUID lookup
-	// is allowed for global sessions (e.g. neo, lobby).
+	// is allowed for global sessions (e.g. lobby).
 	if (roomId && (task as { roomId?: string }).roomId !== roomId) {
 		return null;
 	}
@@ -398,7 +398,7 @@ function resolveGoal(
 
 	// When a room context is present, confirm the goal belongs to that room
 	// (prevent cross-room access via UUID). Without room context, UUID lookup
-	// is allowed for global sessions (e.g. neo, lobby).
+	// is allowed for global sessions (e.g. lobby).
 	if (roomId && (goal as { roomId?: string }).roomId !== roomId) {
 		return null;
 	}

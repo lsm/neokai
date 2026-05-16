@@ -19,7 +19,7 @@ export interface SpaceTaskThreadMessageRow {
 	messageType: string;
 	content: string;
 	createdAt: number;
-	/** Message origin from the DB (human, neo, system). Used to classify sender in the thread UI. */
+	/** Message origin from the DB (human, system). Used to classify sender in the thread UI. */
 	origin?: string | null;
 	parentToolUseId?: string | null;
 	/**

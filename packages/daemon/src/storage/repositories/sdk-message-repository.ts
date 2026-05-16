@@ -114,7 +114,7 @@ export class SDKMessageRepository {
 				.get(sessionId) as { task_id: string | null; type: string | null } | undefined;
 			if (!row) return null;
 			// Only stamp task_id for sessions that are part of the Space task
-			// system. Other session types (lobby, neo, room-scoped, etc.) may
+			// system. Other session types (lobby, room-scoped, etc.) may
 			// carry a taskId in context from transient operations but their
 			// messages must not leak into task timelines.
 			const allowedTypes = ['space_task_agent', 'worker'];

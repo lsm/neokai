@@ -1,8 +1,7 @@
 /**
  * Task Repository
  *
- * Repository for Neo task CRUD operations.
- * Extracted from neo-db.ts for better organization.
+ * Repository for legacy Room task CRUD operations.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';

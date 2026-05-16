@@ -156,8 +156,6 @@ jobs:
           # - room-replan
           # - room-planner
           # - room-reviewer
-          # Neo agent tests disabled
-          # - neo
           - rpc-1
           - rpc-2
           - rpc-3
@@ -210,12 +208,6 @@ jobs:
           - module: mcp
             test_path: tests/online/mcp
             mock_sdk: true
-          # Neo agent tests disabled
-          # - module: neo
-          #   test_path: tests/online/neo
-          #   mock_sdk: true
-          #   enable_neo_agent: true
-          #   timeout: 10
           # - module: providers-anthropic-to-codex-bridge
           #   test_path: tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
           # - module: providers-anthropic-copilot
@@ -354,7 +346,6 @@ jobs:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
           NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
-          NEOKAI_ENABLE_NEO_AGENT: ${{ matrix.enable_neo_agent == true && '1' || '' }}
           NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
@@ -935,9 +926,7 @@ jobs:
           GLM_API_KEY: ""
           DEFAULT_MODEL: sonnet
           # Signal that the LLM will not respond in this environment.
-          # neo.isProvisioned checks this flag so AI-dependent tests are skipped
           # rather than timing out waiting for a response from a dummy API key.
-          NEOKAI_NEO_LLM_AVAILABLE: "0"
           CI: true
 
       - name: Upload test results

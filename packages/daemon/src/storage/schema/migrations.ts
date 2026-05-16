@@ -8222,7 +8222,7 @@ export function runMigration122(db: BunDatabase): void {
 		// `session_context.taskId`. Both the Task Agent and node-agent sub-sessions
 		// stamp this at creation, so a JOIN on `sessions` covers every Space
 		// session that ever produced messages. Sessions without a task context
-		// (worker sessions outside the Space system, lobby/neo, etc.) get NULL —
+		// (worker sessions outside the Space system, lobby, etc.) get NULL —
 		// the column is nullable on purpose.
 		//
 		// Runs whenever rows with `task_id IS NULL` remain for an allowed session

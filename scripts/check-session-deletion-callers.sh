@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Guard: Task #85 invariant.
 #
-# Only the UI RPC paths (and the Neo `delete_room` action tool, which is itself
-# UI-initiated via a human approval) may call:
+# Only the UI RPC paths may call:
 #   - SessionManager.deleteSessionResources / SessionLifecycle.deleteResources
 #   - SessionManager.archiveSessionResources / SessionLifecycle.archiveResources
 #   - SessionRepository.deleteSession / Database.deleteSession (raw DB deletes
 #     that bypass the lifecycle primitive entirely)
-# plus the `ui_session_delete` / `ui_room_delete` / `ui_neo_room_delete` /
-# `ui_session_archive` / `ui_task_archive` trigger identifiers that document
+# plus the `ui_session_delete` / `ui_room_delete` / `ui_session_archive` /
+# `ui_task_archive` trigger identifiers that document
 # the caller.
 #
 # Any other file reaching for these names is almost certainly reintroducing
@@ -42,9 +41,6 @@ ALLOWLIST=(
     "packages/daemon/src/lib/rpc-handlers/session-handlers.ts"
     "packages/daemon/src/lib/rpc-handlers/room-handlers.ts"
 
-    # Neo `delete_room` tool (UI-initiated via human approval) + its wiring.
-    "packages/daemon/src/lib/neo/tools/neo-action-tools.ts"
-    "packages/daemon/src/lib/rpc-handlers/index.ts"
 
     # Task archive pipeline (UI-initiated via task.archive event cascade)
     "packages/daemon/src/lib/space/runtime/task-agent-manager.ts"
@@ -58,7 +54,7 @@ ALLOWLIST=(
 #   SessionRepository.deleteSession callers that bypass the lifecycle.
 # - `db\.deleteSession\b` catches Database.deleteSession shims.
 # - `\bsessions\.deleteSession\b` catches the db.sessions.deleteSession path.
-PATTERN='archiveSessionResources|deleteSessionResources|archiveResources|deleteResources|ui_session_archive|ui_task_archive|ui_session_delete|ui_room_delete|ui_neo_room_delete|(sessionRepo|sessionRepository)\.deleteSession\b|\bdb\.deleteSession\b|\bsessions\.deleteSession\b'
+PATTERN='archiveSessionResources|deleteSessionResources|archiveResources|deleteResources|ui_session_archive|ui_task_archive|ui_session_delete|ui_room_delete|(sessionRepo|sessionRepository)\.deleteSession\b|\bdb\.deleteSession\b|\bsessions\.deleteSession\b'
 
 # grep -r the `packages` tree, excluding tests, docs, and node_modules.
 RAW=$(grep -RnE "${PATTERN}" packages \
