@@ -727,6 +727,10 @@ export class SpaceRuntimeService {
 
 		// Skip sessions that other owners already manage.
 		if (session.type === 'space_chat') return;
+		// Legacy task-agent sessions (no longer created) must not receive the
+		// generic member-server — they lack myAgentName and would misattribute
+		// outbound messages as "space-agent".
+		if (session.type === 'space_task_agent') return;
 
 		// Skip workflow node-agent sub-sessions (session ID contains `:task:…:exec:`).
 		// These are owned by TaskAgentManager, which builds a SUB-SESSION-SPECIFIC
