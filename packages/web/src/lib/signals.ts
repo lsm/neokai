@@ -63,7 +63,7 @@ export interface SpaceOverlayTaskContext {
 
 export const spaceOverlayTaskContextSignal = signal<SpaceOverlayTaskContext | null>(null);
 // Pending-agent overlay routing — set when the user opens a not-started peer
-// from the task agent dropdown. The overlay renders a "Starting…" composer
+// from the node-agent target picker. The overlay renders a "Starting…" composer
 // against the agent name; on first send it invokes
 // `space.task.activateNodeAgent` to lazily spawn the workflow node, and
 // hydrates to a normal chat overlay as soon as the live session appears in

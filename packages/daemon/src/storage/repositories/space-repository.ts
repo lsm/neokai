@@ -26,8 +26,8 @@ export class SpaceRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, max_concurrent_tasks, config, task_agent_config, setting_sources, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, max_concurrent_tasks, config, setting_sources, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -45,7 +45,6 @@ export class SpaceRepository {
 			params.autonomyLevel ?? 1,
 			params.maxConcurrentTasks ?? params.config?.maxConcurrentTasks ?? 1,
 			params.config ? JSON.stringify(params.config) : null,
-			null,
 			params.settingSources != null ? JSON.stringify(params.settingSources) : null,
 			now,
 			now

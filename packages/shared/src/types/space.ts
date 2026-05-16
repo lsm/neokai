@@ -296,7 +296,7 @@ export interface TaskSchedule {
 }
 
 /**
- * Runtime activity state for a live task-agent member.
+ * Runtime activity state for a live task activity member.
  * This is more user-facing than raw session processing states.
  */
 export type SpaceTaskActivityState =
