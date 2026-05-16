@@ -277,6 +277,8 @@ type SpaceMessage = {
 	mentions: SpaceMention[];
 	attachments: SpaceAttachment[];
 	artifacts: SpaceArtifactRef[];
+	/** Structured machine payload used by workflow gates, votes, approvals, and system events. */
+	data?: Record<string, unknown>;
 
 	correlationId?: string;
 	idempotencyKey?: string;
@@ -665,12 +667,17 @@ type SendMessageInput = {
 	messageKind?: SpaceMessage['messageKind'];
 	attachments?: SpaceAttachment[];
 	artifacts?: SpaceArtifactRef[];
+	/** Structured payload preserved for workflow gates, votes, approvals, and system events. */
+	data?: Record<string, unknown>;
 	idempotencyKey?: string;
 	replyToMessageId?: string;
 	visibility?: SpaceMessage['visibility'];
 };
 ```
 
+`data` is not user-visible prose. It is a first-class structured payload attached to the message and
+available to routing adapters. `node-agent-tools.send_message` maps existing `data` directly into this
+field so gated channel writes can still merge payloads into gate state and unblock downstream nodes.
 Returns:
 
 ```ts
@@ -767,7 +774,10 @@ Seed actors from existing data:
 
 - Human actors from Space membership/users.
 - Coordinator from current Space Agent / `space_chat` default session.
-- Space Session actors from sessions with `context.spaceId` and non-workflow role.
+- Space Session actors only from ad-hoc human/member sessions with `context.spaceId` and an allowed
+  user-facing session type. Exclude `space_chat`, `space_task_agent`, and workflow sub-sessions; seed
+  Coordinator and Legacy Task Agent actors through their dedicated migration paths so runtime sessions
+  are not misclassified as user-facing Space Session actors.
 - Workflow Worker actors from active and declared workflow node executions, including inactive workers
   referenced by `pending_agent_messages`, so queued/retryable deliveries keep resolvable recipients.
 - System actors for runtime subsystems.
