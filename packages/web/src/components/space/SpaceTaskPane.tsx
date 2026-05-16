@@ -168,7 +168,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		? (spaceStore.taskActivity.value.get(taskId) ?? [])
 		: [];
 
-	const [threadSessionId, setThreadSessionId] = useState<string | null>(null);
 	const [ensuringThread, setEnsuringThread] = useState(false);
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
@@ -228,15 +227,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		};
 	}, [taskId]);
 
-	useEffect(() => {
-		if (!task) {
-			setThreadSessionId(null);
-			return;
-		}
-		// Thread session ID is now resolved from node agent activity members.
-		setThreadSessionId(null);
-	}, [task?.id]);
-
 	// Resolve runId/workflowId here (before the early returns) so the gate-status
 	// hook is always called — React's Rules of Hooks require a stable call order.
 	const _runId = task?.workflowRunId ?? null;
@@ -264,7 +254,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const runtimeSpaceId = spaceId ?? task.spaceId;
 	const navigationSpaceId = spaceId ?? currentSpaceIdSignal.value ?? task.spaceId;
-	const agentSessionId = threadSessionId;
+	// Resolve the primary agent session from activity members (node-agent sessions).
+	// Previously derived from threadSessionId (task-agent session), which no longer exists.
+	const agentSessionId =
+		activityMembers.find((m) => m.kind === 'node_agent' && m.sessionId)?.sessionId ?? null;
 
 	// Resolve workflowId from the active run for canvas mode
 	const workflowRun = task.workflowRunId
@@ -420,7 +413,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		return () => resizeObserver.disconnect();
 	}, [showInlineComposer, taskComposerElement, threadSendError]);
 
-	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
+	const canSendThreadMessage =
+		!isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
 	const canShowArtifactsTab = !!task.workflowRunId;
 	const activitySummary = STATUS_LABELS[task.status];
