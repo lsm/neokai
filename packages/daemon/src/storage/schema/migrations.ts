@@ -8835,7 +8835,11 @@ export function runMigration128(db: BunDatabase): void {
 				source,
 				globally_enabled,
 				json_set(
-						CASE WHEN json_valid(capabilities_json) THEN capabilities_json ELSE '{}' END,
+						CASE
+							WHEN json_valid(capabilities_json) AND json_type(capabilities_json) = 'object'
+								THEN capabilities_json
+							ELSE '{}'
+						END,
 						'$.rpcConfig',
 						json('true')
 					),

@@ -108,7 +108,12 @@ describe('Migration 128: external event extension config tables', () => {
 		expect(JSON.parse(row.capabilities_json)).toEqual({ polling: true, rpcConfig: true });
 	});
 
-	test('falls back to empty capabilities when legacy capabilities JSON is malformed', () => {
+	test.each([
+		['malformed JSON', '{not valid json'],
+		['array JSON', '[]'],
+		['string JSON', '"x"'],
+		['number JSON', '123'],
+	])('falls back to empty capabilities when legacy capabilities JSON is %s', (_label, rawJson) => {
 		db.exec(`
 			CREATE TABLE external_event_source_configs (
 				source TEXT PRIMARY KEY,
@@ -124,7 +129,7 @@ describe('Migration 128: external event extension config tables', () => {
 			`INSERT INTO external_event_source_configs
 			 (source, globally_enabled, capabilities_json, secrets_ref, settings_json, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run('github', 1, '{not valid json', null, null, 1, 2);
+		).run('github', 1, rawJson, null, null, 1, 2);
 
 		expect(() => runMigration128(db)).not.toThrow();
 		const row = db
