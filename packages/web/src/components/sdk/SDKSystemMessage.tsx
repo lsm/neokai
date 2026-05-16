@@ -65,28 +65,7 @@ export function SDKSystemMessage({ message }: Props) {
 	// Hook response
 	if (isSDKHookResponse(message)) {
 		const hookMessage = message as SDKHookResponseMessage;
-		return (
-			<div class="py-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
-				<div class="text-sm font-medium text-purple-900 dark:text-purple-100 mb-1">
-					Hook: {hookMessage.hook_name} ({hookMessage.hook_event})
-				</div>
-				{hookMessage.stdout && (
-					<pre class="text-xs text-purple-700 dark:text-purple-300 whitespace-pre-wrap">
-						{hookMessage.stdout}
-					</pre>
-				)}
-				{hookMessage.stderr && (
-					<pre class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap mt-1">
-						{hookMessage.stderr}
-					</pre>
-				)}
-				{hookMessage.exit_code !== undefined && (
-					<div class="text-xs text-purple-600 dark:text-purple-400 mt-1">
-						Exit code: {hookMessage.exit_code}
-					</div>
-				)}
-			</div>
-		);
+		return <HookResponseCard message={hookMessage} />;
 	}
 
 	return null;
@@ -314,6 +293,100 @@ function CompactBoundaryMessage({
 						>
 							{JSON.stringify(message.compact_metadata, null, 2)}
 						</pre>
+					</div>
+				)}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Hook Response Card - Collapsible card for hook execution results
+ *
+ * Default collapsed (hooks are noise, not signal).
+ * Muted violet/slate color scheme.
+ */
+function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
+	const [isExpanded, setIsExpanded] = useState(false);
+
+	// Truncate first line of stdout for summary
+	const summary = message.stdout
+		? message.stdout.split('\n')[0].slice(0, 80)
+		: message.stderr
+			? message.stderr.split('\n')[0].slice(0, 80)
+			: undefined;
+
+	const hasError = message.exit_code !== undefined && message.exit_code !== 0;
+
+	return (
+		<div class="my-2">
+			<div class="border rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-900/20 border-slate-200 dark:border-slate-700">
+				{/* Header - clickable to expand/collapse */}
+				<button
+					onClick={() => setIsExpanded(!isExpanded)}
+					class="w-full flex items-center justify-between p-3 transition-colors hover:bg-slate-100 dark:hover:bg-slate-900/30"
+				>
+					<div class="flex items-center gap-2 min-w-0 flex-1">
+						{/* Hook/link icon */}
+						<svg
+							class="w-4 h-4 flex-shrink-0 text-violet-500 dark:text-violet-400"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+							/>
+						</svg>
+						<span class="font-medium text-sm text-slate-800 dark:text-slate-200 truncate">
+							{message.hook_name}
+						</span>
+						<span class="text-xs text-slate-500 dark:text-slate-400 flex-shrink-0">
+							{message.hook_event}
+						</span>
+						{summary && (
+							<span class="text-xs text-slate-400 dark:text-slate-500 truncate hidden sm:inline">
+								— {summary}
+							</span>
+						)}
+						{hasError && (
+							<span class="text-xs text-red-500 dark:text-red-400 flex-shrink-0 font-medium">
+								failed
+							</span>
+						)}
+					</div>
+
+					<svg
+						class={`w-4 h-4 flex-shrink-0 text-slate-400 dark:text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+					</svg>
+				</button>
+
+				{/* Expanded content */}
+				{isExpanded && (
+					<div class="p-3 border-t border-slate-200 dark:border-slate-700 space-y-2">
+						{message.stdout && (
+							<pre class="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap overflow-x-auto bg-white dark:bg-gray-900 p-2 rounded">
+								{message.stdout}
+							</pre>
+						)}
+						{message.stderr && (
+							<pre class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap overflow-x-auto bg-white dark:bg-gray-900 p-2 rounded">
+								{message.stderr}
+							</pre>
+						)}
+						{message.exit_code !== undefined && (
+							<div class="text-xs text-slate-500 dark:text-slate-400">
+								Exit code: {message.exit_code}
+							</div>
+						)}
 					</div>
 				)}
 			</div>
