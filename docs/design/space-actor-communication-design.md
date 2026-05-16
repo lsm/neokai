@@ -82,6 +82,11 @@ type SpaceActorType =
 type SpaceActorStatus = 'active' | 'idle' | 'disabled' | 'archived' | 'deleted';
 ```
 
+`archived` means the actor no longer participates in routing but remains visible in conversation,
+delivery, and audit history. `deleted` is a stronger soft-delete marker for privacy/admin removal:
+routing, handle lookup, autocomplete, and new membership all ignore it, while historical messages and
+delivery rows keep the actor ID with redacted display metadata rather than being physically removed.
+
 ### Human Actor
 
 - Represents a user account/member in a Space.
@@ -824,6 +829,10 @@ Replace broad `context.spaceId` MCP attachment sweeps with an explicit session r
 | Legacy Task Agent | Compatibility tools only during migration | task-agent tools if retained |
 | System | Internal service API, not SDK MCP by default | none |
 
+Role-based attachment must also make MCP server names and tool names collision-safe. Current
+`mergeRuntimeMcpServers` semantics overwrite on key collision, so generic messaging tool names must
+not collide with role-specific management tools or compatibility wrappers.
+
 This phase directly addresses current scattered `SpaceRuntimeService`, `TaskAgentManager`, rehydrate,
 reset, and `QueryOptionsBuilder` ownership paths.
 
@@ -932,7 +941,9 @@ Changes:
 - Attach generic Space Messaging MCP to Coordinator, Space Sessions, Long-term Agents, and Workflow
   Workers through role-appropriate wrappers.
 - Keep db-query/registry/fetch tools separate from messaging tools.
-- Remove substring guards such as `:task:` / `:exec:` / `:agent:` once actor roles exist.
+- Replace all current skip mechanisms with actor/session-role policy: `session.type === 'space_chat'`,
+  `session.type === 'space_task_agent'`, and workflow sub-session ID checks using `:task:` plus
+  `:exec:`. Do not treat `:agent:` as a guard; it is part of workflow session ID construction.
 
 Dependency: after tasks 1–5 above.
 
