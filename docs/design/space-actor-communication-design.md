@@ -124,6 +124,37 @@ send_message({
 });
 ```
 
+### Conversation
+
+Conversation = app-level grouping for related message records. It is not a deliverable actor, route, or
+LLM context by itself.
+
+Use `conversationId` to say: "store this message with the same visible conversation as earlier
+messages." The actual delivery target remains an actor address such as `@session:<id>`, `@coordinator`,
+`@role:task-manager`, or `@worker:<run>/<node>/<agent>`.
+
+This layer sits above SDK sessions and `sdk_messages`:
+
+```text
+Conversation
+  ├─ message records and delivery records
+  ├─ participants / target actors
+  └─ links to one or more agent sessions / sdk_messages
+```
+
+SDK sessions still own LLM runtime context and transcript state. A single conversation can span multiple
+agent sessions over time — for example a human-visible task conversation that starts with Coordinator,
+then routes to a worker, then returns to Coordinator. Those sessions do not automatically share LLM
+context; summaries or selected messages must be explicitly injected when a runtime needs continuity.
+
+Keep the boundary clear:
+
+- `conversationId` groups app messages for UI/history/replies.
+- `target` decides which actor receives the message.
+- `context.sessionId` / stored SDK message links point to the actual LLM transcript.
+- Task/workflow timelines can project selected messages from conversations, but they are not themselves
+  LLM-visible chat targets.
+
 ### Context
 
 Task/workflow/session IDs are context and audit metadata, not chat targets.
