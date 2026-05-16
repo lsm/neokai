@@ -42,8 +42,8 @@ function getString(record: Record<string, unknown>, key: string): string | undef
 
 function basename(path: string | null | undefined): string {
 	if (!path) return 'None';
-	const trimmed = path.replace(/\/+$/, '');
-	return trimmed.split('/').pop() || trimmed;
+	const trimmed = path.replace(/[\\/]+$/, '');
+	return trimmed.split(/[\\/]/).pop() || trimmed;
 }
 
 function asTodoStatus(value: unknown): TodoStatus {
@@ -257,14 +257,21 @@ function GitRows({ session, open }: { session: Session | null; open: boolean }) 
 	const [status, setStatus] = useState<GitSessionStatusResponse | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+	const sessionId = session?.id ?? null;
 
 	useEffect(() => {
-		if (!open || !session) return;
+		if (!open || !sessionId) {
+			setStatus(null);
+			setError(null);
+			setLoading(false);
+			return;
+		}
 		let cancelled = false;
 		setLoading(true);
 		setError(null);
+		setStatus(null);
 
-		getGitSessionStatus(session.id)
+		getGitSessionStatus(sessionId)
 			.then((nextStatus) => {
 				if (!cancelled) setStatus(nextStatus);
 			})
@@ -280,7 +287,7 @@ function GitRows({ session, open }: { session: Session | null; open: boolean }) 
 		return () => {
 			cancelled = true;
 		};
-	}, [open, session]);
+	}, [open, sessionId]);
 
 	if (!session) {
 		return <p class="text-sm text-gray-500">No session selected.</p>;
@@ -322,7 +329,11 @@ function GitRows({ session, open }: { session: Session | null; open: boolean }) 
 				value={clean ? 'Clean' : `${changedFiles} file${changedFiles === 1 ? '' : 's'}`}
 				tone={clean ? 'muted' : 'success'}
 			/>
-			<InfoRow icon={<WorkspaceIcon />} label={modeLabel} value={basename(status.worktreePath)} />
+			<InfoRow
+				icon={<WorkspaceIcon />}
+				label={modeLabel}
+				value={basename(status.worktreePath ?? status.workspacePath)}
+			/>
 			<InfoRow icon={<BranchIcon />} label={truncate(branchLabel, 32)} />
 			<InfoRow
 				icon={<CommitIcon />}

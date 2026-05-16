@@ -10,13 +10,18 @@ import type { Session, WorkspaceHistoryEntry } from '@neokai/shared';
 
 /** The project root a session belongs to: the main repo for worktree sessions. */
 export function projectRootOf(session: Session): string | null {
-	return session.worktree?.mainRepoPath ?? session.workspacePath ?? null;
+	return (
+		session.worktree?.mainRepoPath ??
+		session.metadata.archivedWorktree?.mainRepoPath ??
+		session.workspacePath ??
+		null
+	);
 }
 
 /** Folder basename of an absolute path, used as the project display name. */
 export function projectName(path: string): string {
-	const trimmed = path.replace(/\/+$/, '');
-	const idx = trimmed.lastIndexOf('/');
+	const trimmed = path.replace(/[\\/]+$/, '');
+	const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
 	return (idx >= 0 ? trimmed.slice(idx + 1) : trimmed) || trimmed;
 }
 

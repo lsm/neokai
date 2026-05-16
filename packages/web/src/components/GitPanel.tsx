@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
 	GitCheckSummary,
 	GitFileStatusKind,
@@ -44,8 +44,8 @@ const EMPTY_REVIEW: GitReviewSummary = {
 
 function basename(path: string | null | undefined): string {
 	if (!path) return 'None';
-	const trimmed = path.replace(/\/+$/, '');
-	return trimmed.split('/').pop() || trimmed;
+	const trimmed = path.replace(/[\\/]+$/, '');
+	return trimmed.split(/[\\/]/).pop() || trimmed;
 }
 
 function compactPath(path: string): string {
@@ -80,23 +80,15 @@ function modeLabel(status: GitSessionStatusResponse): string {
 function checkBucket(check: GitCheckSummary): 'pass' | 'fail' | 'pending' | 'other' {
 	const bucket = check.bucket?.toLowerCase();
 	const state = check.state.toLowerCase();
-	if (bucket === 'pass' || state === 'success' || state === 'completed') return 'pass';
-	if (
-		bucket === 'fail' ||
-		state === 'failure' ||
-		state === 'failed' ||
-		state === 'error' ||
-		state === 'cancelled'
-	) {
+	if (bucket === 'pass') return 'pass';
+	if (bucket === 'fail') return 'fail';
+	if (bucket === 'pending') return 'pending';
+	if (bucket) return 'other';
+	if (state === 'success' || state === 'completed') return 'pass';
+	if (state === 'failure' || state === 'failed' || state === 'error' || state === 'cancelled') {
 		return 'fail';
 	}
-	if (
-		bucket === 'pending' ||
-		state === 'pending' ||
-		state === 'queued' ||
-		state === 'in_progress' ||
-		state === 'waiting'
-	) {
+	if (state === 'pending' || state === 'queued' || state === 'in_progress' || state === 'waiting') {
 		return 'pending';
 	}
 	return 'other';
@@ -269,11 +261,14 @@ function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubE
 	const failed = checks.filter((check) => checkBucket(check) === 'fail').length;
 	const pending = checks.filter((check) => checkBucket(check) === 'pending').length;
 	const passed = checks.filter((check) => checkBucket(check) === 'pass').length;
+	const other = checks.length - failed - pending - passed;
 	const label = failed
 		? `${failed} check${failed === 1 ? '' : 's'} failing`
 		: pending
 			? `${pending} check${pending === 1 ? '' : 's'} pending`
-			: `${passed || checks.length} check${(passed || checks.length) === 1 ? '' : 's'} passing`;
+			: other
+				? `${other} check${other === 1 ? '' : 's'} not passing`
+				: `${passed} check${passed === 1 ? '' : 's'} passing`;
 
 	return (
 		<SummaryRow
@@ -457,38 +452,45 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 	const [status, setStatus] = useState<GitSessionStatusResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const requestSeq = useRef(0);
 
 	const refresh = () => {
+		const requestId = ++requestSeq.current;
 		setLoading(true);
 		setError(null);
 		getGitSessionStatus(sessionId)
 			.then((nextStatus) => {
-				setStatus(nextStatus);
+				if (requestId === requestSeq.current) setStatus(nextStatus);
 			})
 			.catch((err) => {
-				setError(err instanceof Error ? err.message : 'Failed to load Git status');
+				if (requestId === requestSeq.current) {
+					setError(err instanceof Error ? err.message : 'Failed to load Git status');
+				}
 			})
 			.finally(() => {
-				setLoading(false);
+				if (requestId === requestSeq.current) setLoading(false);
 			});
 	};
 
 	useEffect(() => {
-		let cancelled = false;
+		const requestId = ++requestSeq.current;
 		setLoading(true);
 		setError(null);
+		setStatus(null);
 		getGitSessionStatus(sessionId)
 			.then((nextStatus) => {
-				if (!cancelled) setStatus(nextStatus);
+				if (requestId === requestSeq.current) setStatus(nextStatus);
 			})
 			.catch((err) => {
-				if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load Git status');
+				if (requestId === requestSeq.current) {
+					setError(err instanceof Error ? err.message : 'Failed to load Git status');
+				}
 			})
 			.finally(() => {
-				if (!cancelled) setLoading(false);
+				if (requestId === requestSeq.current) setLoading(false);
 			});
 		return () => {
-			cancelled = true;
+			requestSeq.current++;
 		};
 	}, [sessionId]);
 

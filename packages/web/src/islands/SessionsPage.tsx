@@ -90,6 +90,7 @@ export function SessionsPage() {
 	// Session creation only needs a live connection — auth is exercised later by
 	// the message send, which surfaces its own error.
 	const canCreate = connectionState.value === 'connected';
+	const waitingForProjectGit = project !== null && gitLoading;
 
 	// Project folders shown in the picker — same set as the sidebar: folders
 	// with sessions, merged with registered workspace-history folders.
@@ -164,12 +165,8 @@ export function SessionsPage() {
 			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder');
 			if (!picked?.path) return;
 			const folder = picked.path;
-			await addWorkspaceToHistory(folder);
-			setHistory((prev) =>
-				prev.some((p) => p.path === folder)
-					? prev
-					: [{ path: folder, lastUsedAt: Date.now(), useCount: 1 }, ...prev]
-			);
+			const entry = await addWorkspaceToHistory(folder);
+			setHistory((prev) => [entry, ...prev.filter((p) => p.path !== entry.path)]);
 			handleSelectProject(folder);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Failed to add project');
@@ -183,7 +180,12 @@ export function SessionsPage() {
 			toast.error('Not connected to server. Please wait...');
 			return;
 		}
+		if (waitingForProjectGit) {
+			toast.error('Checking the selected project. Please try again in a moment.');
+			return;
+		}
 		setSubmitting(true);
+		let createdSessionId: string | null = null;
 		try {
 			const req: CreateSessionRequest = {};
 			if (project) {
@@ -202,13 +204,18 @@ export function SessionsPage() {
 				setSubmitting(false);
 				return;
 			}
+			createdSessionId = response.sessionId;
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) throw new ConnectionNotReadyError('Not connected to server');
 			await hub.request('message.send', { sessionId: response.sessionId, content });
 			navigateToSession(response.sessionId);
 			// Navigation unmounts this view, so there is no state to reset.
 		} catch (err) {
-			if (err instanceof ConnectionNotReadyError) {
+			if (createdSessionId) {
+				toast.error('Chat was created, but the first message failed. Opened it so you can retry.');
+				navigateToSession(createdSessionId);
+				return;
+			} else if (err instanceof ConnectionNotReadyError) {
 				toast.error('Connection lost. Please try again.');
 			} else {
 				toast.error(err instanceof Error ? err.message : 'Failed to start chat');
@@ -254,7 +261,7 @@ export function SessionsPage() {
 								type="button"
 								data-testid="landing-send"
 								onClick={handleSubmit}
-								disabled={!text.trim() || submitting || !canCreate}
+								disabled={!text.trim() || submitting || !canCreate || waitingForProjectGit}
 								title="Start chat"
 								aria-label="Start chat"
 								class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"

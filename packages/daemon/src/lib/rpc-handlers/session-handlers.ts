@@ -68,6 +68,16 @@ export function setupSessionHandlers(
 ): void {
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
+		if (
+			req.worktreeMode !== undefined &&
+			req.worktreeMode !== 'worktree' &&
+			req.worktreeMode !== 'direct'
+		) {
+			throw new Error(
+				`Invalid worktreeMode: ${String(req.worktreeMode)}. Must be 'worktree' or 'direct'`
+			);
+		}
+
 		const sessionId = await sessionManager.createSession({
 			workspacePath: req.workspacePath,
 			initialTools: req.initialTools,

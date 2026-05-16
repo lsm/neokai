@@ -106,6 +106,18 @@ export class SessionLifecycle {
 			throw new Error(`Session type '${sessionType}' requires explicit workspacePath`);
 		}
 
+		const requestedWorktreeMode = params.worktreeMode as unknown;
+		if (
+			requestedWorktreeMode !== undefined &&
+			requestedWorktreeMode !== 'worktree' &&
+			requestedWorktreeMode !== 'direct'
+		) {
+			throw new Error(
+				`Invalid worktreeMode: ${String(requestedWorktreeMode)}. Must be 'worktree' or 'direct'`
+			);
+		}
+		const validWorktreeMode = requestedWorktreeMode as 'worktree' | 'direct' | undefined;
+
 		// Guard: when no workspace path is available (daemon started without --workspace and
 		// session provides no explicit workspacePath), skip git-support detection and worktree
 		// creation. This protects unbound sessions from causing
@@ -122,9 +134,11 @@ export class SessionLifecycle {
 
 		// An explicit worktree decision from the caller (e.g. the empty-state
 		// composer) skips the in-chat choice prompt. Only meaningful for worker
-		// sessions that actually have a workspace path.
+		// sessions that actually have a workspace path and when worktrees are enabled.
 		const explicitWorktreeMode =
-			supportsWorktreeChoice && baseWorkspacePath !== undefined ? params.worktreeMode : undefined;
+			supportsWorktreeChoice && baseWorkspacePath !== undefined && !this.config.disableWorktrees
+				? validWorktreeMode
+				: undefined;
 
 		// Determine if worktree choice should be shown — git repos with no
 		// explicit decision still go through the in-chat choice flow.
@@ -671,15 +685,29 @@ export class SessionLifecycle {
 		// removed — otherwise UIs (and RPCs like `session.get`) would continue to surface a
 		// stale `session.worktree` pointing at a deleted path.
 		try {
+			const archivedWorktreeMetadata = session.worktree
+				? {
+						archivedWorktree: {
+							mainRepoPath: session.worktree.mainRepoPath,
+							worktreePath: session.worktree.worktreePath,
+							branch: session.worktree.branch,
+						},
+					}
+				: {};
+			const metadataUpdate = {
+				...archiveMetadata,
+				...archivedWorktreeMetadata,
+			};
+
 			await this.update(sessionId, {
 				status: 'archived',
 				archivedAt: new Date().toISOString(),
 				...(session.worktree ? { worktree: undefined } : {}),
-				...(archiveMetadata
+				...(Object.keys(metadataUpdate).length > 0
 					? {
 							metadata: {
 								...session.metadata,
-								...archiveMetadata,
+								...metadataUpdate,
 							},
 						}
 					: {}),

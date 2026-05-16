@@ -134,7 +134,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder');
 			if (!picked?.path) return;
 			const entry = await addWorkspaceToHistory(picked.path);
-			setHistory((prev) => (prev.some((e) => e.path === entry.path) ? prev : [entry, ...prev]));
+			setHistory((prev) => [entry, ...prev.filter((e) => e.path !== entry.path)]);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Failed to add project');
 		}

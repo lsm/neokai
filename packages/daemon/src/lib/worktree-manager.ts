@@ -406,7 +406,7 @@ export class WorktreeManager {
 				if (!line.trim()) continue;
 				const [additionsRaw, deletionsRaw, path] = line.split('\t');
 				if (!path) continue;
-				stats.set(path, {
+				stats.set(this.normalizeNumstatPath(path), {
 					additions: Number.parseInt(additionsRaw, 10) || 0,
 					deletions: Number.parseInt(deletionsRaw, 10) || 0,
 				});
@@ -415,6 +415,17 @@ export class WorktreeManager {
 			// Diff stats are best-effort for the panel; status and patches still render.
 		}
 		return stats;
+	}
+
+	private normalizeNumstatPath(path: string): string {
+		if (!path.includes(' => ')) return path;
+
+		const braceRename = path.match(/^(.*)\{(.+) => (.+)\}(.*)$/);
+		if (braceRename) {
+			return `${braceRename[1]}${braceRename[3]}${braceRename[4]}`;
+		}
+
+		return path.slice(path.lastIndexOf(' => ') + 4);
 	}
 
 	private async getFilePatch(
