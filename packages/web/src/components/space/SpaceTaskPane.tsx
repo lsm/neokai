@@ -325,7 +325,30 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					};
 				})
 			) ?? [];
-		return nodeTargets;
+
+		// Fallback: when the workflow definition is unavailable (async fetch race,
+		// deleted/renamed workflow, stale run metadata), derive targets from live
+		// activity members so the composer still works against running agents.
+		const fallbackTargets: TaskComposerTarget[] = [];
+		if (nodeTargets.length === 0 && activityMembers.length > 0) {
+			const seen = new Set<string>();
+			for (const m of activityMembers) {
+				if (m.kind !== 'node_agent' || !m.role) continue;
+				const name = normalizeTargetName(m.role);
+				if (seen.has(name)) continue;
+				seen.add(name);
+				fallbackTargets.push({
+					id: `activity:${m.sessionId ?? m.role}`,
+					kind: 'node_agent',
+					label: m.label,
+					agentName: m.role,
+					nodeExecutionId: m.nodeExecution?.nodeExecutionId,
+					state: ACTIVITY_STATE_LABELS[m.state],
+				});
+			}
+		}
+
+		return [...nodeTargets, ...fallbackTargets];
 	}, [workflow, activityMembers, task.workflowRunId, nodeExecutions, spaceAgents]);
 
 	// Extract per-agent default models from the workflow definition so the
