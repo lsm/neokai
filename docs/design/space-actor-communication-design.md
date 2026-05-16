@@ -247,6 +247,10 @@ type DeliveryRecord = {
 - legacy `failed` → `failed`
 - legacy `expired` → `expired`
 - preserve attempts, max attempts, TTL, last error, delivered session ID
+- fan-out: legacy rows store `targetAgentName` only. If the same agent name exists on multiple nodes in
+  the run (allowed because uniqueness is only enforced within a node), one legacy row expands to one
+  delivery row per matching `(workflowRunId, nodeId, agentName)` slot. Each expanded row gets its own
+  delivery ID and independent retry state.
 
 ## Resolution rules
 
@@ -349,7 +353,7 @@ Legacy node targets must be translated before calling generic `send_message`:
 | --- | --- |
 | `'*'` | expand before send to topology-permitted exact worker-slot targets `@worker:<run>/<node>/<agent>` |
 | `string[]` multicast | translate each element independently with these rules, flatten, and de-dupe by recipient target |
-| `space-agent` | reserved compatibility target; route to Coordinator / Space Agent actor (`@coordinator`) |
+| `space-agent` | reserved compatibility target; first check stored reply-session route `(taskId, agentName) → replyToSessionId` and deliver to `@session:<id>` if present, otherwise fall back to Coordinator (`@coordinator`) |
 | `task-agent` | removed legacy target; reject explicitly or map only in temporary migration shims for old queued rows, never as a worker alias |
 | bare agent name | expand to all `(nodeId, agentName)` matches across run topology (fan-out); each match becomes a separate `@worker:<run>/<node>/<agent>` delivery |
 | bare node name | expand to all agent slots in that node (fan-out); each slot becomes a separate `@worker:<run>/<node>/<agent>` delivery |
@@ -360,18 +364,17 @@ Legacy node targets must be translated before calling generic `send_message`:
 Preserve current post-task-agent behavior:
 
 - Task/workflow IDs remain context, not message targets.
-- If caller passes node ID, explicit actor, or role target, deliver to that worker/role/session.
-- If caller only passes task ID/number, use the current default task routing path from task context
-  (usually Coordinator, task-manager role, or active worker chosen by task state), not the removed
-  built-in task-agent helper.
+- `node_id` is required, matching current `send_message_to_task` API contract. No implicit task-only
+  fallback routing; calls without a target node or actor fail fast.
+- If caller passes explicit actor or role target, deliver to that worker/role/session.
 - Reject removed legacy `task-agent` targets for new calls; keep only narrow migration handling for old
   queued rows if storage still contains them.
 - Mark wrapper deprecated after generic tool adoption.
 
 ### Human task message RPC
 
-Routes to explicit worker/role/session when mentioned; otherwise uses the same current default task
-routing path as the compatibility wrapper.
+Routes to explicit worker/role/session when mentioned; requires same target specification as task message
+compatibility wrapper.
 
 ## Package / implementation shape
 
@@ -459,8 +462,7 @@ into LLM context.
 3. Implement Space adapter resolver and delivery writer.
 4. Map `pending_agent_messages` into delivery rows/facade.
 5. Wrap `node-agent send_message` and preserve gate `data` behavior.
-6. Wrap current task message RPC/tooling and preserve task-only default routing through Coordinator,
-   task-manager role, or task-state-selected worker.
+6. Wrap current task message RPC/tooling and require explicit target (node ID, actor, or role).
 7. Update Space MCP attachment by explicit actor/session role:
    - `space_chat` / Coordinator gets generic messaging + management.
    - ad-hoc Space sessions get generic messaging.
@@ -535,7 +537,7 @@ policy.
 Superseded by current `dev`: built-in task-agent helper has already been removed. Update remaining work:
 
 - keep generic messaging wrappers aligned with current task message RPC/tooling
-- route task-only/default messaging through Coordinator, task-manager role, or task-state-selected worker
+- require explicit target for task message sends (node ID, actor, or role)
 - preserve pending delivery migration for any old queued rows still present in existing databases
 - reject removed `task-agent` targets for new sends except narrow migration shims
 - ensure no new MCP attachment or workflow plan depends on `space_task_agent`
