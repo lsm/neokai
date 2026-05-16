@@ -9,7 +9,6 @@ import { agentInitial } from './thread/minimal/minimal-mock-data';
 import { TaskToolsModal } from './TaskToolsModal.tsx';
 
 interface TaskSessionChatComposerProps {
-	sessionId: string;
 	mentionCandidates: Array<{ id: string; name: string }>;
 	targets: TaskComposerTarget[];
 	selectedTargetId: string | null;
@@ -35,7 +34,6 @@ interface TaskSessionChatComposerProps {
 }
 
 export function TaskSessionChatComposer({
-	sessionId,
 	mentionCandidates,
 	targets,
 	selectedTargetId,
@@ -184,7 +182,7 @@ export function TaskSessionChatComposer({
 				</div>
 			)}
 			<ChatComposer
-				sessionId={targetSessionId ?? sessionId}
+				sessionId={targetSessionId ?? ''}
 				readonly={false}
 				isProcessing={targetIsProcessing}
 				thinkingLevel={thinkingLevel}

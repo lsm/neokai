@@ -1054,7 +1054,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 						{showInlineComposer && (
 							<TaskSessionChatComposer
-								sessionId={agentSessionId ?? ''}
 								mentionCandidates={mentionCandidates}
 								targets={composerTargets}
 								selectedTargetId={selectedTarget?.id ?? null}

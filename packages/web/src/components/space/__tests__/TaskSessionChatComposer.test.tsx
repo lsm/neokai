@@ -84,7 +84,6 @@ function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComp
 	const onTargetSelect = vi.fn();
 	const view = render(
 		<TaskSessionChatComposer
-			sessionId="task-session-id"
 			mentionCandidates={mentionCandidates}
 			targets={targets}
 			selectedTargetId="node:n1:coder"
@@ -130,7 +129,7 @@ describe('TaskSessionChatComposer', () => {
 	});
 
 	it('passes target sessionId to ChatComposer', () => {
-		renderComposer({ sessionId: 'my-session' });
+		renderComposer();
 		expect(lastChatComposerProps?.sessionId).toBe('target-session-id');
 	});
 
