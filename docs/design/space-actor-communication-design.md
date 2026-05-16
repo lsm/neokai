@@ -10,7 +10,7 @@ Use a small actor-addressed messaging substrate for the Space features we alread
 
 - Space chat / Coordinator
 - ad-hoc Space sessions
-- task-agent compatibility
+- current task messaging compatibility
 - workflow node agent messaging
 - pending worker delivery
 - role escalation such as task-manager
@@ -46,7 +46,7 @@ Current behavior must keep working:
 | New persistent role agents | `agent` actor with handle and optional roles |
 | Workflow node agent / coder / reviewer | `worker` actor, scoped by `workflowRunId` + `nodeId` + `agentName` |
 | `node-agent send_message` | wrapper around generic `send_message` |
-| `send_message_to_task` | compatibility wrapper around generic `send_message` |
+| task message RPC/tooling | compatibility wrapper around generic `send_message` |
 | `pending_agent_messages` | delivery rows / queue with same retry, TTL, terminal state |
 | task/workflow message UI | projection of messages/events; not LLM chat thread |
 
@@ -245,8 +245,8 @@ Keep resolver deterministic:
 7. Resolve `@worker:<node>/<agent>` using `workflowRunId` from context.
 8. Resolve `@worker:<run>/<node>/<agent>` if sender can access that run.
 9. Resolve optional `#<name>` channel/topic if enabled.
-10. If caller omitted `target`, use context fallback (`@coordinator`, `@role:task-manager`, legacy
-    task-agent coordinator, or triage channel).
+10. If caller omitted `target`, use current context fallback (`@coordinator`, `@role:task-manager`,
+    explicit worker from task/workflow context, or triage channel).
 11. If caller provided an explicit target and it does not resolve, return an error. Do not silently
     fallback; typos and stale handles must not leak content to another actor.
 12. If fallback target cannot resolve, create a failed delivery/audit row with `targetRef` set to the
@@ -255,8 +255,8 @@ Keep resolver deterministic:
 Important seeding rule:
 
 - Session actors only come from ad-hoc human/member sessions.
-- Exclude `space_chat`, `space_task_agent`, and workflow sub-sessions.
-- Coordinator and Legacy Task Agent use dedicated migration paths.
+- Exclude `space_chat`, removed/legacy `space_task_agent`, and workflow sub-sessions.
+- Coordinator uses the agent-role path; no new design should depend on built-in task-agent helper behavior.
 
 ## API shape
 
@@ -325,7 +325,7 @@ Preserve:
 - gated channel payload merge from `data`
 - queued delivery for inactive target sessions
 - activation hooks
-- broadcast, multicast array, reserved `task-agent` / `space-agent`, node-name, and agent-name resolution where supported today
+- broadcast, multicast array, reserved `space-agent`, node-name, and agent-name resolution where supported today
 
 Legacy node targets must be translated before calling generic `send_message`:
 
@@ -333,24 +333,29 @@ Legacy node targets must be translated before calling generic `send_message`:
 | --- | --- |
 | `'*'` | expand before send to topology-permitted exact worker-slot targets `@worker:<run>/<node>/<agent>` |
 | `string[]` multicast | translate each element independently with these rules, flatten, and de-dupe by recipient target |
-| `task-agent` | reserved compatibility target; route to legacy task-agent/task coordinator actor, not a worker alias |
 | `space-agent` | reserved compatibility target; route to Coordinator / Space Agent actor (`@coordinator`) |
+| `task-agent` | removed legacy target; reject explicitly or map only in temporary migration shims for old queued rows, never as a worker alias |
 | bare agent name | resolve through workflow topology/node executions to matching `(nodeId, agentName)`, then format exact worker-slot target |
 | bare node name | resolve node; if one agent slot, format exact worker-slot target; if multiple slots, use caller context or require an exact slot |
 | already generic `@...` / `#...` | pass through |
 
-### `space-agent-tools.send_message_to_task`
+### Task message compatibility wrapper
 
-Preserve current behavior:
+Preserve current post-task-agent behavior:
 
-- If caller only passes task ID/number, deliver to legacy task-agent/task coordinator actor.
-- If caller passes node ID, explicit actor, or role target, deliver there.
+- Task/workflow IDs remain context, not message targets.
+- If caller passes node ID, explicit actor, or role target, deliver to that worker/role/session.
+- If caller only passes task ID/number, use the current default task routing path from task context
+  (usually Coordinator, task-manager role, or active worker chosen by task state), not the removed
+  built-in task-agent helper.
+- Reject removed legacy `task-agent` targets for new calls; keep only narrow migration handling for old
+  queued rows if storage still contains them.
 - Mark wrapper deprecated after generic tool adoption.
 
 ### Human task message RPC
 
-Routes to explicit worker/role/session when mentioned; otherwise preserves current task-agent/default
-behavior until replacement path is ready.
+Routes to explicit worker/role/session when mentioned; otherwise uses the same current default task
+routing path as the compatibility wrapper.
 
 ## Package / implementation shape
 
@@ -438,13 +443,15 @@ into LLM context.
 3. Implement Space adapter resolver and delivery writer.
 4. Map `pending_agent_messages` into delivery rows/facade.
 5. Wrap `node-agent send_message` and preserve gate `data` behavior.
-6. Wrap `send_message_to_task` and preserve task-only default task-agent delivery.
+6. Wrap current task message RPC/tooling and preserve task-only default routing through Coordinator,
+   task-manager role, or task-state-selected worker.
 7. Update Space MCP attachment by explicit actor/session role:
    - `space_chat` / Coordinator gets generic messaging + management.
    - ad-hoc Space sessions get generic messaging.
    - workflow workers get generic messaging through node wrapper.
-   - `space_task_agent` keeps compatibility tools only during migration.
-8. Retire legacy task-agent helper only after direct worker/role delivery is live.
+   - removed/legacy `space_task_agent` sessions are excluded; no new attachment path depends on them.
+8. Keep only narrow migration handling for old task-agent queued rows if present; do not design new flows
+   around the removed helper.
 
 ## Follow-up implementation tasks
 
@@ -461,7 +468,7 @@ into LLM context.
 
 4. **Wrap existing MCP/RPC tools**
    - Depends on task 3.
-   - `node-agent send_message`, `send_message_to_task`, human task message RPC.
+   - `node-agent send_message`, current task message RPC/tooling, human task message RPC.
 
 5. **Add long-term agent inbox / DM activation**
    - Depends on task 4.
@@ -497,7 +504,7 @@ Keep, but scope it after generic messaging wrapper work. Replace current skip me
 actor/session-role policy:
 
 - `session.type === 'space_chat'`
-- `session.type === 'space_task_agent'`
+- removed/legacy `session.type === 'space_task_agent'` if older databases or sessions still contain it
 - workflow sub-session ID checks using `:task:` + `:exec:`
 
 Do not treat `:agent:` as a guard; it is session ID construction.
@@ -509,11 +516,12 @@ policy.
 
 ### #400 — Remove built-in task-agent LLM helper from Space workflows
 
-Do not remove first. Update dependency:
+Superseded by current `dev`: built-in task-agent helper has already been removed. Update remaining work:
 
-- generic messaging wrappers exist
-- direct worker/role delivery works
-- pending delivery migration preserves queued rows
-- task-only `send_message_to_task` compatibility still routes to legacy task-agent/task coordinator
+- keep generic messaging wrappers aligned with current task message RPC/tooling
+- route task-only/default messaging through Coordinator, task-manager role, or task-state-selected worker
+- preserve pending delivery migration for any old queued rows still present in existing databases
+- reject removed `task-agent` targets for new sends except narrow migration shims
+- ensure no new MCP attachment or workflow plan depends on `space_task_agent`
 
-Then retire `space_task_agent` helper.
+No new work should reintroduce the built-in task-agent helper.
