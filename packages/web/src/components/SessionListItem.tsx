@@ -51,16 +51,16 @@ function CodexArrowsIcon() {
 	return (
 		<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width={1.8}
-				d="M6 16 16 6m0 0h-6m6 0v6"
+				stroke-linecap="square"
+				stroke-linejoin="miter"
+				stroke-width={2}
+				d="M5.5 17.5 18 5m0 0H9.5M18 5v8.5"
 			/>
 			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width={1.8}
-				d="M6 8l10 10m0 0h-6m6 0v-6"
+				stroke-linecap="square"
+				stroke-linejoin="miter"
+				stroke-width={2}
+				d="M5.5 6.5 18 19m0 0H9.5M18 19v-8.5"
 			/>
 		</svg>
 	);
