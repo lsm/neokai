@@ -732,6 +732,10 @@ export class AgentSession
 		restartQuery?: boolean;
 		hardReset?: boolean;
 	}): Promise<{ success: boolean; error?: string }> {
+		// Cancel any pending rate-limit cooldown timer so it doesn't
+		// inject stale messages into the reset session.
+		this.rateLimitWatchdog.cancel();
+
 		const restartQuery = options?.restartQuery ?? true;
 		if (options?.hardReset && this.runtimeOptions.hardReset) {
 			return await this.runtimeOptions.hardReset(this, { restartQuery });
@@ -1228,6 +1232,7 @@ export class AgentSession
 	 * while preserving conversation history.
 	 */
 	async restart(): Promise<void> {
+		this.rateLimitWatchdog.cancel();
 		await this.lifecycleManager.restart();
 	}
 
