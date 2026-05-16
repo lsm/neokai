@@ -249,7 +249,8 @@ describe('ToolResultCard Component', () => {
 				/>
 			);
 
-			expect(screen.getByText('(Error)')).toBeTruthy();
+			expect(screen.getByText('Error')).toBeTruthy();
+			expect(screen.getByText('command not found')).toBeTruthy();
 		});
 	});
 
@@ -286,6 +287,25 @@ describe('ToolResultCard Component', () => {
 			expect(screen.getByTestId('diff-viewer')).toBeTruthy();
 		});
 
+		it('should render error message for failed Edit tool', () => {
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-123"
+					input={{ file_path: '/test.ts', old_string: 'old', new_string: 'new' }}
+					output="Error: old_string not found in file"
+					isError={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Error')).toBeTruthy();
+			expect(screen.getByText('— /test.ts')).toBeTruthy();
+			expect(screen.getByText('Error: old_string not found in file')).toBeTruthy();
+			// DiffViewer should not render on error
+			expect(screen.queryByTestId('diff-viewer')).toBeNull();
+		});
+
 		it('should render CodeViewer for Read tool with string output', () => {
 			render(
 				<ToolResultCard
@@ -298,6 +318,25 @@ describe('ToolResultCard Component', () => {
 			);
 
 			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+		});
+
+		it('should render error message for failed Read tool', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/missing.ts' }}
+					output="Error: file not found"
+					isError={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Error')).toBeTruthy();
+			expect(screen.getByText('— /missing.ts')).toBeTruthy();
+			expect(screen.getByText('Error: file not found')).toBeTruthy();
+			// CodeViewer should not render on error
+			expect(screen.queryByTestId('code-viewer')).toBeNull();
 		});
 
 		it('should render CodeViewer for Read tool with object output', () => {
@@ -328,6 +367,25 @@ describe('ToolResultCard Component', () => {
 			expect(screen.getByTestId('code-viewer')).toBeTruthy();
 		});
 
+		it('should render error message for failed Write tool', () => {
+			render(
+				<ToolResultCard
+					toolName="Write"
+					toolId="write-123"
+					input={{ file_path: '/test.ts', content: 'const x = 1;' }}
+					output="Error: permission denied"
+					isError={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Error')).toBeTruthy();
+			expect(screen.getByText('— /test.ts')).toBeTruthy();
+			expect(screen.getByText('Error: permission denied')).toBeTruthy();
+			// CodeViewer should not render on error
+			expect(screen.queryByTestId('code-viewer')).toBeNull();
+		});
+
 		it('should render Thinking tool with character count in detailed variant', () => {
 			render(
 				<ToolResultCard
@@ -356,6 +414,169 @@ describe('ToolResultCard Component', () => {
 			);
 
 			expect(screen.getByTestId('custom-renderer')).toBeTruthy();
+		});
+
+		it('should render typed FileReadOutput text type', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-typed"
+					input={{ file_path: '/test.ts' }}
+					output={{
+						type: 'text',
+						file: {
+							filePath: '/test.ts',
+							content: 'const x = 1;',
+							numLines: 1,
+							startLine: 1,
+							totalLines: 1,
+						},
+					}}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+			expect(screen.getByText('const x = 1;')).toBeTruthy();
+		});
+
+		it('should render typed FileReadOutput file_unchanged type', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-unchanged"
+					input={{ file_path: '/test.ts' }}
+					output={{ type: 'file_unchanged', file: { filePath: '/test.ts' } }}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('File unchanged: /test.ts')).toBeTruthy();
+		});
+
+		it('should render typed FileEditOutput with DiffViewer', () => {
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-typed"
+					input={{ file_path: '/test.ts', old_string: 'old', new_string: 'new' }}
+					output={{
+						filePath: '/test.ts',
+						oldString: 'old',
+						newString: 'new',
+						originalFile: 'old',
+						structuredPatch: [
+							{
+								oldStart: 1,
+								oldLines: 1,
+								newStart: 1,
+								newLines: 1,
+								lines: ['-old', '+new'],
+							},
+						],
+						userModified: false,
+						replaceAll: false,
+					}}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('diff-viewer')).toBeTruthy();
+			// structuredPatch hidden by default (shown only in detailed variant)
+			expect(screen.queryByText('Structured patch')).toBeNull();
+		});
+
+		it('should show structured patch in detailed variant for FileEditOutput', () => {
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-detailed"
+					input={{ file_path: '/test.ts', old_string: 'old', new_string: 'new' }}
+					output={{
+						filePath: '/test.ts',
+						oldString: 'old',
+						newString: 'new',
+						originalFile: 'old',
+						structuredPatch: [
+							{
+								oldStart: 1,
+								oldLines: 1,
+								newStart: 1,
+								newLines: 1,
+								lines: ['-old', '+new'],
+							},
+						],
+						userModified: false,
+						replaceAll: false,
+					}}
+					variant="detailed"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('diff-viewer')).toBeTruthy();
+			expect(screen.getByText('Structured patch')).toBeTruthy();
+		});
+
+		it('should render typed FileWriteOutput create type', () => {
+			render(
+				<ToolResultCard
+					toolName="Write"
+					toolId="write-typed"
+					input={{ file_path: '/test.ts', content: 'const x = 1;' }}
+					output={{
+						type: 'create',
+						filePath: '/test.ts',
+						content: 'const x = 1;',
+						structuredPatch: [],
+						originalFile: null,
+					}}
+					variant="detailed"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('New File: /test.ts')).toBeTruthy();
+			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+		});
+
+		it('should render typed FileWriteOutput update type', () => {
+			render(
+				<ToolResultCard
+					toolName="Write"
+					toolId="write-update"
+					input={{ file_path: '/test.ts', content: 'const x = 2;' }}
+					output={{
+						type: 'update',
+						filePath: '/test.ts',
+						content: 'const x = 2;',
+						structuredPatch: [
+							{
+								oldStart: 1,
+								oldLines: 1,
+								newStart: 1,
+								newLines: 1,
+								lines: ['-const x = 1;', '+const x = 2;'],
+							},
+						],
+						originalFile: 'const x = 1;',
+						gitDiff: {
+							filename: '/test.ts',
+							status: 'modified',
+							additions: 1,
+							deletions: 1,
+							changes: 2,
+							patch: '',
+						},
+					}}
+					variant="detailed"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Updated File: /test.ts')).toBeTruthy();
+			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+			expect(screen.getByText('Git: 1 additions, 1 deletions')).toBeTruthy();
 		});
 	});
 
