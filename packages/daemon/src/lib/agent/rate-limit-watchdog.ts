@@ -99,6 +99,13 @@ export class RateLimitWatchdog {
 		// Cancel any existing timer
 		this.cancel();
 
+		// Cannot retry without a message to re-enqueue — fail fast instead of
+		// scheduling a no-op cooldown timer that would abort on fire.
+		if (!lastUserMessage) {
+			this.logger.warn('Cannot schedule rate limit auto-retry: no user message to retry.');
+			return false;
+		}
+
 		if (this.retryCount >= this.config.maxAutoRetries) {
 			this.logger.warn(
 				`Max auto-retries (${this.config.maxAutoRetries}) exceeded for 429 error. ` +

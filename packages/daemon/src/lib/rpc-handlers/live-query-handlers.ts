@@ -774,6 +774,7 @@ SELECT
     WHEN json_extract(s.processing_state, '$.status') = 'processing' THEN 'active'
     WHEN json_extract(s.processing_state, '$.status') = 'queued' THEN 'queued'
     WHEN json_extract(s.processing_state, '$.status') = 'waiting_for_input' THEN 'waiting_for_input'
+    WHEN json_extract(s.processing_state, '$.status') = 'rate_limit_cooldown' THEN 'cooldown'
     WHEN json_extract(s.processing_state, '$.status') = 'interrupted' THEN 'interrupted'
     WHEN ase.task_status = 'open' THEN 'queued'
     ELSE 'idle'

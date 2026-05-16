@@ -877,11 +877,18 @@ export class QueryRunner {
 					const processingState = stateManager.getState();
 
 					// Notify rate limit watchdog when 429 exhaustion is detected.
-					// Only trigger for 429/rate limit errors (not 402/quota which are
-					// non-retryable billing issues). Returns true if cooldown was scheduled.
+					// Only trigger for genuine 429 rate-limit errors, not 402/quota/billing
+					// issues (which are non-retryable). Use case-insensitive matching.
+					const lowerMsg = errorMessage.toLowerCase();
+					const isBillingError =
+						errorMessage.includes('402') ||
+						lowerMsg.includes('no quota') ||
+						lowerMsg.includes('quota exceeded') ||
+						lowerMsg.includes('insufficient_quota');
 					const is429Error =
 						category === ErrorCategory.RATE_LIMIT &&
-						(errorMessage.includes('429') || errorMessage.includes('rate limit'));
+						!isBillingError &&
+						(errorMessage.includes('429') || lowerMsg.includes('rate limit'));
 					rateLimitCooldownScheduled =
 						is429Error &&
 						!!this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage);
@@ -911,21 +918,26 @@ export class QueryRunner {
 								: isTransientConnectionError && isRetry
 									? 'Could not get a response. The connection was interrupted. Please try again.'
 									: undefined;
-					await errorManager.handleError(
-						session.id,
-						error as Error,
-						category,
-						startupTimeoutUserMessage,
-						processingState,
-						{
-							errorMessage,
-							queueSize: messageQueue.size(),
-							providerId: providerId ?? 'anthropic',
-							workspacePath: session.workspacePath ?? undefined,
-							isRootWorkspace: !session.worktree,
-							startupTimeoutMs: STARTUP_TIMEOUT_MS,
-						}
-					);
+					// Skip error broadcast when rate-limit cooldown is scheduled —
+					// the session.error event is terminal in Space workflows and would
+					// prematurely mark the task as failed before the auto-retry fires.
+					if (!rateLimitCooldownScheduled) {
+						await errorManager.handleError(
+							session.id,
+							error as Error,
+							category,
+							startupTimeoutUserMessage,
+							processingState,
+							{
+								errorMessage,
+								queueSize: messageQueue.size(),
+								providerId: providerId ?? 'anthropic',
+								workspacePath: session.workspacePath ?? undefined,
+								isRootWorkspace: !session.worktree,
+								startupTimeoutMs: STARTUP_TIMEOUT_MS,
+							}
+						);
+					}
 				}
 				// Skip idle transition when rate limit cooldown was scheduled —
 				// the watchdog already set rate_limit_cooldown state and will
