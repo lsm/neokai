@@ -383,7 +383,7 @@ export function ContextPanel() {
 					fixed md:relative
 					top-0 left-0 md:left-auto
 					h-safe-screen md:h-full w-70
-					bg-dark-950 border-r ${borderColors.ui.default}
+					bg-dark-950
 					flex flex-col
 					pt-safe md:pt-0
 					z-40 md:z-auto
