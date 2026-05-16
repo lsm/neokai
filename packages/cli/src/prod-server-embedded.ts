@@ -4,6 +4,7 @@
  */
 
 import { createDaemonApp } from '@neokai/daemon/app';
+import { warmupSDKCliBinary } from '@neokai/daemon/lib/agent/sdk-cli-resolver';
 import type { Config } from '@neokai/daemon/config';
 import { createLogger } from '@neokai/shared';
 import { homedir } from 'node:os';
@@ -28,6 +29,7 @@ export async function startProdServer(config: Config) {
 	let isShuttingDown = false;
 	let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
 	let server: ReturnType<typeof Bun.serve> | null = null;
+	let sdkWarmupTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const shutdown = async (signal: string) => {
 		if (isShuttingDown) {
@@ -35,6 +37,9 @@ export async function startProdServer(config: Config) {
 			process.exit(1);
 		}
 		isShuttingDown = true;
+
+		// Cancel pending SDK warmup if shutting down early
+		if (typeof sdkWarmupTimer !== 'undefined') clearTimeout(sdkWarmupTimer);
 
 		log.info(
 			`\nReceived ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
@@ -184,6 +189,10 @@ export async function startProdServer(config: Config) {
 			return createJsonErrorResponse(error instanceof Error ? error.message : String(error));
 		},
 	});
+
+	// Warm up SDK CLI binary after unified server is bound.
+	// Non-fatal: download failure only means first query retries resolution.
+	sdkWarmupTimer = setTimeout(warmupSDKCliBinary, 0);
 
 	log.info(`\nProduction server running!`);
 	log.info(`   UI: http://localhost:${config.port}`);

@@ -42,6 +42,7 @@ import {
 } from './space-agent-notification-service';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
+import type { ExternalEventService } from '../../external-events/external-event-service';
 
 const log = new Logger('space-runtime-service');
 
@@ -119,6 +120,8 @@ export interface SpaceRuntimeServiceConfig {
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	commandBus?: InternalCommandBus<DaemonCommandMap>;
 	externalEventStore?: ExternalEventStore;
+	/** External event publisher, available for runtime-owned direct publications if needed. */
+	externalEventService?: ExternalEventService;
 	/**
 	 * Reply routing registry for symmetric message routing.
 	 * Passed to space-agent-tools so member sessions can register their

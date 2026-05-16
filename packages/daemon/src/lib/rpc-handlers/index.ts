@@ -12,6 +12,7 @@ import type { UUID } from 'crypto';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { DaemonCommandMap, InternalCommandBus } from '../internal-command-bus';
 import type { ExternalEventStore } from '../external-events/external-event-store';
+import type { ExternalEventService } from '../external-events/external-event-service';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
@@ -54,7 +55,6 @@ import { SpaceTaskManager } from '../space/managers/space-task-manager';
 import { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import { SpaceGitHubService } from '../github/space-github';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
@@ -111,9 +111,10 @@ export interface RPCHandlerDependencies {
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	commandBus: InternalCommandBus<DaemonCommandMap>;
 	externalEventStore: ExternalEventStore;
+	/** External event service available to runtime subscribers when direct publishing is needed. */
+	externalEventService: ExternalEventService;
 	db: Database;
 	gitHubService?: GitHubService;
-	spaceGitHubService: SpaceGitHubService;
 	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
@@ -418,6 +419,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		scheduleService,
 		commandBus: deps.commandBus,
 		externalEventStore: deps.externalEventStore,
+		externalEventService: deps.externalEventService,
 		replyRoutingRegistry,
 	});
 

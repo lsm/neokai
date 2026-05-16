@@ -17,7 +17,7 @@ describe('ExternalEventExtensionConfigStore', () => {
 			.prepare(
 				`SELECT name FROM sqlite_master
 				 WHERE type = 'table' AND name IN (
-					'external_event_source_configs',
+					'external_event_extension_configs',
 					'space_external_event_source_configs'
 				 )
 				 ORDER BY name`
@@ -25,7 +25,7 @@ describe('ExternalEventExtensionConfigStore', () => {
 			.all() as { name: string }[];
 
 		expect(rows.map((row) => row.name)).toEqual([
-			'external_event_source_configs',
+			'external_event_extension_configs',
 			'space_external_event_source_configs',
 		]);
 	});
@@ -67,6 +67,21 @@ describe('ExternalEventExtensionConfigStore', () => {
 			globallyEnabled: false,
 			capabilities: { polling: true },
 			settings: { pollIntervalMs: 120_000 },
+		});
+	});
+
+	test('persists global config when optional settings are omitted', async () => {
+		await store.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+		});
+
+		await expect(store.getGlobalConfig('github')).resolves.toEqual({
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+			settings: {},
 		});
 	});
 

@@ -25,12 +25,14 @@ import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-h
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
-import { SpaceGitHubService } from './lib/github/space-github';
 import { ExternalEventService, ExternalEventStore } from './lib/external-events';
-import {
-	GitHubEventExtension,
-	StaticExternalEventExtensionConfigStore,
-} from './lib/external-events/github';
+import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store';
+import { ExternalEventExtensionManager } from './lib/external-events/extension-manager';
+import type {
+	HttpExternalEventExtension,
+	RpcExternalEventExtension,
+} from './lib/external-events/types';
+import { GitHubEventExtension } from './lib/external-events/github';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
@@ -97,10 +99,12 @@ export interface DaemonAppContext {
 	 * GitHub service instance (null if not configured)
 	 */
 	gitHubService: GitHubService | null;
-	/** Legacy Space-level GitHub PR activity ingestion service */
-	spaceGitHubService: SpaceGitHubService;
-	/** GitHub external-event source extension */
-	githubEventExtension: GitHubEventExtension;
+	/** Source-agnostic external event persistence and delivery lifecycle store */
+	externalEventStore: ExternalEventStore;
+	/** External event publisher used by source extensions */
+	externalEventService: ExternalEventService;
+	/** External event extension manager */
+	extensionManager: ExternalEventExtensionManager;
 	/** Phase 2: Reactive database wrapper for change event emission */
 	reactiveDb: ReturnType<typeof createReactiveDatabase>;
 	/** Phase 2: Live query engine for reactive SQL queries */
@@ -419,35 +423,66 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const fileIndex = new FileIndex(config.workspaceRoot);
 	void fileIndex.init();
 
-	const spaceGitHubService = new SpaceGitHubService(
-		db.getDatabase(),
-		internalEventBus,
-		process.env.GITHUB_TOKEN,
-		() => reactiveDb.notifyChange('space_github_events')
-	);
 	const externalEventStore = new ExternalEventStore(db.getDatabase());
 	const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
-	const githubEventPollingEnabled = !!(
-		config.githubPollingInterval && config.githubPollingInterval > 0
-	);
-	const githubEventConfig = new StaticExternalEventExtensionConfigStore({
-		globallyEnabled: true,
-		webhooks: true,
-		polling: githubEventPollingEnabled,
-	});
-	const githubEventExtension = new GitHubEventExtension(spaceGitHubService.eventExtensionRepo, {
-		githubToken: process.env.GITHUB_TOKEN,
-		pollIntervalMs: githubEventPollingEnabled ? config.githubPollingInterval! * 1000 : undefined,
-		onWatchedReposChanged: () => reactiveDb.notifyChange('space_github_watched_repos'),
-	});
-	const externalEventExtensionContext = {
+	const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
+	const sourceConfigTables: Record<string, string[]> = {
+		github: ['space_github_watched_repos'],
+	};
+	const extensionContext = {
 		publisher: externalEventService,
-		config: githubEventConfig,
+		config: extensionConfigStore,
 		onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
-			if (change.source === 'github') reactiveDb.notifyChange('space_github_watched_repos');
+			logInfo('[Daemon] Extension config changed', change);
+			for (const table of sourceConfigTables[change.source] ?? []) {
+				reactiveDb.notifyChange(table);
+			}
 		},
 	};
-	githubEventExtension.registerRpcHandlers(messageHub, externalEventExtensionContext);
+	const extensionManager = new ExternalEventExtensionManager();
+	const githubPollingEnabled = !!(config.githubPollingInterval && config.githubPollingInterval > 0);
+	if (githubPollingEnabled) {
+		const githubGlobalConfig = await extensionConfigStore.getGlobalConfig('github');
+		await extensionConfigStore.setGlobalConfig('github', {
+			...githubGlobalConfig,
+			capabilities: {
+				...githubGlobalConfig.capabilities,
+				polling: true,
+			},
+		});
+	}
+	extensionManager.register(
+		new GitHubEventExtension(
+			db.getDatabase(),
+			process.env.GITHUB_TOKEN,
+			githubPollingEnabled ? { pollIntervalMs: config.githubPollingInterval! * 1000 } : undefined
+		)
+	);
+
+	function isHttpExternalEventExtension(
+		extension: unknown
+	): extension is HttpExternalEventExtension {
+		return 'routes' in (extension as Record<string, unknown>);
+	}
+
+	function isRpcExternalEventExtension(extension: unknown): extension is RpcExternalEventExtension {
+		return 'registerRpcHandlers' in (extension as Record<string, unknown>);
+	}
+
+	for (const extension of extensionManager.getAll()) {
+		const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
+		if (!globalConfig.globallyEnabled) continue;
+
+		if (isHttpExternalEventExtension(extension)) {
+			extensionManager.registerRoutes(extension.routes, extensionContext);
+		}
+		if (isRpcExternalEventExtension(extension) && globalConfig.capabilities.rpcConfig) {
+			extensionManager.registerRpcHandlers(extension.sourceId, messageHub, extensionContext);
+		}
+
+		await extensionManager.startExtension(extension.sourceId, extensionContext);
+		logInfo(`[Daemon] Started external event extension: ${extension.sourceId}`);
+	}
 
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const rpcHandlers = setupRPCHandlers({
@@ -461,7 +496,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		externalEventStore,
 		db,
 		gitHubService: gitHubService ?? undefined,
-		spaceGitHubService,
+		externalEventService,
 		spaceManager,
 		spaceAgentManager,
 		jobQueue,
@@ -475,7 +510,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	});
 	const { cleanup: rpcHandlerCleanup, spaceRuntimeService, spaceWorktreeManager } = rpcHandlers;
 	taskAgentManager = rpcHandlers.taskAgentManager;
-	await githubEventExtension.start(externalEventExtensionContext);
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
 	// bind the WebSocket/HTTP server. `start()` inside `setupRPCHandlers` kicks
@@ -545,11 +579,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			}
 
 			// Space-level public-safe GitHub webhook endpoint.
-			const githubExtensionRoute = githubEventExtension.routes.find(
-				(route) => route.path === url.pathname && route.method === req.method
-			);
-			if (githubExtensionRoute) {
-				return githubExtensionRoute.handle(req, externalEventExtensionContext);
+			const extensionRoute = extensionManager
+				.getRegisteredRoutes()
+				.find((route) => route.path === url.pathname && route.method === req.method);
+			if (extensionRoute) {
+				return extensionRoute.handle(req);
 			}
 
 			// Legacy room GitHub webhook endpoint (kept as a compatibility alias only).
@@ -860,8 +894,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				gitHubService.stop();
 				logInfo('[Daemon] GitHub service stopped');
 			}
-			await githubEventExtension.stop();
-			logInfo('[Daemon] GitHub event extension stopped');
+			for (const extension of extensionManager.getAll()) {
+				await extensionManager.stopExtension(extension.sourceId);
+			}
+			logInfo('[Daemon] External event extensions stopped');
 
 			// Stop all Task Agent sessions before sessionManager.cleanup() so that
 			// Task Agent sessions are interrupted cleanly before the session pool drains.
@@ -911,8 +947,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		commandBus,
 		queryBus,
 		gitHubService,
-		spaceGitHubService,
-		githubEventExtension,
+		externalEventStore,
+		externalEventService,
+		extensionManager,
 		reactiveDb,
 		liveQueries,
 		spaceAgentManager,

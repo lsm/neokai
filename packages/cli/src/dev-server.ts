@@ -1,4 +1,5 @@
 import { createDaemonApp } from '@neokai/daemon/app';
+import { warmupSDKCliBinary } from '@neokai/daemon/lib/agent/sdk-cli-resolver';
 import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
@@ -47,6 +48,7 @@ export async function startDevServer(config: Config) {
 	let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
 	let vite: Awaited<ReturnType<typeof createViteServer>> | null = null;
 	let server: ReturnType<typeof Bun.serve> | null = null;
+	let sdkWarmupTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const shutdown = async (signal: string) => {
 		if (isShuttingDown) {
@@ -55,6 +57,9 @@ export async function startDevServer(config: Config) {
 			process.exit(1);
 		}
 		isShuttingDown = true;
+
+		// Cancel pending SDK warmup if shutting down early
+		if (typeof sdkWarmupTimer !== 'undefined') clearTimeout(sdkWarmupTimer);
 
 		log.info(
 			`\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
