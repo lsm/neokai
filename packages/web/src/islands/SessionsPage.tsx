@@ -4,7 +4,7 @@ import type {
 	GitBranchesResponse,
 	WorkspaceHistoryEntry,
 } from '@neokai/shared';
-import { connectionState, authStatus } from '../lib/state.ts';
+import { connectionState, authStatus, sessions } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
 import {
 	createSession,
@@ -15,6 +15,8 @@ import {
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
+import { isUserSession } from '../lib/session-utils.ts';
+import { listProjectPaths } from '../lib/projects.ts';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 
@@ -28,7 +30,7 @@ export function SessionsPage() {
 	const [text, setText] = useState('');
 	const [submitting, setSubmitting] = useState(false);
 
-	const [projects, setProjects] = useState<WorkspaceHistoryEntry[]>([]);
+	const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
 	const [project, setProject] = useState<string | null>(null);
 	const [gitInfo, setGitInfo] = useState<GitBranchesResponse | null>(null);
 	const [gitLoading, setGitLoading] = useState(false);
@@ -38,10 +40,14 @@ export function SessionsPage() {
 	const canCreate =
 		connectionState.value === 'connected' && (authStatus.value?.isAuthenticated ?? false);
 
-	// Load known project folders for the project picker.
+	// Project folders shown in the picker — same set as the sidebar: folders
+	// with sessions, merged with registered workspace-history folders.
+	const projectPaths = listProjectPaths(sessions.value.filter(isUserSession), history);
+
+	// Load registered workspace-history folders for the project picker.
 	useEffect(() => {
 		getWorkspaceHistory()
-			.then(setProjects)
+			.then(setHistory)
 			.catch(() => {
 				// Non-critical — the picker still offers "No folder" and "Browse…".
 			});
@@ -91,7 +97,7 @@ export function SessionsPage() {
 			if (!picked?.path) return;
 			const folder = picked.path;
 			await addWorkspaceToHistory(folder);
-			setProjects((prev) =>
+			setHistory((prev) =>
 				prev.some((p) => p.path === folder)
 					? prev
 					: [{ path: folder, lastUsedAt: Date.now(), useCount: 1 }, ...prev]
@@ -218,7 +224,7 @@ export function SessionsPage() {
 					{/* Project / worktree / branch context row */}
 					<div class="mt-2 px-1">
 						<WorkspaceChips
-							projects={projects}
+							projects={projectPaths}
 							selectedProject={project}
 							gitInfo={gitInfo}
 							gitLoading={gitLoading}

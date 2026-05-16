@@ -1,14 +1,15 @@
 import { useState } from 'preact/hooks';
-import type { WorkspaceHistoryEntry, GitBranchesResponse } from '@neokai/shared';
+import type { GitBranchesResponse } from '@neokai/shared';
 import { Dropdown, type DropdownMenuItem } from './ui/Dropdown.tsx';
 import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
+import { projectName } from '../lib/projects.ts';
 
 /** Max branches rendered in the picker before asking the user to refine. */
 const MAX_BRANCH_RESULTS = 100;
 
 interface WorkspaceChipsProps {
-	/** Known project folders (workspace history). */
-	projects: WorkspaceHistoryEntry[];
+	/** Known project folder paths. */
+	projects: string[];
 	/** Currently selected project path, or null for "no folder". */
 	selectedProject: string | null;
 	/** Git context for the selected project (null while loading or for "no folder"). */
@@ -23,12 +24,6 @@ interface WorkspaceChipsProps {
 	onBrowse: () => void;
 	onSelectMode: (mode: 'worktree' | 'direct') => void;
 	onSelectBranch: (branch: string) => void;
-}
-
-function basename(path: string): string {
-	const trimmed = path.replace(/\/+$/, '');
-	const idx = trimmed.lastIndexOf('/');
-	return (idx >= 0 ? trimmed.slice(idx + 1) : trimmed) || trimmed;
 }
 
 const CHIP_CLASS =
@@ -94,10 +89,10 @@ export function WorkspaceChips({
 
 	const projectItems: DropdownMenuItem[] = [
 		{ label: 'No folder', onClick: () => onSelectProject(null) },
-		...projects.map((p) => ({
-			label: basename(p.path),
-			title: p.path,
-			onClick: () => onSelectProject(p.path),
+		...projects.map((path) => ({
+			label: projectName(path),
+			title: path,
+			onClick: () => onSelectProject(path),
 		})),
 		{ type: 'divider' as const },
 		{ label: 'Browse for folder…', onClick: onBrowse },
@@ -138,7 +133,7 @@ export function WorkspaceChips({
 					<button type="button" class={CHIP_CLASS} title={selectedProject ?? 'No folder'}>
 						<FolderIcon />
 						<span class="max-w-[180px] truncate">
-							{selectedProject ? basename(selectedProject) : 'No folder'}
+							{selectedProject ? projectName(selectedProject) : 'No folder'}
 						</span>
 						<Chevron />
 					</button>

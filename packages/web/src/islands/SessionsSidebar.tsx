@@ -12,6 +12,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { isUserSession } from '../lib/session-utils.ts';
 import { getCollapsedProjects, setCollapsedProjects } from '../lib/sidebar-prefs.ts';
+import { projectRootOf, projectName } from '../lib/projects.ts';
 import SessionListItem from '../components/SessionListItem.tsx';
 import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 
@@ -20,18 +21,6 @@ interface SessionsSidebarProps {
 	onSessionSelect?: () => void;
 	/** Called from the mobile-only close affordance. */
 	onClose?: () => void;
-}
-
-/** The project root a session belongs to: the main repo for worktree sessions. */
-function projectRootOf(session: Session): string | null {
-	return session.worktree?.mainRepoPath ?? session.workspacePath ?? null;
-}
-
-/** Folder basename of an absolute path, used as the project display name. */
-function basename(path: string): string {
-	const trimmed = path.replace(/\/+$/, '');
-	const idx = trimmed.lastIndexOf('/');
-	return (idx >= 0 ? trimmed.slice(idx + 1) : trimmed) || trimmed;
 }
 
 function lastActive(session: Session): number {
@@ -80,7 +69,7 @@ function buildView(
 		.map(([path, grouped]) => {
 			const sorted = grouped.slice().sort((a, b) => lastActive(b) - lastActive(a));
 			const sortTime = sorted.length > 0 ? lastActive(sorted[0]) : (historyTime.get(path) ?? 0);
-			return { path, name: basename(path), sessions: sorted, sortTime };
+			return { path, name: projectName(path), sessions: sorted, sortTime };
 		})
 		.sort((a, b) => b.sortTime - a.sortTime);
 
