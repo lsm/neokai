@@ -1881,9 +1881,7 @@ class SpaceStore {
 	async sendTaskMessage(
 		taskId: string,
 		message: string,
-		target?:
-			| { kind: 'task_agent' }
-			| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string },
+		target?: { kind: 'node_agent'; agentName: string; nodeExecutionId?: string },
 		images?: MessageImage[]
 	): Promise<{
 		ok: boolean;
