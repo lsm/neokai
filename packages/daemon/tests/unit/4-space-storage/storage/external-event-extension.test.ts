@@ -241,6 +241,56 @@ describe('external event extension startup primitives', () => {
 		await extension.stop();
 	});
 
+	test('pollOnce includes watched repos without per-space config rows', async () => {
+		seedTask(db);
+		db.prepare(
+			`INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at)
+			 VALUES ('space-2', 'space-2', 'Space 2', '/tmp/space-2', 'active', 1, 1)`
+		).run();
+		const extension = new GitHubEventExtension(db);
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-2',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+		await config.setSpaceConfig('space-1', 'github', {
+			spaceId: 'space-1',
+			source: 'github',
+			enabled: true,
+			settings: {},
+		});
+		const rowsByUrl = new Map<string, unknown[]>([
+			['/issues/comments', [pollingRow()]],
+			['/pulls/comments', []],
+			['/pulls', []],
+		]);
+		const fetchImpl = async (url: string | URL | Request) => {
+			const href = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+			const path = new URL(href).pathname;
+			const rows = rowsByUrl.get(path.replace('/repos/acme/widgets', '')) ?? [];
+			return new Response(JSON.stringify(rows), { status: 200 });
+		};
+
+		expect(await extension.pollOnce(fetchImpl as typeof fetch)).toBe(2);
+		expect(db.prepare(`SELECT COUNT(*) AS count FROM space_external_events`).get()).toEqual({
+			count: 2,
+		});
+		await extension.stop();
+	});
+
 	test('seeds GitHub globally enabled independent of one-time env state', async () => {
 		expect(await config.getGlobalConfig('github')).toMatchObject({
 			source: 'github',
@@ -336,7 +386,7 @@ describe('external event extension startup primitives', () => {
 		await extension.stop();
 	});
 
-	test('pollOnce RPC rejects when polling capability is disabled', async () => {
+	test('pollOnce RPC rejects when polling capability is explicitly disabled', async () => {
 		db.prepare(
 			`UPDATE external_event_extension_configs SET capabilities_json = ? WHERE source = 'github'`
 		).run(JSON.stringify({ webhooks: true, polling: false, rpcConfig: true }));
@@ -352,6 +402,24 @@ describe('external event extension startup primitives', () => {
 		const pollOnce = getRequestHandler(hub, 'space.github.pollOnce');
 		expect(pollOnce).toBeDefined();
 		await expect(pollOnce!({})).rejects.toThrow('GitHub polling capability is disabled');
+	});
+
+	test('pollOnce RPC allows missing polling capability', async () => {
+		db.prepare(
+			`UPDATE external_event_extension_configs SET capabilities_json = ? WHERE source = 'github'`
+		).run(JSON.stringify({ webhooks: true, rpcConfig: true }));
+		const extension = new GitHubEventExtension(db);
+		const hub = new MessageHub({ defaultSessionId: 'global' });
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+		extension.registerRpcHandlers(hub, context);
+
+		const pollOnce = getRequestHandler(hub, 'space.github.pollOnce');
+		expect(pollOnce).toBeDefined();
+		expect(await pollOnce!({})).toEqual({ count: 0 });
 	});
 
 	test('does not register RPC handlers when rpcConfig capability is disabled', async () => {

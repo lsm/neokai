@@ -146,7 +146,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		hub.onRequest('space.github.pollOnce', async (data) => {
 			await assertRpcConfigEnabled(context, this.sourceId);
 			const global = await context.config.getGlobalConfig(this.sourceId);
-			if (!global.capabilities.polling) {
+			if (global.capabilities.polling === false) {
 				throw new Error('GitHub polling capability is disabled');
 			}
 			const params = (data ?? {}) as { spaceId?: string };
@@ -225,15 +225,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 	private async pollEnabledSpaces(fetchImpl: typeof fetch = fetch): Promise<number> {
 		if (!this.context) return 0;
 		if (!(await this.isPollingGloballyEnabled())) return 0;
-		const enabledSpaces = await this.context.config.listEnabledSpaces(this.sourceId);
-		if (enabledSpaces.length > 0) {
-			let count = 0;
-			for (const space of enabledSpaces) count += await this.pollSpace(space.spaceId, fetchImpl);
-			return count;
-		}
 		let count = 0;
-		for (const repo of this.repo.listPollingRepos())
+		for (const repo of this.repo.listPollingRepos()) {
+			const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
+			if (spaceConfig && !spaceConfig.enabled) continue;
 			count += await this.pollWatchedRepo(repo, fetchImpl);
+		}
 		return count;
 	}
 
