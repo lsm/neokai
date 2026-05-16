@@ -254,7 +254,14 @@ type DeliveryRecord = {
   - `'coordinator'` or `'space-agent'` → agent actor with coordinator role.
   - `'task-agent'` → legacy; map to coordinator agent role for backward compatibility.
   - worker agent name (e.g. `'coder'`, `'reviewer'`) → worker actor scoped by
-    `(workflowRunId, nodeId, agentName)` from the legacy row's run context.
+    `(workflowRunId, nodeId, agentName)` from the legacy row's run context. Legacy rows do not store
+    sender `nodeId`, so when the same agent name exists on multiple nodes in the run, the sender cannot
+    be unambiguously reconstructed. Disambiguation rule: use the source node that matches the delivery's
+    resolved target — a worker sending to another node sent from its own slot. If the target is
+    `space-agent` or `human` (non-worker), pick the first matching node by node creation order and mark
+    the sender `nodeId` as approximate. The `senderActorId` field in this case preserves the agent name
+    identity even if `nodeId` is approximate, because v1 audit uses sender kind + name + run, not
+    exact node, for human-visible attribution.
   Do not infer sender kind from `targetKind`. A `targetKind = 'node_agent'` row can have
   `sourceAgentName: 'human'` (human sends to worker), and a `targetKind = 'space_agent'` row can have
   a real worker source (worker escalates to Coordinator). Preserve original sender identity in both
@@ -414,8 +421,11 @@ Preserve current post-task-agent behavior:
   contract. No implicit task-only fallback routing; calls without a target node or actor fail fast.
 - `node_id` maps to worker target: if `node_id` is a UUID, look up the workflow node execution by that
   UUID to find `(workflowRunId, nodeId, agentName)`, then format `@worker:<run>/<node>/<agent>`. If
-  `node_id` is not a UUID, resolve by agent name using workflow topology as in the legacy target table
-  (matching current `resolveNodeExecution` helper: UUID first, then agentName case-insensitive).
+  `node_id` is not a UUID, resolve by agent name to a single match using workflow topology (matching
+  current `resolveNodeExecution` helper: UUID first, then one agentName match case-insensitive). This
+  resolves to exactly one worker slot, not fan-out — even if the agent name appears on multiple nodes,
+  the wrapper picks the first match by node creation order. Fan-out only applies to the legacy
+  node-agent `send_message` wrapper's bare agent/node name targets, not to `send_message_to_task`.
 - Wrapper input accepts an optional `target` field for explicit actor/role/session targets
   (`@coordinator`, `@role:task-manager`, `@session:<id>`). When `target` is set, it takes precedence
   over `node_id` and is mapped directly to generic `send_message.target`.
