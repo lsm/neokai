@@ -187,10 +187,10 @@ export default function ChatContainer({
 	const [pendingErrorMessage, setPendingErrorMessage] = useState<string | null>(null);
 	const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const rightPanelTarget = rightPanelTargetSignal.value;
-	const gitPanelOpen = rightPanelTarget?.type === 'git' && rightPanelTarget.sessionId === sessionId;
+	const rightPanelOpen = rightPanelTarget !== null;
 
-	const handleGitPanelToggle = () => {
-		rightPanelTargetSignal.value = gitPanelOpen ? null : { type: 'git', sessionId };
+	const handleRightPanelToggle = () => {
+		rightPanelTargetSignal.value = rightPanelOpen ? null : { type: 'git', sessionId };
 	};
 
 	useEffect(() => {
@@ -1219,12 +1219,12 @@ export default function ChatContainer({
 				onResetClick={sessionActions.handleResetAgent}
 				onArchiveClick={sessionActions.handleArchiveClick}
 				onDeleteClick={deleteModal.open}
-				onGitPanelToggle={features.worktree ? handleGitPanelToggle : undefined}
+				onRightPanelToggle={features.worktree ? handleRightPanelToggle : undefined}
 				archiving={sessionActions.archiving}
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
 				onBack={onBack}
-				gitPanelOpen={gitPanelOpen}
+				rightPanelOpen={rightPanelOpen}
 			/>
 
 			{/* Messages */}

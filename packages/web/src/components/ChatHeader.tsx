@@ -26,11 +26,11 @@ export interface ChatHeaderProps {
 	onResetClick: () => void;
 	onArchiveClick: () => void;
 	onDeleteClick: () => void;
-	onGitPanelToggle?: () => void;
+	onRightPanelToggle?: () => void;
 	archiving?: boolean;
 	resettingAgent?: boolean;
 	readonly?: boolean;
-	gitPanelOpen?: boolean;
+	rightPanelOpen?: boolean;
 	/**
 	 * When provided, renders a left-arrow back button in the header's left
 	 * slot (replacing the `MobileMenuButton`) that invokes this callback on
@@ -51,11 +51,11 @@ export function ChatHeader({
 	onResetClick,
 	onArchiveClick,
 	onDeleteClick,
-	onGitPanelToggle,
+	onRightPanelToggle,
 	archiving = false,
 	resettingAgent = false,
 	readonly = false,
-	gitPanelOpen = false,
+	rightPanelOpen = false,
 	onBack,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
@@ -206,45 +206,52 @@ export function ChatHeader({
 					<MobileMenuButton />
 				)}
 
-				{/* Session title */}
-				<h2
-					data-testid="chat-header-title"
-					class="flex-1 min-w-0 text-sm font-semibold text-gray-100 truncate"
-				>
-					{session?.title || 'New Session'}
-				</h2>
+				<div class="flex flex-1 min-w-0 items-center gap-1.5">
+					<h2
+						data-testid="chat-header-title"
+						class="min-w-0 truncate text-sm font-semibold text-gray-100"
+					>
+						{session?.title || 'New Session'}
+					</h2>
 
-				{onGitPanelToggle && (
+					{/* Session menu sits next to the title, matching the Codex header placement. */}
+					<Dropdown
+						class="flex-shrink-0"
+						trigger={
+							<IconButton
+								size="sm"
+								title={!isConnected ? 'Not connected' : 'Session options'}
+								disabled={!isConnected}
+								class="text-gray-500"
+							>
+								<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+									<path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+								</svg>
+							</IconButton>
+						}
+						items={getHeaderActions()}
+					/>
+				</div>
+
+				{onRightPanelToggle && (
 					<IconButton
-						title={gitPanelOpen ? 'Hide Git panel' : 'Show Git panel'}
-						onClick={onGitPanelToggle}
-						class={cn('hidden lg:inline-flex', gitPanelOpen && 'bg-white/10 text-gray-100')}
+						title={rightPanelOpen ? 'Hide right panel' : 'Show right panel'}
+						onClick={onRightPanelToggle}
+						class={cn(
+							'hidden lg:inline-flex flex-shrink-0',
+							rightPanelOpen && 'bg-white/10 text-gray-100'
+						)}
 					>
 						<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
 								stroke-width={1.8}
-								d="M6 3v7m0 0a3 3 0 100-6 3 3 0 000 6zm0 0v11m12-7V3m0 11a3 3 0 100-6 3 3 0 000 6zm0 0v7"
+								d="M4.75 5.75A2 2 0 016.75 3.75h10.5a2 2 0 012 2v12.5a2 2 0 01-2 2H6.75a2 2 0 01-2-2V5.75zM14.5 4v16"
 							/>
 						</svg>
 					</IconButton>
 				)}
-
-				{/* Options dropdown */}
-				<Dropdown
-					trigger={
-						<IconButton
-							title={!isConnected ? 'Not connected' : 'Session options'}
-							disabled={!isConnected}
-						>
-							<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-								<path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-							</svg>
-						</IconButton>
-					}
-					items={getHeaderActions()}
-				/>
 			</div>
 		</div>
 	);
