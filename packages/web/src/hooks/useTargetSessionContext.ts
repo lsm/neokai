@@ -13,7 +13,7 @@ import { useModelSwitcher } from './useModelSwitcher.ts';
 
 export interface TaskComposerTarget {
 	id: string;
-	kind: 'task_agent' | 'node_agent';
+	kind: 'node_agent';
 	label: string;
 	agentName?: string;
 	nodeExecutionId?: string;
@@ -61,12 +61,9 @@ function normalizeTargetName(name: string | null | undefined): string {
  */
 export function resolveTargetSessionId(
 	target: TaskComposerTarget | null,
-	activityMembers: SpaceTaskActivityMember[],
-	taskAgentSessionId: string | null
+	activityMembers: SpaceTaskActivityMember[]
 ): string | null {
 	if (!target) return null;
-	if (target.kind === 'task_agent') return taskAgentSessionId;
-
 	// node_agent: prefer exact nodeExecutionId match, then fall back to agent name
 	const member = activityMembers.find((m) => {
 		if (m.kind !== 'node_agent') return false;
@@ -91,19 +88,17 @@ export function useTargetSessionContext({
 	targets,
 	selectedTarget,
 	activityMembers,
-	taskAgentSessionId,
 	defaultAgentModels,
 }: {
 	taskId: string;
 	targets: TaskComposerTarget[];
 	selectedTarget: TaskComposerTarget | null;
 	activityMembers: SpaceTaskActivityMember[];
-	taskAgentSessionId: string | null;
 	defaultAgentModels?: Map<string, string>;
 }): UseTargetSessionContextResult {
 	const targetSessionId = useMemo(
-		() => resolveTargetSessionId(selectedTarget, activityMembers, taskAgentSessionId),
-		[selectedTarget, activityMembers, taskAgentSessionId]
+		() => resolveTargetSessionId(selectedTarget, activityMembers),
+		[selectedTarget, activityMembers]
 	);
 	const isStarted = !!targetSessionId;
 
@@ -314,7 +309,7 @@ export function useTargetSessionContext({
 				preThinking && preThinking.taskId === taskId ? preThinking : undefined;
 			if (!preModelCurrent && !preThinkingCurrent) continue;
 
-			const sessionId = resolveTargetSessionId(target, activityMembers, taskAgentSessionId);
+			const sessionId = resolveTargetSessionId(target, activityMembers);
 			if (!sessionId) continue;
 
 			const promises: Promise<unknown>[] = [];
@@ -378,7 +373,7 @@ export function useTargetSessionContext({
 		taskId,
 		targets,
 		activityMembers,
-		taskAgentSessionId,
+
 		preConfiguredModel,
 		preConfiguredThinking,
 		switcherModels,

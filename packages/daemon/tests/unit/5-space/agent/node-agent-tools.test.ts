@@ -336,7 +336,7 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(false);
-		expect(data.permittedTargets).toEqual(['task-agent', 'space-agent']);
+		expect(data.permittedTargets).toEqual(['space-agent']);
 		expect(data.message).toContain('Use "space-agent"');
 	});
 
@@ -349,7 +349,7 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(true);
-		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent', 'space-agent']);
+		expect(data.permittedTargets).toEqual(['reviewer', 'space-agent']);
 	});
 
 	test('returns empty peer list when no peers in the run', async () => {
@@ -3078,7 +3078,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
 		// so callers can use either form with send_message.
 		expect(data.permittedTargets).toContain('Review'); // topology node name
 		expect(data.permittedTargets).toContain('agent-reviewer'); // resolved slot name
-		expect(data.permittedTargets).toContain('task-agent'); // always present
 	});
 
 	test('shows cross-node peer with active status when node has been activated', async () => {

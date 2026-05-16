@@ -800,16 +800,6 @@ describe('SpaceRuntimeService', () => {
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 		});
 
-		test('skips space_task_agent sessions (handled by TaskAgentManager)', async () => {
-			const agent = makeMemberAgentSession();
-			const sessionManager = makeSessionManager(agent);
-			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
-
-			await svc.attachSpaceToolsToMemberSession(makeMemberSession({ type: 'space_task_agent' }));
-
-			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
-		});
-
 		test('skips workflow node-agent sub-sessions (session ID contains :task:…:exec:)', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = makeSessionManager(agent);
@@ -993,39 +983,6 @@ describe('SpaceRuntimeService', () => {
 			await internalEventBus.publish('session.created', {
 				sessionId: chatSession.id,
 				session: chatSession,
-			});
-			await new Promise<void>((resolve) => setTimeout(resolve, 10));
-
-			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
-
-			await svc.stop();
-		});
-
-		test('does NOT attach for space_task_agent sessions (handled by TaskAgentManager)', async () => {
-			const agent = makeMemberAgentSession();
-			const sessionManager = {
-				getSessionAsync: mock(async () => agent),
-				listSessions: mock(() => [] as Session[]),
-			} as unknown as SessionManager;
-
-			const internalEventBus = await createTestInternalEventBus('space-rts-test-task-agent');
-			const svc = new SpaceRuntimeService({
-				db: {} as BunDatabase,
-				spaceManager: createMockSpaceManager(mockSpace),
-				spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
-				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
-				workflowRunRepo: {} as SpaceWorkflowRunRepository,
-				taskRepo: {} as SpaceTaskRepository,
-				tickIntervalMs: 60_000,
-				sessionManager,
-				internalEventBus,
-			});
-			svc.start();
-
-			const taskAgentSession = makeMemberSession({ type: 'space_task_agent' });
-			await internalEventBus.publish('session.created', {
-				sessionId: taskAgentSession.id,
-				session: taskAgentSession,
 			});
 			await new Promise<void>((resolve) => setTimeout(resolve, 10));
 

@@ -386,7 +386,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * permitted channel connections, and completion state.
 		 *
 		 * Does NOT include self (filtered by `mySessionId`).
-		 * Always includes `task-agent` as a reachable coordinator target.
+		 * Always includes `space-agent` as an escalation target.
 		 *
 		 * Returns permittedTargets: agent names this agent can directly send to via send_message.
 		 * Returns completionState per peer: execution status, latest progress summary, and completedAt.
@@ -589,7 +589,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				...topologyTargets,
 				...crossNodePeers.map((p) => p.agentName),
 			]);
-			const permittedTargets = [...permittedTargetSet, 'task-agent', 'space-agent'];
+			const permittedTargets = [...permittedTargetSet, 'space-agent'];
 			const channelTopologyDeclared = !resolver.isEmpty();
 
 			return jsonResult({
@@ -602,7 +602,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				message:
 					`Found ${peers.length} peer(s). ` +
 					`Permitted direct targets via send_message: ${permittedTargets.join(', ')}. ` +
-					`Use "task-agent" to reach the workflow coordinator. ` +
 					`Use "space-agent" to escalate blockers or request human/space-level judgment.`,
 			});
 		},
@@ -880,7 +879,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * List all agents and nodes this agent can reach, grouped as:
 		 *   - withinNodePeers: agents in the same workflow node (current group members)
 		 *   - crossNodeTargets: agents/nodes reachable via declared cross-node paths
-		 *   - taskAgent: always included as a coordinator target (target: "task-agent")
 		 *
 		 * Uses agent-friendly terminology — no mention of channels or policies.
 		 * Gate status is included for cross-node targets so agents know whether
@@ -973,20 +971,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				myNodeName,
 				withinNodePeers,
 				crossNodeTargets,
-				taskAgent: {
-					target: 'task-agent',
-					description: 'Workflow coordinator. Use to escalate blockers or request human input.',
-				},
 				spaceAgent: {
 					target: 'space-agent',
 					description: 'Space-level escalation target. Use to request human/space-level judgment.',
 				},
 				reachabilityDeclared,
 				message:
-					`You can reach ${totalReachable} target(s) plus the task-agent coordinator and space-agent escalation target. ` +
+					`You can reach ${totalReachable} target(s) plus the space-agent escalation target. ` +
 					`Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
 					crossNodeSummary +
-					` Send to "task-agent" to reach the workflow coordinator.` +
 					` Use target 'space-agent' to escalate blockers or request human/space-level judgment.`,
 			});
 		},

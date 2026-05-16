@@ -461,7 +461,7 @@ export class SpaceRuntimeService {
 		// When any new session is created with `context.spaceId`, attach the
 		// shared Space coordination tools. The space-chat session itself is
 		// handled by `setupSpaceAgentSession` (it also sets the system prompt);
-		// the space_task_agent sessions are handled by `TaskAgentManager`
+		// space_chat sessions are handled by `setupSpaceAgentSession`
 		// (which merges `space-agent-tools` into its MCP set). This subscription
 		// covers the remaining cases: worker sessions
 		// that live inside a Space and need to send/receive messages via
@@ -711,8 +711,6 @@ export class SpaceRuntimeService {
 	 * Explicitly skipped for:
 	 *   - `space_chat` sessions — handled by `setupSpaceAgentSession`, which
 	 *     also sets the system prompt.
-	 *   - `space_task_agent` sessions — handled by `TaskAgentManager`, which
-	 *     merges `space-agent-tools` into its own MCP map.
 	 *
 	 * Uses `mergeRuntimeMcpServers` so any previously-attached MCP servers on
 	 * the session (e.g., room tools) are preserved. The session's system
@@ -729,6 +727,9 @@ export class SpaceRuntimeService {
 
 		// Skip sessions that other owners already manage.
 		if (session.type === 'space_chat') return;
+		// Legacy task-agent sessions (no longer created) must not receive the
+		// generic member-server — they lack myAgentName and would misattribute
+		// outbound messages as "space-agent".
 		if (session.type === 'space_task_agent') return;
 
 		// Skip workflow node-agent sub-sessions (session ID contains `:task:…:exec:`).

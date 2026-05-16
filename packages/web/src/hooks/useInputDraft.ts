@@ -89,6 +89,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 	useSignalEffect(() => {
 		const content = contentSignal.value;
 
+		// Skip save logic entirely when there is no session — draft is ephemeral.
+		if (!sessionId) return;
 		// Clear existing timeout
 		if (draftSaveTimeoutRef.current) {
 			clearTimeout(draftSaveTimeoutRef.current);

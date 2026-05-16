@@ -522,6 +522,19 @@ export class SpaceTaskRepository {
 	}
 
 	/**
+	 * List all active (non-terminal) tasks regardless of task_agent_session_id.
+	 * Used by TaskAgentManager.rehydrate() to restore sub-sessions for all
+	 * active workflow runs after a daemon restart.
+	 */
+	listActive(): SpaceTask[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved')`
+		);
+		const rows = stmt.all() as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
 	 * Get a task by its Task Agent session ID
 	 */
 	getTaskBySessionId(sessionId: string): SpaceTask | null {

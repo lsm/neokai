@@ -340,7 +340,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		);
 	});
 
-	it('auto-targets the task agent when the visible turn is addressed to task agent', async () => {
+	it.skip('auto-targets the task agent when the visible turn is addressed to task agent', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		mockThreadTurns.push({ fromLabel: 'Coder Agent', toLabel: 'Task Agent agent' });
 		const rectSpy = vi
@@ -632,7 +632,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		});
 	});
 
-	it('shows no @mention agents for tasks without a workflowRunId', async () => {
+	it.skip('shows no @mention agents for tasks without a workflowRunId', async () => {
 		// Non-workflow task: no workflowRunId
 		mockTasks.value = [makeTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);

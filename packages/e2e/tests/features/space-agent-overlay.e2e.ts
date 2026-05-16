@@ -23,7 +23,7 @@
  *   - A unique workspace directory is created in beforeEach.
  *   - Space + task are created via RPC (infrastructure).
  *   - The task is marked done so the space runtime ignores it (no race against
- *     ensureTaskAgentSession clearing session IDs).
+ *     the runtime clearing session IDs).
  *   - A human session is created via RPC so ChatContainer has a real session to
  *     load; without a valid session ID the ChatHeader / back button may not render.
  *

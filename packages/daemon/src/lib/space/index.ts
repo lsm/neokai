@@ -49,17 +49,6 @@ export {
 } from './agents/custom-agent';
 export type { CustomAgentConfig, ResolveAgentInitConfig } from './agents/custom-agent';
 
-export {
-	buildTaskAgentSystemPrompt,
-	buildTaskAgentInitialMessage,
-	createTaskAgentInit,
-} from './agents/task-agent';
-export type {
-	TaskAgentContext,
-	PreviousTaskSummary,
-	TaskAgentSessionConfig,
-} from './agents/task-agent';
-
 export { buildSpaceChatSystemPrompt } from './agents/space-chat-agent';
 export type {
 	SpaceChatAgentContext,
@@ -72,28 +61,6 @@ export {
 	createSpaceAgentMcpServer,
 } from './tools/space-agent-tools';
 export type { SpaceAgentToolsConfig, SpaceAgentMcpServer } from './tools/space-agent-tools';
-
-export {
-	createTaskAgentToolHandlers,
-	createTaskAgentMcpServer,
-} from './tools/task-agent-tools';
-export type {
-	TaskAgentToolsConfig,
-	TaskAgentMcpServer,
-} from './tools/task-agent-tools';
-
-export {
-	TASK_AGENT_TOOL_SCHEMAS,
-	RequestHumanInputSchema,
-	ApproveTaskSchema,
-	SubmitForApprovalSchema,
-} from './tools/task-agent-tool-schemas';
-export type {
-	RequestHumanInputInput,
-	ApproveTaskInput,
-	SubmitForApprovalInput,
-	TaskAgentToolName,
-} from './tools/task-agent-tool-schemas';
 
 export {
 	exportAgent,
