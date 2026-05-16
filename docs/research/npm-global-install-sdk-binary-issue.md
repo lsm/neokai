@@ -59,8 +59,9 @@ VOLUME /root/.neokai/sdk
 Alternatively, pre-populate the cache in the image by running the daemon once:
 
 ```dockerfile
-# Start daemon briefly to trigger SDK binary download, then stop it
-RUN timeout 120 kai --port 9999 || true
+# Start daemon briefly to trigger SDK binary download, then stop it.
+# Timeout must exceed resolver worst case: 15s (metadata) + 120s (download) + overhead.
+RUN timeout 180 kai --port 9999 || true
 ```
 
 The binary will be cached at `~/.neokai/sdk/claude-<version>-<platform>/claude` for subsequent starts.
