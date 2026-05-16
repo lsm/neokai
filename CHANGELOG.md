@@ -2,6 +2,22 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.25.0] - 2026-05-16
+
+A release adding 429 auto-recovery, SDK binary warmup, GitHub external event extension, hook card redesign, and fixing node-agent MCP tools in eager-spawn sessions. 5 commits since v0.24.0.
+
+### Added
+
+- **429 retry exhaustion detection + auto-recovery**: RateLimitWatchdog detects exhausted SDK retries, schedules auto-retry after 10-minute cooldown (up to 3 cycles); frontend countdown banner with retry-now/cancel; cancels on new user message
+- **SDK binary warmup**: Download SDK CLI at daemon startup (after server bind); non-fatal on failure; guards concurrent warmup and early shutdown
+- **GitHub external event extension**: Full wiring of extension manager, routes, RPC handlers, lifecycle hooks; legacy polling preserved; per-space config persistence
+- **Hook response card redesign**: Collapsible card matching ToolResultCard; default collapsed; slate color scheme; error indicator for non-zero exits
+
+### Fixed
+
+- **Node-agent MCP tools in eager-spawn sessions**: `isWorkflowSubSession` now matches `:agent:` IDs; `attachSpaceToolsToMemberSession` skips eager-spawn sessions; workflow MCP tools force-loaded with `alwaysLoad: true` to bypass SDK tool-search deferral
+- **429 recovery edge cases**: Case-insensitive rate-limit matching; exclude 402/quota errors; guard cooldown on null message; cancel watchdog on reset/restart; await async state writes
+
 ## [0.24.0] - 2026-05-15
 
 A release adding runtime anti-stuck recovery, external event delivery, reply routing, gate-open caching, and replacing the embedded SDK CLI with runtime download. 20 commits since v0.23.0.
