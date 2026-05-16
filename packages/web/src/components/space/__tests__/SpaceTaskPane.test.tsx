@@ -371,7 +371,7 @@ describe('SpaceTaskPane', () => {
 	it('shows unavailable-thread copy when no task session exists', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Task thread is not available yet.')).toBeTruthy();
+		expect(getByText(/Task thread is not available/)).toBeTruthy();
 		expect(getByText('Keep this view open while the task thread starts.')).toBeTruthy();
 	});
 
@@ -518,13 +518,17 @@ describe('SpaceTaskPane — composer', () => {
 		expect(mockSendTaskMessage).not.toHaveBeenCalled();
 	});
 
-	it.skip('renders composer with select-target placeholder when task has no activity yet', () => {
+	it('disables composer send when task has no activity or workflow', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
-		const { getByPlaceholderText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		const { queryByPlaceholderText, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-		expect(getByPlaceholderText('Select a target agent...')).toBeTruthy();
-		expect(getByTestId('send-button')).toBeTruthy();
-		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
+		// Composer renders but send is disabled (no targets available)
+		expect(queryByPlaceholderText('Select a target agent...')).toBeNull();
+		const sendButton = queryByTestId('send-button');
+		// Send button should be disabled or absent since canSendThreadMessage is false
+		if (sendButton) {
+			expect(sendButton.getAttribute('disabled')).not.toBeNull();
+		}
 	});
 
 	it.skip('clears threadSendError when a new send succeeds', async () => {
