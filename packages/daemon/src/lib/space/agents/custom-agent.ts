@@ -421,11 +421,17 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 
 	const customTools =
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
+	// Built-in tools the custom agent should NOT have (everything not in its
+	// configured tool list). Expressed as a denylist so MCP tools — which are
+	// never part of `customTools` — are not collaterally excluded.
+	const customDisallowedBuiltins = customTools
+		? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
+		: [];
 	const customToolPermissions = customTools
 		? {
 				sdkToolsPreset: customTools,
 				allowedTools: customTools,
-				disallowedTools: CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool)),
+				disallowedTools: customDisallowedBuiltins,
 			}
 		: {};
 	const model =
@@ -450,7 +456,14 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		const agentKey = sanitizeAgentKey(customAgent.name);
 		const agentDef: AgentDefinition = {
 			description: customAgent.description ?? `Custom agent: ${customAgent.name}`,
-			tools: customTools,
+			// Do NOT set `tools`. An AgentDefinition's `tools` is a strict allowlist;
+			// since `customTools` only ever contains built-in tool names, setting it
+			// here silently excludes every MCP tool (node-agent, fetch-mcp, …) that is
+			// attached to the session — which is why workflow agents could not see
+			// mcp__node-agent__* tools. Omitting `tools` inherits all tools from the
+			// parent session; the built-in restriction is still enforced via
+			// `disallowedTools`, which never matches MCP tool names.
+			disallowedTools: customDisallowedBuiltins,
 			model: 'inherit',
 			prompt: visiblePrompt,
 		};
