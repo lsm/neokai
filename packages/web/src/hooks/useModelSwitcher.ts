@@ -125,12 +125,20 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			family = 'openrouter';
 		}
 		const contextWindow = m.contextWindow ?? m.context_window;
+		// Provider precedence: backend-supplied provider wins. If missing, prefer
+		// ID-based inference (mirrors backend `inferProviderForModel` rules so
+		// edge cases like `openai/gpt-*`, `gpt-oss:*`, `kimi-*:latest`, and
+		// `claude-*/preview` route correctly) before falling back to the
+		// family map and finally anthropic. Without this, dropping the
+		// provider field would lump GLM/Kimi/etc. models under Anthropic.
+		const inferredProvider =
+			m.provider || inferProviderFromModelId(mid) || PROVIDER_FROM_FAMILY[family] || 'anthropic';
 		return {
 			id: m.id,
 			name: m.display_name,
 			alias: m.alias || m.id,
 			family,
-			provider: m.provider || 'anthropic',
+			provider: inferredProvider,
 			contextWindow: typeof contextWindow === 'number' && contextWindow > 0 ? contextWindow : 0,
 			description: m.description || '',
 			releaseDate: '',
@@ -148,6 +156,68 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 	});
 
 	return modelInfos;
+}
+
+/** Map model family → owning provider for FE fallback inference. */
+const PROVIDER_FROM_FAMILY: Record<string, string> = {
+	glm: 'glm',
+	kimi: 'kimi',
+	minimax: 'minimax',
+	gpt: 'anthropic-codex',
+	openrouter: 'openrouter',
+};
+
+/**
+ * Infer the owning provider purely from a model ID string.
+ *
+ * Used only as a defensive fallback when the backend payload omits a provider
+ * tag. The backend is the source of truth — this exists so a missing or
+ * stale provider field never makes a non-Anthropic model appear under the
+ * Anthropic group in the picker.
+ *
+ * Rules mirror the daemon's `inferProviderForModel` (registry.ts) so the
+ * frontend fallback never disagrees with backend routing:
+ *   - canonical `claude-*` always stays anthropic, including slash-suffixed
+ *     variants like `claude-sonnet-4.6/preview`
+ *   - Ollama Cloud claims any `:cloud` suffix (catches `openrouter`-style
+ *     refs too, e.g. `foo:cloud`) — mirrors daemon precedence
+ *   - `qwen*:NNNb` (large size) → ollama-cloud, other `qwen*:` → ollama
+ *   - `gpt-oss:NNNb` → ollama-cloud, other `gpt-oss:` → ollama or ollama-cloud
+ *     depending on `-cloud` suffix
+ *   - slash refs (`openai/gpt-5.4`, `google/gemma-4-31b:free`) → openrouter
+ *   - colon-tagged variants of `kimi-*`/`moonshot-*` (e.g. `kimi-k2:latest`)
+ *     fall through to ollama; bare prefixes (`kimi-k2`) → kimi
+ */
+export function inferProviderFromModelId(modelId: string): string | undefined {
+	const id = modelId.toLowerCase();
+
+	// Anthropic claims canonical claude-* IDs — including slash-suffixed variants
+	if (id.startsWith('claude-')) return 'anthropic';
+
+	// Ollama-Cloud explicit suffix wins even on slash refs (mirrors backend order)
+	if (id === 'ollama-cloud' || id.endsWith(':cloud')) return 'ollama-cloud';
+
+	// Specific Ollama families with colon-size routing
+	if (/^qwen[\w.-]*:[1-9]\d{2,}b$/i.test(id)) return 'ollama-cloud';
+	if (/^qwen[\w.-]*:/i.test(id)) return 'ollama';
+	if (/^gpt-oss:[1-9]\d{2,}b$/i.test(id)) return 'ollama-cloud';
+	if (id.startsWith('gpt-oss:')) return id.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
+
+	// Slash refs (e.g. `openai/gpt-5.4`, `google/gemma-4-31b:free`) go to OpenRouter.
+	// Must precede the generic colon→ollama fallback so OpenRouter IDs that
+	// happen to carry tier suffixes like `:free` are not misrouted to Ollama.
+	if (id === 'openrouter/auto' || id.includes('/')) return 'openrouter';
+
+	// Remaining colon-tagged IDs are local Ollama tags (e.g. `kimi-k2:latest`,
+	// `moonshot-v1:latest`). The colon-exclusion mirrors daemon kimi routing.
+	if (id.includes(':')) return 'ollama';
+
+	if (id.startsWith('glm-') || id === 'glm') return 'glm';
+	if (id.startsWith('moonshot-') || id.startsWith('kimi-') || id === 'kimi') return 'kimi';
+	if (id.startsWith('minimax-') || id === 'minimax') return 'minimax';
+	if (id === 'ollama') return 'ollama';
+	if (id.startsWith('gpt-')) return 'anthropic-codex';
+	return undefined;
 }
 
 /**

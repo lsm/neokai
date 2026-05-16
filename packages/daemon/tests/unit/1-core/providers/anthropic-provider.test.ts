@@ -271,4 +271,49 @@ describe('AnthropicProvider', () => {
 			expect(models).toEqual([]);
 		});
 	});
+
+	describe('convertSdkModels foreign-id filter', () => {
+		// Regression: when ANTHROPIC_BASE_URL is overridden to a non-Anthropic
+		// endpoint (e.g. GLM's Anthropic-compatible endpoint), the SDK may return
+		// foreign model IDs (e.g. `glm-5`). Those must be filtered out — tagging
+		// them as `provider: 'anthropic'` would surface GLM models in the
+		// Anthropic group of the model picker.
+		it('drops glm-* SDK models so they do not get tagged as anthropic', () => {
+			const sdkModels = [
+				{ value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 4.6 · ...' },
+				{ value: 'glm-5', displayName: 'GLM-5', description: 'GLM 5 · ...' },
+				{ value: 'glm-5-turbo', displayName: 'GLM-5-Turbo', description: 'GLM 5 turbo · ...' },
+			];
+
+			const converted = provider.convertSdkModels(sdkModels);
+
+			// No GLM IDs leak through tagged as anthropic
+			expect(converted.find((m) => m.id.startsWith('glm-'))).toBeUndefined();
+			// Anthropic-native IDs preserved
+			expect(converted.map((m) => m.id)).toContain('sonnet');
+			// All surviving entries tagged as anthropic (the provider's contract)
+			for (const m of converted) {
+				expect(m.provider).toBe('anthropic');
+			}
+		});
+
+		it('keeps full claude-* version IDs and canonical short IDs', () => {
+			const sdkModels = [
+				{ value: 'opus', displayName: 'Opus', description: 'Opus 4.6 · ...' },
+				{
+					value: 'claude-haiku-4-5-20251001',
+					displayName: 'Haiku',
+					description: 'Haiku 4.5 · ...',
+				},
+				{ value: 'MiniMax-M2.5', displayName: 'MiniMax', description: 'mm · ...' },
+			];
+
+			const converted = provider.convertSdkModels(sdkModels);
+			const ids = converted.map((m) => m.id);
+
+			expect(ids).toContain('opus');
+			expect(ids).toContain('claude-haiku-4-5-20251001');
+			expect(ids).not.toContain('MiniMax-M2.5');
+		});
+	});
 });

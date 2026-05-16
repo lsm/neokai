@@ -1087,6 +1087,76 @@ describe('mapRawModelsToModelInfos', () => {
 		expect(result[0].provider).toBe('anthropic');
 	});
 
+	// Regression: when the backend omits the provider field on a non-Anthropic
+	// model ID (e.g. due to a stale cache or env-leak that confuses the
+	// AnthropicProvider), the FE must NOT lump it under 'anthropic'. Infer the
+	// provider from the model ID instead.
+	it('infers glm provider when backend omits the provider field for glm-* ids', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'glm-5', display_name: 'GLM-5', description: '' },
+			{ id: 'glm-5-turbo', display_name: 'GLM-5-Turbo', description: '' },
+		]);
+		expect(result[0].provider).toBe('glm');
+		expect(result[1].provider).toBe('glm');
+	});
+
+	it('infers kimi/minimax providers when backend omits the provider field', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'kimi-k2', display_name: 'Kimi', description: '' },
+			{ id: 'MiniMax-M2.5', display_name: 'MiniMax', description: '' },
+		]);
+		const byId = Object.fromEntries(result.map((m) => [m.id, m.provider]));
+		expect(byId['kimi-k2']).toBe('kimi');
+		expect(byId['MiniMax-M2.5']).toBe('minimax');
+	});
+
+	// Regression for review feedback on PR #1925: the ID-inference fallback
+	// must mirror the daemon's `inferProviderForModel` so frontend grouping
+	// never disagrees with backend routing.
+	it('routes openai/gpt-* refs to openrouter, not anthropic-codex', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'openai/gpt-5.4', display_name: 'GPT-5.4 (OR)', description: '' },
+		]);
+		expect(result[0].provider).toBe('openrouter');
+	});
+
+	it('routes gpt-oss:* (Ollama) to ollama, not anthropic-codex', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'gpt-oss:20b', display_name: 'gpt-oss 20B', description: '' },
+			{ id: 'gpt-oss:120b-cloud', display_name: 'gpt-oss 120B cloud', description: '' },
+		]);
+		const byId = Object.fromEntries(result.map((m) => [m.id, m.provider]));
+		expect(byId['gpt-oss:20b']).toBe('ollama');
+		expect(byId['gpt-oss:120b-cloud']).toBe('ollama-cloud');
+	});
+
+	it('routes colon-tagged kimi/moonshot IDs to ollama, not kimi', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'kimi-k2:latest', display_name: 'Kimi K2 local', description: '' },
+		]);
+		expect(result[0].provider).toBe('ollama');
+	});
+
+	it('keeps slash-suffixed claude IDs under anthropic', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-sonnet-4.6/preview', display_name: 'Sonnet preview', description: '' },
+		]);
+		expect(result[0].provider).toBe('anthropic');
+	});
+
+	// Regression: OpenRouter IDs with tier suffixes carry both '/' and ':'
+	// (e.g. `google/gemma-4-31b:free`). Slash-routing must precede the
+	// generic colon→ollama fallback so these stay under OpenRouter.
+	it('routes slash refs with colon tier suffix to openrouter, not ollama', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'google/gemma-4-31b:free', display_name: 'Gemma 4 31B', description: '' },
+			{ id: 'meta-llama/llama-3.1-70b:free', display_name: 'Llama 3.1 70B', description: '' },
+		]);
+		const byId = Object.fromEntries(result.map((m) => [m.id, m.provider]));
+		expect(byId['google/gemma-4-31b:free']).toBe('openrouter');
+		expect(byId['meta-llama/llama-3.1-70b:free']).toBe('openrouter');
+	});
+
 	it('preserves GPT-5.5 context window metadata from models.list', () => {
 		const result = mapRawModelsToModelInfos([
 			{
