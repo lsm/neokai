@@ -47,20 +47,20 @@ function StatusIndicator({ sessionId }: { sessionId: string }) {
 	return null;
 }
 
-function WorktreeFolderIcon() {
+function CodexArrowsIcon() {
 	return (
 		<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 			<path
 				stroke-linecap="round"
 				stroke-linejoin="round"
-				stroke-width={1.6}
-				d="M3.75 7.5A2.25 2.25 0 016 5.25h4.25c.62 0 1.22.256 1.65.707l1.1 1.168h5A2.25 2.25 0 0120.25 9.375v6.875A2.25 2.25 0 0118 18.5H6a2.25 2.25 0 01-2.25-2.25V7.5z"
+				stroke-width={1.8}
+				d="M6 16 16 6m0 0h-6m6 0v6"
 			/>
 			<path
 				stroke-linecap="round"
 				stroke-linejoin="round"
-				stroke-width={1.6}
-				d="M8.25 11v4.5m0-4.5a1.25 1.25 0 100-2.5 1.25 1.25 0 000 2.5zm0 4.5a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5zm3.75-3.25h2.5c.69 0 1.25-.56 1.25-1.25V11m0 0a1.25 1.25 0 100-2.5 1.25 1.25 0 000 2.5z"
+				stroke-width={1.8}
+				d="M6 8l10 10m0 0h-6m6 0v-6"
 			/>
 		</svg>
 	);
@@ -117,10 +117,10 @@ export default function SessionListItem({
 				</h3>
 				{session.worktree && (
 					<span
-						class="text-sky-400/80 flex-shrink-0"
+						class="text-gray-400 flex-shrink-0"
 						title={`Worktree: ${session.worktree.branch}`}
 					>
-						<WorktreeFolderIcon />
+						<CodexArrowsIcon />
 					</span>
 				)}
 				{session.status === 'archived' && (
