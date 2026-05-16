@@ -12,6 +12,7 @@
 import type { Session, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { connectionState } from '../lib/state';
+import { cn } from '../lib/utils';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
 import { MobileMenuButton } from './ui/MobileMenuButton';
@@ -25,9 +26,11 @@ export interface ChatHeaderProps {
 	onResetClick: () => void;
 	onArchiveClick: () => void;
 	onDeleteClick: () => void;
+	onGitPanelToggle?: () => void;
 	archiving?: boolean;
 	resettingAgent?: boolean;
 	readonly?: boolean;
+	gitPanelOpen?: boolean;
 	/**
 	 * When provided, renders a left-arrow back button in the header's left
 	 * slot (replacing the `MobileMenuButton`) that invokes this callback on
@@ -48,9 +51,11 @@ export function ChatHeader({
 	onResetClick,
 	onArchiveClick,
 	onDeleteClick,
+	onGitPanelToggle,
 	archiving = false,
 	resettingAgent = false,
 	readonly = false,
+	gitPanelOpen = false,
 	onBack,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
@@ -208,6 +213,23 @@ export function ChatHeader({
 				>
 					{session?.title || 'New Session'}
 				</h2>
+
+				{onGitPanelToggle && (
+					<IconButton
+						title={gitPanelOpen ? 'Hide Git panel' : 'Show Git panel'}
+						onClick={onGitPanelToggle}
+						class={cn('hidden lg:inline-flex', gitPanelOpen && 'bg-white/10 text-gray-100')}
+					>
+						<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={1.8}
+								d="M6 3v7m0 0a3 3 0 100-6 3 3 0 000 6zm0 0v11m12-7V3m0 11a3 3 0 100-6 3 3 0 000 6zm0 0v7"
+							/>
+						</svg>
+					</IconButton>
+				)}
 
 				{/* Options dropdown */}
 				<Dropdown

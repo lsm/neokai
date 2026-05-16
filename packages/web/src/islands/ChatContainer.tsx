@@ -69,6 +69,7 @@ import {
 	replaceOverlayHistory,
 } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
+import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -185,6 +186,18 @@ export default function ChatContainer({
 	const [pendingWaitingForSession, setPendingWaitingForSession] = useState(false);
 	const [pendingErrorMessage, setPendingErrorMessage] = useState<string | null>(null);
 	const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
+	const rightPanelTarget = rightPanelTargetSignal.value;
+	const gitPanelOpen = rightPanelTarget?.type === 'git' && rightPanelTarget.sessionId === sessionId;
+
+	const handleGitPanelToggle = () => {
+		rightPanelTargetSignal.value = gitPanelOpen ? null : { type: 'git', sessionId };
+	};
+
+	useEffect(() => {
+		if (rightPanelTarget?.type === 'git' && rightPanelTarget.sessionId !== sessionId) {
+			rightPanelTargetSignal.value = { type: 'git', sessionId };
+		}
+	}, [rightPanelTarget, sessionId]);
 
 	// Watch taskActivity for the live session matching this pending agent.
 	const pendingLiveMember = useMemo(() => {
@@ -1206,10 +1219,12 @@ export default function ChatContainer({
 				onResetClick={sessionActions.handleResetAgent}
 				onArchiveClick={sessionActions.handleArchiveClick}
 				onDeleteClick={deleteModal.open}
+				onGitPanelToggle={features.worktree ? handleGitPanelToggle : undefined}
 				archiving={sessionActions.archiving}
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
 				onBack={onBack}
+				gitPanelOpen={gitPanelOpen}
 			/>
 
 			{/* Messages */}

@@ -77,6 +77,11 @@ export const contextPanelOpenSignal = signal<boolean>(false);
 // Command palette visibility (Cmd+K / Ctrl+K)
 export const commandPaletteOpenSignal = signal<boolean>(false);
 
+// Global right-side panel. Starts with Git session status, but the shell is
+// intentionally target-based so Space can attach task/agent panels later.
+export type RightPanelTarget = { type: 'git'; sessionId: string };
+export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
+
 // Settings section signal - which settings section is active
 export type SettingsSection =
 	| 'general'

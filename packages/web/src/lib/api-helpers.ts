@@ -41,6 +41,7 @@ import type {
 	WorkspaceAddResponse,
 	WorkspaceRemoveResponse,
 	GitBranchesResponse,
+	GitSessionStatusResponse,
 } from '@neokai/shared';
 import type {
 	ProviderAuthResponse,
@@ -320,6 +321,12 @@ export async function removeWorkspaceFromHistory(path: string): Promise<boolean>
 export async function getGitBranches(path: string): Promise<GitBranchesResponse> {
 	const hub = getHubOrThrow();
 	return await hub.request<GitBranchesResponse>('git.branches', { path });
+}
+
+/** Get read-only git status for a chat session's effective workspace */
+export async function getGitSessionStatus(sessionId: string): Promise<GitSessionStatusResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<GitSessionStatusResponse>('git.sessionStatus', { sessionId });
 }
 
 // ==================== Session Workspace Operations ====================

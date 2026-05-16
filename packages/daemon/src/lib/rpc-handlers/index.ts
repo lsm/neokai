@@ -236,8 +236,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const workspaceHistoryRepo = new WorkspaceHistoryRepository(deps.db.getDatabase());
 	setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo, deps.mcpImportService);
 
-	// Git context RPC handlers (git.branches) — drives workspace/worktree/branch pickers.
-	setupGitHandlers(deps.messageHub, deps.sessionManager.getWorktreeManager());
+	// Git context RPC handlers — drives workspace pickers and the session Git panel.
+	setupGitHandlers(deps.messageHub, deps.sessionManager.getWorktreeManager(), deps.sessionManager);
 
 	// Legacy inbox compatibility shim — the web Inbox UI still calls these RPCs.
 	// Room infrastructure is retired; this delegates directly to TaskRepository.

@@ -5,6 +5,7 @@ import { useGlobalShortcuts } from './hooks/useGlobalShortcuts.ts';
 
 import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
+import { RightPanel } from './islands/RightPanel.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
 import { CommandPalette } from './islands/CommandPalette.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
@@ -210,6 +211,8 @@ export function App() {
 				<div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-dark-900 md:rounded-l-2xl">
 					<MainContent />
 				</div>
+
+				<RightPanel />
 			</div>
 
 			{/* Global Toast Container */}

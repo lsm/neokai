@@ -6,6 +6,10 @@ import type {
 	CommitInfo,
 	WorktreeCommitStatus,
 	GitBranchesResponse,
+	GitChangedFile,
+	GitFileStatusKind,
+	GitSessionStatusResponse,
+	Session,
 } from '@neokai/shared';
 import { Logger } from './logger';
 import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils';
@@ -147,6 +151,221 @@ export class WorktreeManager {
 		}
 
 		return { isGitRepo: true, gitRoot, currentBranch, defaultBranch, branches, isDirty };
+	}
+
+	/**
+	 * Collect read-only Git status for a session's effective workspace.
+	 *
+	 * Worktree sessions report both the original project path and the isolated
+	 * worktree path. Direct sessions report the project path only. Never mutates
+	 * repository state.
+	 */
+	async getSessionGitStatus(session: Session): Promise<GitSessionStatusResponse> {
+		const mode = session.worktree ? 'worktree' : session.workspacePath ? 'direct' : 'none';
+		const workspacePath = session.workspacePath ?? null;
+		const worktreePath = session.worktree?.worktreePath ?? null;
+		const effectivePath = worktreePath ?? workspacePath;
+
+		const empty: GitSessionStatusResponse = {
+			sessionId: session.id,
+			mode,
+			isGitRepo: false,
+			workspacePath,
+			worktreePath,
+			mainRepoPath: session.worktree?.mainRepoPath ?? null,
+			branch: session.worktree?.branch ?? session.gitBranch ?? null,
+			baseBranch: null,
+			defaultBranch: null,
+			isDirty: false,
+			files: [],
+			commitsAhead: [],
+			aheadCount: null,
+			behindCount: null,
+		};
+
+		if (!effectivePath) return empty;
+
+		const repoInfo = await this.getRepoGitInfo(effectivePath);
+		if (!repoInfo.isGitRepo || !repoInfo.gitRoot) {
+			return { ...empty, isGitRepo: false };
+		}
+
+		const mainRepoPath =
+			session.worktree?.mainRepoPath ??
+			(await this.resolveMainRepoPath(effectivePath)) ??
+			repoInfo.gitRoot;
+		const branch =
+			session.worktree?.branch ??
+			repoInfo.currentBranch ??
+			session.gitBranch ??
+			(await this.getCurrentBranch(effectivePath));
+
+		let files: GitChangedFile[] = [];
+		let fileStatusError: string | undefined;
+		try {
+			files = await this.getChangedFiles(effectivePath);
+		} catch (error) {
+			fileStatusError = error instanceof Error ? error.message : String(error);
+		}
+
+		let baseBranch = repoInfo.defaultBranch;
+		let commitsAhead: CommitInfo[] = [];
+		let aheadCount: number | null = null;
+		let behindCount: number | null = null;
+
+		try {
+			if (session.worktree) {
+				const commitStatus = await this.getCommitsAhead(session.worktree);
+				baseBranch = commitStatus.baseBranch;
+				commitsAhead = commitStatus.commits;
+			}
+
+			if (baseBranch && branch && baseBranch !== branch) {
+				const counts = await this.getAheadBehind(mainRepoPath, baseBranch, branch);
+				aheadCount = counts.ahead;
+				behindCount = counts.behind;
+				if (!session.worktree && aheadCount > 0) {
+					commitsAhead = await this.getCommitLog(mainRepoPath, baseBranch, branch);
+				}
+			} else if (baseBranch && branch) {
+				aheadCount = 0;
+				behindCount = 0;
+			}
+		} catch (error) {
+			return {
+				...empty,
+				isGitRepo: true,
+				mainRepoPath,
+				branch,
+				baseBranch,
+				defaultBranch: repoInfo.defaultBranch,
+				isDirty: files.length > 0 || repoInfo.isDirty,
+				files,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
+
+		return {
+			sessionId: session.id,
+			mode,
+			isGitRepo: true,
+			workspacePath,
+			worktreePath,
+			mainRepoPath,
+			branch,
+			baseBranch,
+			defaultBranch: repoInfo.defaultBranch,
+			isDirty: files.length > 0 || repoInfo.isDirty,
+			files,
+			commitsAhead,
+			aheadCount,
+			behindCount,
+			error: fileStatusError,
+		};
+	}
+
+	private async getChangedFiles(repoPath: string): Promise<GitChangedFile[]> {
+		const git = this.getGit(repoPath);
+		const output = await git.raw(['status', '--porcelain=v1', '-z']);
+		const entries = output.split('\0').filter(Boolean);
+		const files: GitChangedFile[] = [];
+
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i];
+			if (entry.length < 4) continue;
+
+			const stagedCode = entry[0];
+			const unstagedCode = entry[1];
+			if (stagedCode === '!' && unstagedCode === '!') continue;
+
+			const isRename = stagedCode === 'R' || unstagedCode === 'R';
+			const isCopy = stagedCode === 'C' || unstagedCode === 'C';
+			const path = entry.slice(3);
+			const oldPath = isRename || isCopy ? entries[++i] : undefined;
+
+			files.push({
+				path,
+				oldPath,
+				status: this.gitStatusKind(stagedCode, unstagedCode),
+				staged: stagedCode !== ' ' && stagedCode !== '?' && stagedCode !== '!',
+			});
+		}
+
+		return files.sort((a, b) => a.path.localeCompare(b.path));
+	}
+
+	private gitStatusKind(stagedCode: string, unstagedCode: string): GitFileStatusKind {
+		if (
+			stagedCode === 'U' ||
+			unstagedCode === 'U' ||
+			(stagedCode === 'A' && unstagedCode === 'A') ||
+			(stagedCode === 'D' && unstagedCode === 'D')
+		) {
+			return 'conflicted';
+		}
+		if (stagedCode === '?' || unstagedCode === '?') return 'untracked';
+		if (stagedCode === 'R' || unstagedCode === 'R') return 'renamed';
+
+		const code = unstagedCode !== ' ' ? unstagedCode : stagedCode;
+		switch (code) {
+			case 'A':
+				return 'added';
+			case 'D':
+				return 'deleted';
+			case 'M':
+			case 'T':
+				return 'modified';
+			default:
+				return 'other';
+		}
+	}
+
+	private async getAheadBehind(
+		repoPath: string,
+		baseBranch: string,
+		branch: string
+	): Promise<{ ahead: number; behind: number }> {
+		const git = this.getGit(repoPath);
+		const output = await git.raw([
+			'rev-list',
+			'--left-right',
+			'--count',
+			`${baseBranch}...${branch}`,
+		]);
+		const [behindRaw, aheadRaw] = output.trim().split(/\s+/);
+		return {
+			ahead: Number.parseInt(aheadRaw ?? '0', 10) || 0,
+			behind: Number.parseInt(behindRaw ?? '0', 10) || 0,
+		};
+	}
+
+	private async getCommitLog(
+		repoPath: string,
+		baseBranch: string,
+		branch: string
+	): Promise<CommitInfo[]> {
+		const git = this.getGit(repoPath);
+		const output = await git.raw([
+			'log',
+			`${baseBranch}..${branch}`,
+			'--max-count=20',
+			'--format=%H|%an|%ai|%s',
+		]);
+
+		if (!output.trim()) return [];
+
+		return output
+			.trim()
+			.split('\n')
+			.map((line) => {
+				const [fullHash, author, date, ...messageParts] = line.split('|');
+				return {
+					hash: fullHash.substring(0, 7),
+					author,
+					date,
+					message: messageParts.join('|'),
+				};
+			});
 	}
 
 	/**

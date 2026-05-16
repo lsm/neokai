@@ -10,6 +10,7 @@ import type {
 	SessionConfig,
 	Tool,
 	ToolBundle,
+	CommitInfo,
 	WorktreeCommitStatus,
 	// SDK Config types
 	SDKConfig,
@@ -130,6 +131,43 @@ export interface GitBranchesResponse {
 	branches: string[];
 	/** Whether the working tree has uncommitted changes. */
 	isDirty: boolean;
+}
+
+export type GitSessionMode = 'worktree' | 'direct' | 'none';
+
+export type GitFileStatusKind =
+	| 'modified'
+	| 'added'
+	| 'deleted'
+	| 'renamed'
+	| 'untracked'
+	| 'conflicted'
+	| 'other';
+
+export interface GitChangedFile {
+	path: string;
+	oldPath?: string;
+	status: GitFileStatusKind;
+	staged: boolean;
+}
+
+/** Response for `git.sessionStatus` — Git context for a specific chat session. */
+export interface GitSessionStatusResponse {
+	sessionId: string;
+	mode: GitSessionMode;
+	isGitRepo: boolean;
+	workspacePath: string | null;
+	worktreePath: string | null;
+	mainRepoPath: string | null;
+	branch: string | null;
+	baseBranch: string | null;
+	defaultBranch: string | null;
+	isDirty: boolean;
+	files: GitChangedFile[];
+	commitsAhead: CommitInfo[];
+	aheadCount: number | null;
+	behindCount: number | null;
+	error?: string;
 }
 
 export interface ArchiveSessionRequest {
