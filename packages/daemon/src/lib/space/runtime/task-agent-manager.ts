@@ -2520,10 +2520,8 @@ export class TaskAgentManager {
 
 		// --- Find the parent SpaceTask via workflowRunId
 		const tasks = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId);
-		// The parent task is the one that owns the workflow run (not a sub-task created by it).
-		// We identify it by having a task_agent_session_id set (the orchestrating task agent).
-		// Fall back to the first task in the run if none has a task agent session.
-		const parentTask = tasks.find((t) => t.taskAgentSessionId != null) ?? tasks[0] ?? null;
+		// The parent task is the primary task for this workflow run (oldest by created_at).
+		const parentTask = tasks[0] ?? null;
 		if (!parentTask) {
 			log.warn(
 				`TaskAgentManager.rehydrateSubSession: no parent task found for workflowRunId=${execution.workflowRunId}`
@@ -3177,7 +3175,7 @@ export class TaskAgentManager {
 
 		// Step 2: Build context.
 		const tasks = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId);
-		const parentTask = tasks.find((t) => t.taskAgentSessionId != null) ?? tasks[0] ?? null;
+		const parentTask = tasks[0] ?? null;
 		if (!parentTask) {
 			log.error(
 				`TaskAgentManager.mcpSelfHeal: no parent task found for workflowRunId=${execution.workflowRunId} — cannot self-heal`
@@ -3750,17 +3748,6 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 	// Public — post-approval routing delegates (PR 2/5)
 	// -------------------------------------------------------------------------
-
-	/**
-	 * No-op — task-agent LLM sessions are no longer spawned.
-	 * Kept as a stub for callers that check `injected: false` (e.g. PostApprovalRouter).
-	 */
-	async injectIntoTaskAgent(
-		_taskId: string,
-		_message: string
-	): Promise<{ injected: boolean; sessionId?: string }> {
-		return { injected: false };
-	}
 
 	/**
 	 * Spawn a fresh sub-session for a post-approval node-agent handoff (PR 2/5).

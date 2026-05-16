@@ -1,19 +1,18 @@
 /**
- * Unit tests for the PostApprovalRouter (PR 2/5).
+ * Unit tests for the PostApprovalRouter.
  *
  * The router is pure plumbing: it reads `workflow.postApproval` and dispatches
- * via three injected delegates. These tests use in-memory SQLite for the task
+ * via injected delegates. These tests use in-memory SQLite for the task
  * repository and stub the delegates, so we can assert exactly which branch
  * fired for each workflow configuration.
  *
- * Coverage matrix (§4.6 of the plan):
+ * Coverage matrix:
  *   - No postApproval → no-route; task flipped approved → done.
- *   - targetAgent === 'task-agent' → inline; injector called, no spawn.
  *   - targetAgent pointing at a node agent → spawn; session id stamped.
  *   - postApprovalSessionId already set + live → already-routed (no spawn).
  *   - postApprovalSessionId set but dead → re-spawn.
- *   - Empty instructions on inline / spawn path → skipped.
- *   - Inline Task Agent routes carry an explicit escalation reason.
+ *   - Empty instructions on spawn path → skipped.
+ *   - task-agent target is no longer valid → spawn path treated as node agent.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -22,11 +21,9 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import {
 	PostApprovalRouter,
-	buildPostApprovalInstructionsEvent,
 	isPostApprovalRoutingEnabled,
 	POST_APPROVAL_ROUTING_FLAG_ENV,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
-import { RUNTIME_ESCALATION_REASONS } from '../../../../src/lib/space/runtime/escalation-reasons.ts';
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 
 const SPACE_ID = 'space-par-test';
@@ -79,14 +76,7 @@ function stubWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 }
 
 interface Delegates {
-	injected: Array<{ taskId: string; message: string }>;
 	spawned: Array<{ taskId: string; targetAgent: string; kickoffMessage: string }>;
-	injector: {
-		injectIntoTaskAgent: (
-			taskId: string,
-			message: string
-		) => Promise<{ injected: boolean; sessionId?: string }>;
-	};
 	spawner: {
 		spawnPostApprovalSubSession: (args: {
 			task: SpaceTask;
@@ -101,15 +91,8 @@ interface Delegates {
 
 function makeDelegates(): Delegates {
 	const d: Delegates = {
-		injected: [],
 		spawned: [],
 		aliveSessions: new Set(),
-		injector: {
-			async injectIntoTaskAgent(taskId: string, message: string) {
-				d.injected.push({ taskId, message });
-				return { injected: true, sessionId: `ta-session-${taskId}` };
-			},
-		},
 		spawner: {
 			async spawnPostApprovalSubSession(args) {
 				const sessionId = `spawned-session-${d.spawned.length + 1}`;
@@ -132,9 +115,7 @@ function makeDelegates(): Delegates {
 }
 
 describe('isPostApprovalRoutingEnabled', () => {
-	// Flipped default in PR 3/5: routing is now opt-OUT. Absent / empty / any
-	// unrecognised value keeps routing enabled so ops defaults keep working.
-	test('returns true when env var unset (default ON in PR 3/5)', () => {
+	test('returns true when env var unset (default ON)', () => {
 		expect(isPostApprovalRoutingEnabled({})).toBe(true);
 	});
 	test('returns true when env var empty string', () => {
@@ -172,7 +153,6 @@ describe('PostApprovalRouter.route', () => {
 		const delegates = makeDelegates();
 		const router = new PostApprovalRouter({
 			taskRepo,
-			taskAgent: delegates.injector,
 			spawner: delegates.spawner,
 			livenessProbe: delegates.liveness,
 		});
@@ -188,44 +168,7 @@ describe('PostApprovalRouter.route', () => {
 		}
 		const final = taskRepo.getTask(task.id);
 		expect(final?.status).toBe('done');
-		expect(delegates.injected).toHaveLength(0);
 		expect(delegates.spawned).toHaveLength(0);
-	});
-
-	test("targetAgent === 'task-agent' → inline inject, no spawn", async () => {
-		const task = makeApprovedTask(taskRepo);
-		const delegates = makeDelegates();
-		const router = new PostApprovalRouter({
-			taskRepo,
-			taskAgent: delegates.injector,
-			spawner: delegates.spawner,
-			livenessProbe: delegates.liveness,
-		});
-
-		const workflow = stubWorkflow({
-			postApproval: {
-				targetAgent: 'task-agent',
-				instructions: 'Deploy task {{task_id}} to production.',
-			},
-		});
-		const result = await router.route(task, workflow, {
-			approvalSource: 'agent',
-			spaceId: SPACE_ID,
-			autonomyLevel: 4,
-			task_id: task.id,
-		});
-
-		expect(result.mode).toBe('inline');
-		if (result.mode === 'inline') {
-			expect(result.escalationReason).toBe(RUNTIME_ESCALATION_REASONS.HUMAN_APPROVAL);
-		}
-		expect(delegates.injected).toHaveLength(1);
-		expect(delegates.injected[0].taskId).toBe(task.id);
-		expect(delegates.injected[0].message).toContain('[POST_APPROVAL_INSTRUCTIONS]');
-		expect(delegates.injected[0].message).toContain(`Deploy task ${task.id}`);
-		expect(delegates.spawned).toHaveLength(0);
-		// Task stays in approved — router does NOT close on inline path.
-		expect(taskRepo.getTask(task.id)?.status).toBe('approved');
 	});
 
 	test('targetAgent pointing at node agent → spawn sub-session + stamp', async () => {
@@ -233,7 +176,6 @@ describe('PostApprovalRouter.route', () => {
 		const delegates = makeDelegates();
 		const router = new PostApprovalRouter({
 			taskRepo,
-			taskAgent: delegates.injector,
 			spawner: delegates.spawner,
 			livenessProbe: delegates.liveness,
 		});
@@ -257,7 +199,6 @@ describe('PostApprovalRouter.route', () => {
 		expect(delegates.spawned[0].kickoffMessage).toContain(task.title ?? '');
 		expect(delegates.spawned[0].kickoffMessage).toContain('mark_complete');
 		expect(delegates.spawned[0].kickoffMessage).toContain('Do NOT call approve_task');
-		expect(delegates.injected).toHaveLength(0);
 
 		const final = taskRepo.getTask(task.id);
 		expect(final?.postApprovalSessionId).toBe('spawned-session-1');
@@ -280,7 +221,6 @@ describe('PostApprovalRouter.route', () => {
 
 		const router = new PostApprovalRouter({
 			taskRepo,
-			taskAgent: delegates.injector,
 			spawner: delegates.spawner,
 			livenessProbe: delegates.liveness,
 		});
@@ -308,7 +248,6 @@ describe('PostApprovalRouter.route', () => {
 
 		const router = new PostApprovalRouter({
 			taskRepo,
-			taskAgent: delegates.injector,
 			spawner: delegates.spawner,
 			livenessProbe: delegates.liveness,
 		});
@@ -322,31 +261,11 @@ describe('PostApprovalRouter.route', () => {
 		expect(delegates.spawned).toHaveLength(1);
 	});
 
-	test('empty instructions on inline path → skipped', async () => {
-		const task = makeApprovedTask(taskRepo);
-		const delegates = makeDelegates();
-		const router = new PostApprovalRouter({
-			taskRepo,
-			taskAgent: delegates.injector,
-			spawner: delegates.spawner,
-			livenessProbe: delegates.liveness,
-		});
-
-		const result = await router.route(
-			task,
-			stubWorkflow({ postApproval: { targetAgent: 'task-agent', instructions: '   ' } }),
-			{ approvalSource: 'agent' }
-		);
-		expect(result.mode).toBe('skipped');
-		expect(delegates.injected).toHaveLength(0);
-	});
-
 	test('empty instructions on spawn path → skipped', async () => {
 		const task = makeApprovedTask(taskRepo);
 		const delegates = makeDelegates();
 		const router = new PostApprovalRouter({
 			taskRepo,
-			taskAgent: delegates.injector,
 			spawner: delegates.spawner,
 			livenessProbe: delegates.liveness,
 		});
@@ -370,31 +289,40 @@ describe('PostApprovalRouter.route', () => {
 		const delegates = makeDelegates();
 		const router = new PostApprovalRouter({
 			taskRepo,
-			taskAgent: delegates.injector,
 			spawner: delegates.spawner,
 			livenessProbe: delegates.liveness,
 		});
 		const result = await router.route(task, stubWorkflow(), { approvalSource: 'agent' });
 		expect(result.mode).toBe('skipped');
 	});
-});
 
-describe('buildPostApprovalInstructionsEvent', () => {
-	test('includes interpolated instructions and mark_complete hint', () => {
-		const db = makeDb();
-		try {
-			const taskRepo = new SpaceTaskRepository(db);
-			const task = makeApprovedTask(taskRepo);
-			const body = buildPostApprovalInstructionsEvent({
-				task,
-				interpolatedInstructions: 'Run `bun ship` and tweet about it.',
-			});
-			expect(body).toContain('[POST_APPROVAL_INSTRUCTIONS]');
-			expect(body).toContain(task.id);
-			expect(body).toContain('bun ship');
-			expect(body).toContain('mark_complete');
-		} finally {
-			db.close();
-		}
+	test('task-agent target treated as node-agent name → attempts spawn', async () => {
+		const task = makeApprovedTask(taskRepo);
+		const delegates = makeDelegates();
+		const router = new PostApprovalRouter({
+			taskRepo,
+			spawner: delegates.spawner,
+			livenessProbe: delegates.liveness,
+		});
+
+		// Legacy workflows may still declare targetAgent: 'task-agent'.
+		// After removal, the router treats it as a node-agent name and attempts spawn.
+		const workflow = stubWorkflow({
+			postApproval: {
+				targetAgent: 'task-agent',
+				instructions: 'Deploy task {{task_id}} to production.',
+			},
+		});
+		const result = await router.route(task, workflow, {
+			approvalSource: 'agent',
+			spaceId: SPACE_ID,
+			autonomyLevel: 4,
+			task_id: task.id,
+		});
+
+		// Router now spawns a sub-session for 'task-agent' agent name
+		expect(result.mode).toBe('spawn');
+		expect(delegates.spawned).toHaveLength(1);
+		expect(delegates.spawned[0].targetAgent).toBe('task-agent');
 	});
 });

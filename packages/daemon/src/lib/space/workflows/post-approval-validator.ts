@@ -26,14 +26,6 @@
 import type { PostApprovalRoute, WorkflowNode, WorkflowNodeInput } from '@neokai/shared';
 
 /**
- * Literal target name that always resolves to the orchestration Task Agent.
- * The Task Agent is a virtual node that is never stored in
- * `space_workflow_nodes` — it is injected at runtime — so it cannot match via
- * the node-agent-name path.
- */
-export const POST_APPROVAL_TASK_AGENT_TARGET = 'task-agent';
-
-/**
  * Input shape accepted by the validator. Both the persisted `WorkflowNode`
  * shape and the create-time `WorkflowNodeInput` shape are supported so the
  * validator can be called from both the `create` and `update` code paths of
@@ -63,8 +55,8 @@ export type PostApprovalValidationResult =
 export function collectEligiblePostApprovalTargets(
 	nodes: Array<WorkflowNode | WorkflowNodeInput>
 ): string[] {
-	const targets: string[] = [POST_APPROVAL_TASK_AGENT_TARGET];
-	const seen = new Set<string>(targets);
+	const targets: string[] = [];
+	const seen = new Set<string>();
 	for (const node of nodes) {
 		const agents = node.agents ?? [];
 		for (const agent of agents) {

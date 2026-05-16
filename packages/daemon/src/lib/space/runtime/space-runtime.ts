@@ -1372,9 +1372,6 @@ export class SpaceRuntime {
 		if (!manager) return null;
 		this.postApprovalRouter = new PostApprovalRouter({
 			taskRepo: this.config.taskRepo,
-			taskAgent: {
-				injectIntoTaskAgent: (taskId, message) => manager.injectIntoTaskAgent(taskId, message),
-			},
 			spawner: {
 				spawnPostApprovalSubSession: (args) => manager.spawnPostApprovalSubSession(args),
 			},
