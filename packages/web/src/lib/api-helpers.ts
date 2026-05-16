@@ -40,6 +40,7 @@ import type {
 	WorkspaceHistoryResponse,
 	WorkspaceAddResponse,
 	WorkspaceRemoveResponse,
+	GitBranchesResponse,
 } from '@neokai/shared';
 import type {
 	ProviderAuthResponse,
@@ -313,6 +314,12 @@ export async function removeWorkspaceFromHistory(path: string): Promise<boolean>
 	const hub = getHubOrThrow();
 	const { success } = await hub.request<WorkspaceRemoveResponse>('workspace.remove', { path });
 	return success;
+}
+
+/** Get git context (repo detection, branches, current/default branch) for a folder path */
+export async function getGitBranches(path: string): Promise<GitBranchesResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<GitBranchesResponse>('git.branches', { path });
 }
 
 // ==================== Session Workspace Operations ====================

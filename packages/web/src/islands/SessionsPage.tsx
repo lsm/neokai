@@ -1,23 +1,106 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
+import type {
+	CreateSessionRequest,
+	GitBranchesResponse,
+	WorkspaceHistoryEntry,
+} from '@neokai/shared';
 import { connectionState, authStatus } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
-import { createSession } from '../lib/api-helpers.ts';
+import {
+	createSession,
+	getWorkspaceHistory,
+	getGitBranches,
+	addWorkspaceToHistory,
+} from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 
 /**
  * Codex-style landing for `/sessions` when no session is selected: a centered
- * prompt and a starter input. Submitting creates a session, sends the typed
- * text as its first message, and opens the chat.
+ * prompt, a starter input, and a project / worktree / branch context row.
+ * Submitting creates a session (with the chosen workspace + worktree mode),
+ * sends the typed text as its first message, and opens the chat.
  */
 export function SessionsPage() {
 	const [text, setText] = useState('');
 	const [submitting, setSubmitting] = useState(false);
 
+	const [projects, setProjects] = useState<WorkspaceHistoryEntry[]>([]);
+	const [project, setProject] = useState<string | null>(null);
+	const [gitInfo, setGitInfo] = useState<GitBranchesResponse | null>(null);
+	const [gitLoading, setGitLoading] = useState(false);
+	const [mode, setMode] = useState<'worktree' | 'direct'>('worktree');
+	const [baseBranch, setBaseBranch] = useState<string | null>(null);
+
 	const canCreate =
 		connectionState.value === 'connected' && (authStatus.value?.isAuthenticated ?? false);
+
+	// Load known project folders for the project picker.
+	useEffect(() => {
+		getWorkspaceHistory()
+			.then(setProjects)
+			.catch(() => {
+				// Non-critical — the picker still offers "No folder" and "Browse…".
+			});
+	}, []);
+
+	// Fetch git context whenever the selected project changes.
+	useEffect(() => {
+		if (!project) {
+			setGitInfo(null);
+			setGitLoading(false);
+			return;
+		}
+		let cancelled = false;
+		setGitLoading(true);
+		setGitInfo(null);
+		getGitBranches(project)
+			.then((info) => {
+				if (cancelled) return;
+				setGitInfo(info);
+				if (info.isGitRepo) {
+					// Worktree needs at least one commit to fork from.
+					const canWorktree = info.branches.length > 0;
+					setMode(canWorktree ? 'worktree' : 'direct');
+					setBaseBranch(info.defaultBranch ?? info.currentBranch ?? null);
+				}
+				setGitLoading(false);
+			})
+			.catch(() => {
+				if (cancelled) return;
+				// Treat a failed lookup as "no git info" — submit still sends the path.
+				setGitInfo(null);
+				setGitLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [project]);
+
+	const handleBrowse = async () => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			toast.error('Not connected to server. Please wait...');
+			return;
+		}
+		try {
+			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder');
+			if (!picked?.path) return;
+			const folder = picked.path;
+			await addWorkspaceToHistory(folder);
+			setProjects((prev) =>
+				prev.some((p) => p.path === folder)
+					? prev
+					: [{ path: folder, lastUsedAt: Date.now(), useCount: 1 }, ...prev]
+			);
+			setProject(folder);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to add project');
+		}
+	};
 
 	const handleSubmit = async () => {
 		const content = text.trim();
@@ -28,7 +111,18 @@ export function SessionsPage() {
 		}
 		setSubmitting(true);
 		try {
-			const response = await createSession({ workspacePath: undefined });
+			const req: CreateSessionRequest = {};
+			if (project) {
+				req.workspacePath = project;
+				// Worktree mode is only meaningful for a git repo.
+				if (gitInfo?.isGitRepo) {
+					req.worktreeMode = mode;
+					if (mode === 'worktree' && baseBranch) {
+						req.worktreeBaseBranch = baseBranch;
+					}
+				}
+			}
+			const response = await createSession(req);
 			if (!response?.sessionId) {
 				toast.error('No sessionId in response');
 				setSubmitting(false);
@@ -119,6 +213,22 @@ export function SessionsPage() {
 								)}
 							</button>
 						</div>
+					</div>
+
+					{/* Project / worktree / branch context row */}
+					<div class="mt-2 px-1">
+						<WorkspaceChips
+							projects={projects}
+							selectedProject={project}
+							gitInfo={gitInfo}
+							gitLoading={gitLoading}
+							mode={mode}
+							baseBranch={baseBranch}
+							onSelectProject={setProject}
+							onBrowse={handleBrowse}
+							onSelectMode={setMode}
+							onSelectBranch={setBaseBranch}
+						/>
 					</div>
 				</div>
 			</div>
