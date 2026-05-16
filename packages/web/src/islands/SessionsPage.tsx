@@ -20,6 +20,55 @@ import { listProjectPaths } from '../lib/projects.ts';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 
+type NewChatWorktreeMode = 'worktree' | 'direct';
+
+interface NewChatSelection {
+	project: string | null;
+	mode: NewChatWorktreeMode;
+	baseBranch: string | null;
+}
+
+const NEW_CHAT_SELECTION_KEY = 'neokai_new_chat_selection';
+const DEFAULT_NEW_CHAT_SELECTION: NewChatSelection = {
+	project: null,
+	mode: 'worktree',
+	baseBranch: null,
+};
+
+function loadNewChatSelection(): NewChatSelection {
+	try {
+		const stored = localStorage.getItem(NEW_CHAT_SELECTION_KEY);
+		if (!stored) return DEFAULT_NEW_CHAT_SELECTION;
+		const parsed: unknown = JSON.parse(stored);
+		if (!parsed || typeof parsed !== 'object') return DEFAULT_NEW_CHAT_SELECTION;
+		const value = parsed as Partial<NewChatSelection>;
+		const mode = value.mode === 'direct' ? 'direct' : 'worktree';
+		return {
+			project: typeof value.project === 'string' ? value.project : null,
+			mode,
+			baseBranch: typeof value.baseBranch === 'string' ? value.baseBranch : null,
+		};
+	} catch {
+		return DEFAULT_NEW_CHAT_SELECTION;
+	}
+}
+
+function saveNewChatSelection(selection: NewChatSelection): void {
+	try {
+		localStorage.setItem(NEW_CHAT_SELECTION_KEY, JSON.stringify(selection));
+	} catch {
+		// Ignore storage failures; the composer still works without persistence.
+	}
+}
+
+function getKnownBranches(info: GitBranchesResponse): Set<string> {
+	return new Set(
+		[info.defaultBranch, info.currentBranch, ...info.branches].filter(
+			(branch): branch is string => typeof branch === 'string' && branch.length > 0
+		)
+	);
+}
+
 /**
  * Codex-style landing for `/sessions` when no session is selected: a centered
  * prompt, a starter input, and a project / worktree / branch context row.
@@ -29,13 +78,14 @@ import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 export function SessionsPage() {
 	const [text, setText] = useState('');
 	const [submitting, setSubmitting] = useState(false);
+	const [initialSelection] = useState<NewChatSelection>(() => loadNewChatSelection());
 
 	const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
-	const [project, setProject] = useState<string | null>(null);
+	const [project, setProject] = useState<string | null>(initialSelection.project);
 	const [gitInfo, setGitInfo] = useState<GitBranchesResponse | null>(null);
 	const [gitLoading, setGitLoading] = useState(false);
-	const [mode, setMode] = useState<'worktree' | 'direct'>('worktree');
-	const [baseBranch, setBaseBranch] = useState<string | null>(null);
+	const [mode, setMode] = useState<NewChatWorktreeMode>(initialSelection.mode);
+	const [baseBranch, setBaseBranch] = useState<string | null>(initialSelection.baseBranch);
 
 	// Session creation only needs a live connection — auth is exercised later by
 	// the message send, which surfaces its own error.
@@ -54,11 +104,16 @@ export function SessionsPage() {
 			});
 	}, []);
 
+	useEffect(() => {
+		saveNewChatSelection({ project, mode, baseBranch });
+	}, [project, mode, baseBranch]);
+
 	// Fetch git context whenever the selected project changes.
 	useEffect(() => {
 		if (!project) {
 			setGitInfo(null);
 			setGitLoading(false);
+			setBaseBranch(null);
 			return;
 		}
 		let cancelled = false;
@@ -71,8 +126,15 @@ export function SessionsPage() {
 				if (info.isGitRepo) {
 					// Worktree needs at least one commit to fork from.
 					const canWorktree = info.branches.length > 0;
-					setMode(canWorktree ? 'worktree' : 'direct');
-					setBaseBranch(info.defaultBranch ?? info.currentBranch ?? null);
+					const knownBranches = getKnownBranches(info);
+					setMode((currentMode) => (canWorktree ? currentMode : 'direct'));
+					setBaseBranch((currentBranch) =>
+						currentBranch && knownBranches.has(currentBranch)
+							? currentBranch
+							: (info.defaultBranch ?? info.currentBranch ?? null)
+					);
+				} else {
+					setBaseBranch(null);
 				}
 				setGitLoading(false);
 			})
@@ -86,6 +148,11 @@ export function SessionsPage() {
 			cancelled = true;
 		};
 	}, [project]);
+
+	const handleSelectProject = (path: string | null) => {
+		setProject(path);
+		if (!path) setBaseBranch(null);
+	};
 
 	const handleBrowse = async () => {
 		const hub = connectionManager.getHubIfConnected();
@@ -103,7 +170,7 @@ export function SessionsPage() {
 					? prev
 					: [{ path: folder, lastUsedAt: Date.now(), useCount: 1 }, ...prev]
 			);
-			setProject(folder);
+			handleSelectProject(folder);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Failed to add project');
 		}
@@ -231,7 +298,7 @@ export function SessionsPage() {
 							gitLoading={gitLoading}
 							mode={mode}
 							baseBranch={baseBranch}
-							onSelectProject={setProject}
+							onSelectProject={handleSelectProject}
 							onBrowse={handleBrowse}
 							onSelectMode={setMode}
 							onSelectBranch={setBaseBranch}
