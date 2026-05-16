@@ -177,7 +177,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 					<button
 						type="button"
 						onClick={onClose}
-						class="md:hidden mb-1 ml-auto flex p-1.5 rounded-lg text-gray-400 hover:text-gray-100 hover:bg-dark-850 transition-colors"
+						class="md:hidden mb-1 ml-auto flex p-1.5 rounded-lg text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors"
 						title="Close panel"
 						aria-label="Close panel"
 					>
@@ -195,7 +195,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 					type="button"
 					data-testid="new-chat-button"
 					onClick={handleNewChat}
-					class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium text-gray-200 hover:bg-dark-850 hover:text-gray-100 transition-colors"
+					class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium text-gray-200 hover:bg-white/5 hover:text-gray-100 transition-colors"
 				>
 					<svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -227,7 +227,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 								onClick={handleAddProject}
 								title="Add project"
 								aria-label="Add project"
-								class="p-0.5 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-850 transition-colors"
+								class="p-0.5 rounded text-gray-500 hover:text-gray-200 hover:bg-white/5 transition-colors"
 							>
 								<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path
@@ -285,7 +285,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 					<button
 						type="button"
 						onClick={handleToggleShowArchived}
-						class="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-300 hover:bg-dark-850 rounded-lg transition-colors"
+						class="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-300 hover:bg-white/5 rounded-lg transition-colors"
 					>
 						<svg
 							class={`w-3 h-3 transition-transform ${showArchived ? 'rotate-90' : ''}`}

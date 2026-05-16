@@ -306,7 +306,7 @@ export function ContextPanel() {
 									'w-full rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors',
 									isCurrent
 										? 'bg-blue-950/40 border border-blue-800/50 text-gray-100'
-										: 'border border-transparent text-gray-400 hover:bg-dark-850 hover:text-gray-100'
+										: 'border border-transparent text-gray-400 hover:bg-white/5 hover:text-gray-100'
 								)}
 							>
 								<svg
@@ -352,7 +352,7 @@ export function ContextPanel() {
 				<button
 					type="button"
 					onClick={handleCreateSpace}
-					class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 hover:bg-dark-850 text-sm text-gray-400 hover:text-gray-100 transition-colors"
+					class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 hover:bg-white/5 text-sm text-gray-400 hover:text-gray-100 transition-colors"
 				>
 					<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -383,7 +383,7 @@ export function ContextPanel() {
 					fixed md:relative
 					top-0 left-0 md:left-auto
 					h-safe-screen md:h-full w-70
-					bg-dark-950
+					bg-dark-800
 					flex flex-col
 					pt-safe md:pt-0
 					z-40 md:z-auto
@@ -430,7 +430,7 @@ export function ContextPanel() {
 									<div class="hidden md:flex items-center gap-1 min-w-0 flex-1 overflow-hidden pointer-events-none">
 										<button
 											onClick={() => navigateToSpaces()}
-											class="p-1 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
+											class="p-1 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
 											title="Back to Spaces"
 										>
 											<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -450,8 +450,8 @@ export function ContextPanel() {
 											class={cn(
 												'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0 pointer-events-auto',
 												currentSpaceViewMode === 'configure'
-													? 'bg-dark-800 text-gray-100'
-													: 'text-gray-400 hover:bg-dark-800 hover:text-gray-100'
+													? 'bg-white/10 text-gray-100'
+													: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
 											)}
 											title="Configure space"
 											aria-label="Configure space"
@@ -479,7 +479,7 @@ export function ContextPanel() {
 							{/* Close button for mobile */}
 							<button
 								onClick={handlePanelClose}
-								class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
+								class="md:hidden p-1.5 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
 								title="Close panel"
 							>
 								<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -532,8 +532,8 @@ export function ContextPanel() {
 													'w-full px-4 py-3 flex items-center gap-3 text-left',
 													'transition-colors duration-150',
 													isActive
-														? 'bg-dark-800 text-gray-100'
-														: 'text-gray-400 hover:text-gray-200 hover:bg-dark-800/50'
+														? 'bg-white/10 text-gray-100'
+														: 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
 												)}
 											>
 												<SectionIcon type={section.icon} />

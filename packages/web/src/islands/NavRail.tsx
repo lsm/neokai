@@ -7,7 +7,6 @@ import {
 } from '../lib/router.ts';
 import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
-import { borderColors } from '../lib/design-tokens.ts';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { inboxStore } from '../lib/inbox-store.ts';
@@ -35,12 +34,12 @@ export function NavRail() {
 
 	return (
 		<div
-			class={`
+			class="
 				hidden md:relative md:flex
 				w-16 h-full
-				bg-dark-950 border-r ${borderColors.ui.default}
+				bg-dark-800
 				flex-col items-center py-4
-			`}
+			"
 		>
 			{/* Logo */}
 			<div class="text-2xl mb-6" title="NeoKai">

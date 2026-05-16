@@ -35,7 +35,7 @@ export function SessionProjectGroup({
 
 	return (
 		<div>
-			<div class="group/project flex items-center rounded-lg transition-colors hover:bg-dark-850">
+			<div class="group/project flex items-center rounded-lg transition-colors hover:bg-white/5">
 				<button
 					type="button"
 					data-testid="project-group-header"
@@ -81,7 +81,7 @@ export function SessionProjectGroup({
 						onClick={onRemove}
 						title="Remove project"
 						aria-label={`Remove project ${name}`}
-						class="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 mr-1 p-1 rounded text-gray-500 hover:text-red-400 hover:bg-dark-800 transition-colors"
+						class="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 mr-1 p-1 rounded text-gray-500 hover:text-red-400 hover:bg-white/10 transition-colors"
 					>
 						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path

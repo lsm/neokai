@@ -62,8 +62,8 @@ export default function SessionListItem({ session, onSessionClick }: SessionList
 			class={cn(
 				'group relative w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors',
 				isActive
-					? 'bg-dark-800 text-gray-100'
-					: 'text-gray-400 hover:bg-dark-850 hover:text-gray-200'
+					? 'bg-white/10 text-gray-100'
+					: 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
 			)}
 		>
 			<StatusIndicator sessionId={session.id} />
