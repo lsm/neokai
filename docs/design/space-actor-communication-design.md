@@ -251,6 +251,10 @@ type DeliveryRecord = {
   the run (allowed because uniqueness is only enforced within a node), one legacy row expands to one
   delivery row per matching `(workflowRunId, nodeId, agentName)` slot. Each expanded row gets its own
   delivery ID and independent retry state.
+- `targetKind` branching: legacy rows with `targetKind = 'node_agent'` expand as worker-slot deliveries
+  above. Legacy rows with `targetKind = 'space_agent'` route to Coordinator (`@coordinator`) or stored
+  reply-session, matching current `flushPendingMessagesForSpaceAgent` behavior. Do not expand
+  `space_agent` rows as worker slots.
 
 ## Resolution rules
 
@@ -260,12 +264,16 @@ Keep resolver deterministic:
 2. Apply current Space/domain context.
 3. Resolve exact `@handle` among routable actors: `active` delivers immediately; `inactive` can create
    queued delivery if activation/retry policy exists; `archived`/`deleted` do not route.
-4. Resolve `@role:<role>` using role binding.
-5. Resolve `@session:<id>` to session actor if session is user-facing/ad-hoc.
+4. Resolve `@role:<role>` using role binding. If multiple active actors share the role, deliver to all
+   matching actors (stable ordered fan-out), not a single pick. This keeps resolution deterministic.
+5. Resolve `@session:<id>` to session actor if session is user-facing/ad-hoc. Inactive sessions can
+   create queued delivery if activation/retry policy exists.
 6. Resolve `@worker:<node>` using `workflowRunId` plus current `agentName` context, or only if that
    node has one routable agent slot.
-7. Resolve `@worker:<node>/<agent>` using `workflowRunId` from context.
-8. Resolve `@worker:<run>/<node>/<agent>` if sender can access that run.
+7. Resolve `@worker:<node>/<agent>` using `workflowRunId` from context. Inactive workers create queued
+   delivery.
+8. Resolve `@worker:<run>/<node>/<agent>` if sender can access that run. Inactive workers create queued
+   delivery.
 9. Resolve optional `#<name>` channel/topic if enabled.
 10. If target does not resolve, return an error. Do not silently fallback; typos and stale handles must
     not leak content to another actor.
@@ -364,9 +372,11 @@ Legacy node targets must be translated before calling generic `send_message`:
 Preserve current post-task-agent behavior:
 
 - Task/workflow IDs remain context, not message targets.
-- `node_id` is required, matching current `send_message_to_task` API contract. No implicit task-only
-  fallback routing; calls without a target node or actor fail fast.
-- If caller passes explicit actor or role target, deliver to that worker/role/session.
+- `node_id` is required for node/worker-targeted sends, matching current `send_message_to_task` API
+  contract. No implicit task-only fallback routing; calls without a target node or actor fail fast.
+- If caller passes explicit actor target (`@coordinator`, `@role:task-manager`), role target, or session
+  target (`@session:<id>`), deliver to that actor/role/session regardless of `node_id`. The wrapper
+  maps these to generic `target` directly.
 - Reject removed legacy `task-agent` targets for new calls; keep only narrow migration handling for old
   queued rows if storage still contains them.
 - Mark wrapper deprecated after generic tool adoption.
@@ -374,7 +384,9 @@ Preserve current post-task-agent behavior:
 ### Human task message RPC
 
 Routes to explicit worker/role/session when mentioned; requires same target specification as task message
-compatibility wrapper.
+compatibility wrapper. Maps existing image/file payloads into `send_message.attachments` explicitly:
+each image becomes a `MessageAttachment` with `type: 'image'`, preserving current multimodal task
+messaging behavior.
 
 ## Package / implementation shape
 
