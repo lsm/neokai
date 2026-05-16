@@ -8,6 +8,7 @@ import {
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import type { TaskComposerTarget } from '../../hooks';
 import { borderColors } from '../../lib/design-tokens';
 import {
 	navigateToSpaceTask,
@@ -20,17 +21,16 @@ import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { EditTaskModal } from './EditTaskModal';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
-import { EditTaskModal } from './EditTaskModal';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
-import { type TaskComposerTarget } from '../../hooks';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 
@@ -189,6 +189,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const threadPanelRef = useRef<HTMLDivElement>(null);
 	const scrollToBottomRef = useRef<((smooth?: boolean) => void) | null>(null);
 	const draftWasActiveRef = useRef(false);
+	const currentTaskIdRef = useRef<string | null>(taskId);
+	currentTaskIdRef.current = taskId;
 	// Modal-local error feedback. Separate from `threadSendError` because
 	// `threadSendError` is rendered inside `TaskSessionChatComposer`, which is
 	// only mounted when the inline composer is visible. A failed submit-for-
@@ -685,25 +687,23 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			priority: import('@neokai/shared').SpaceTaskPriority;
 		}>
 	) => {
-		// Capture the current taskId before the async gap. If the user
-		// switches tasks while the save is in-flight, the stale callback
-		// must not mutate the new task's modal state.
+		// Capture the current taskId before the async gap. After `await`,
+		// the closure's `task` is stale (captured at render time), so we
+		// read `currentTaskIdRef.current` which is updated on each render.
 		const savedTaskId = task.id;
 		try {
 			setEditTaskBusy(true);
 			setEditTaskError(null);
 			await spaceStore.updateTask(savedTaskId, updates);
-			// Only close the modal if we're still on the same task.
-			if (task.id === savedTaskId) {
+			if (currentTaskIdRef.current === savedTaskId) {
 				setShowEditTaskModal(false);
 			}
 		} catch (err) {
-			// Only surface the error if we're still on the same task.
-			if (task.id === savedTaskId) {
+			if (currentTaskIdRef.current === savedTaskId) {
 				setEditTaskError(formatEditTaskError(err));
 			}
 		} finally {
-			if (task.id === savedTaskId) {
+			if (currentTaskIdRef.current === savedTaskId) {
 				setEditTaskBusy(false);
 			}
 		}
