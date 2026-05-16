@@ -49,10 +49,34 @@ function StatusIndicator({ sessionId }: { sessionId: string }) {
 
 function WorktreeBranchIcon() {
 	return (
-		<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 15 15">
+		<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
 			<path
-				d="M2.5 4.5C1.39543 4.5 0.5 3.60457 0.5 2.5C0.5 1.39543 1.39543 0.5 2.5 0.5C3.60457 0.5 4.5 1.39543 4.5 2.5C4.5 3.60457 3.60457 4.5 2.5 4.5ZM2.5 4.5V10.5M4.5 12.5C4.5 13.6046 3.60457 14.5 2.5 14.5C1.39543 14.5 0.5 13.6046 0.5 12.5C0.5 11.3954 1.39543 10.5 2.5 10.5M4.5 12.5C4.5 11.3954 3.60457 10.5 2.5 10.5M4.5 12.5H9.5C11.1569 12.5 12.5 11.1569 12.5 9.5V7.5M12.5 7.5C11.3954 7.5 10.5 6.60457 10.5 5.5C10.5 4.39543 11.3954 3.5 12.5 3.5C13.6046 3.5 14.5 4.39543 14.5 5.5C14.5 6.60457 13.6046 7.5 12.5 7.5Z"
+				d="M3 6C3 7.65685 4.34315 9 6 9C7.65685 9 9 7.65685 9 6C9 4.34315 7.65685 3 6 3C4.34315 3 3 4.34315 3 6Z"
 				stroke="currentColor"
+				stroke-width={2}
+			/>
+			<path
+				d="M3 18C3 19.6569 4.34315 21 6 21C7.65685 21 9 19.6569 9 18C9 16.3431 7.65685 15 6 15C4.34315 15 3 16.3431 3 18Z"
+				stroke="currentColor"
+				stroke-width={2}
+			/>
+			<path
+				d="M15 6C15 7.65685 16.3431 9 18 9C19.6569 9 21 7.65685 21 6C21 4.34315 19.6569 3 18 3C16.3431 3 15 4.34315 15 6Z"
+				stroke="currentColor"
+				stroke-width={2}
+			/>
+			<path
+				d="M6 15V9"
+				stroke="currentColor"
+				stroke-width={2}
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			/>
+			<path
+				d="M18 9V12.3242C18 16.9982 16.9424 18 12.008 18H9"
+				stroke="currentColor"
+				stroke-width={2}
+				stroke-linecap="round"
 			/>
 		</svg>
 	);
