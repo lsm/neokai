@@ -284,7 +284,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 	}, [sessionId]);
 
 	return (
-		<aside class="hidden w-80 flex-shrink-0 flex-col border-l border-dark-700 bg-dark-800 lg:flex">
+		<aside class="hidden w-full flex-shrink-0 flex-col border-l border-dark-700 bg-dark-800 lg:flex">
 			<div class="flex h-[52px] flex-shrink-0 items-center gap-2 px-4 pr-14">
 				<div class="min-w-0 flex-1">
 					<h2 class="text-sm font-semibold text-gray-100">Git</h2>

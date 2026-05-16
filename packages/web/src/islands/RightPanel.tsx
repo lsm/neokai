@@ -7,8 +7,39 @@ import { sessionStore } from '../lib/session-store.ts';
 import { type RightPanelTarget, rightPanelTargetSignal } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
 
-const PANEL_WIDTH = 'w-80';
 const TRANSITION_MS = 200;
+const DEFAULT_PANEL_WIDTH = 320;
+const MIN_PANEL_WIDTH = 280;
+const MAX_PANEL_WIDTH = 640;
+const PANEL_WIDTH_STORAGE_KEY = 'neokai_right_panel_width';
+
+function getMaxPanelWidth(): number {
+	if (typeof window === 'undefined') return MAX_PANEL_WIDTH;
+	return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, Math.floor(window.innerWidth * 0.45)));
+}
+
+function clampPanelWidth(width: number): number {
+	return Math.min(getMaxPanelWidth(), Math.max(MIN_PANEL_WIDTH, Math.round(width)));
+}
+
+function readStoredPanelWidth(): number {
+	if (typeof window === 'undefined') return DEFAULT_PANEL_WIDTH;
+	try {
+		const stored = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+		const width = stored ? Number(stored) : DEFAULT_PANEL_WIDTH;
+		return Number.isFinite(width) ? clampPanelWidth(width) : DEFAULT_PANEL_WIDTH;
+	} catch {
+		return DEFAULT_PANEL_WIDTH;
+	}
+}
+
+function storePanelWidth(width: number) {
+	try {
+		window.localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(clampPanelWidth(width)));
+	} catch {
+		// Ignore storage failures; resizing should still work for this session.
+	}
+}
 
 function sessionFeatures(session: Session | null, sessionId: string): SessionFeatures {
 	if (session?.config?.features) return session.config.features;
@@ -71,6 +102,8 @@ export function RightPanel() {
 	const target = rightPanelTargetSignal.value;
 	const [renderedTarget, setRenderedTarget] = useState<RightPanelTarget | null>(target);
 	const [open, setOpen] = useState(target !== null);
+	const [panelWidth, setPanelWidth] = useState(readStoredPanelWidth);
+	const [resizing, setResizing] = useState(false);
 
 	useEffect(() => {
 		let frame = 0;
@@ -90,19 +123,96 @@ export function RightPanel() {
 		};
 	}, [target]);
 
+	useEffect(() => {
+		const handleResize = () => {
+			setPanelWidth((width) => clampPanelWidth(width));
+		};
+		window.addEventListener('resize', handleResize);
+		return () => window.removeEventListener('resize', handleResize);
+	}, []);
+
+	const handleResizeStart = (event: MouseEvent) => {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+
+		const startX = event.clientX;
+		const startWidth = panelWidth;
+		let latestWidth = startWidth;
+		const previousCursor = document.body.style.cursor;
+		const previousUserSelect = document.body.style.userSelect;
+
+		setResizing(true);
+		document.body.style.cursor = 'col-resize';
+		document.body.style.userSelect = 'none';
+
+		const handleMouseMove = (moveEvent: MouseEvent) => {
+			latestWidth = clampPanelWidth(startWidth + startX - moveEvent.clientX);
+			setPanelWidth(latestWidth);
+		};
+
+		const handleMouseUp = () => {
+			setResizing(false);
+			storePanelWidth(latestWidth);
+			document.body.style.cursor = previousCursor;
+			document.body.style.userSelect = previousUserSelect;
+			window.removeEventListener('mousemove', handleMouseMove);
+			window.removeEventListener('mouseup', handleMouseUp);
+		};
+
+		window.addEventListener('mousemove', handleMouseMove);
+		window.addEventListener('mouseup', handleMouseUp);
+	};
+
+	const handleResizeKeyDown = (event: KeyboardEvent) => {
+		const step = event.shiftKey ? 48 : 16;
+		let nextWidth: number | null = null;
+
+		if (event.key === 'ArrowLeft') {
+			nextWidth = clampPanelWidth(panelWidth + step);
+		} else if (event.key === 'ArrowRight') {
+			nextWidth = clampPanelWidth(panelWidth - step);
+		} else if (event.key === 'Home') {
+			nextWidth = MIN_PANEL_WIDTH;
+		} else if (event.key === 'End') {
+			nextWidth = getMaxPanelWidth();
+		}
+
+		if (nextWidth === null) return;
+		event.preventDefault();
+		setPanelWidth(nextWidth);
+		storePanelWidth(nextWidth);
+	};
+
 	return (
 		<div
 			class={cn(
-				'hidden h-full flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-out lg:block',
-				open ? PANEL_WIDTH : 'w-0'
+				'hidden h-full flex-shrink-0 overflow-hidden lg:block',
+				!resizing && 'transition-[width] duration-200 ease-out'
 			)}
+			style={{ width: open ? `${panelWidth}px` : '0px' }}
 		>
 			<div
 				class={cn(
-					'h-full w-80 transition-transform duration-200 ease-out',
+					'relative h-full transition-transform duration-200 ease-out',
 					open ? 'translate-x-0' : 'translate-x-full'
 				)}
+				style={{ width: `${panelWidth}px` }}
 			>
+				<div
+					role="separator"
+					aria-label="Resize right panel"
+					aria-orientation="vertical"
+					aria-valuemin={MIN_PANEL_WIDTH}
+					aria-valuemax={getMaxPanelWidth()}
+					aria-valuenow={panelWidth}
+					tabIndex={0}
+					onMouseDown={handleResizeStart}
+					onKeyDown={handleResizeKeyDown}
+					class="group absolute left-0 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none outline-none lg:block"
+				>
+					<div class="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-white/20 group-focus-visible:bg-white/30" />
+				</div>
 				{renderedTarget?.type === 'git' && <GitPanel sessionId={renderedTarget.sessionId} />}
 			</div>
 		</div>
