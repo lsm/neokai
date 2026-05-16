@@ -171,7 +171,7 @@ export interface QueryRunnerContext {
 	onRateLimitExhausted?: (
 		errorMessage: string,
 		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
-	) => boolean;
+	) => Promise<boolean>;
 }
 
 /**
@@ -891,7 +891,7 @@ export class QueryRunner {
 						(errorMessage.includes('429') || lowerMsg.includes('rate limit'));
 					rateLimitCooldownScheduled =
 						is429Error &&
-						!!this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage);
+						!!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
 
 					// For startup timeouts / resume failures, provide actionable recovery hints.
 					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a

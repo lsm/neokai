@@ -1322,10 +1322,10 @@ export class AgentSession
 	 * Delegates to the RateLimitWatchdog to schedule auto-retry.
 	 * @returns true if cooldown was scheduled, false if max retries exceeded.
 	 */
-	onRateLimitExhausted(
+	async onRateLimitExhausted(
 		errorMessage: string,
 		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
-	): boolean {
+	): Promise<boolean> {
 		return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage);
 	}
 

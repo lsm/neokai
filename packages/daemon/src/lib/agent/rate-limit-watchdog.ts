@@ -92,10 +92,10 @@ export class RateLimitWatchdog {
 	 *
 	 * @returns true if scheduled, false if max retries exceeded
 	 */
-	scheduleRetry(
+	async scheduleRetry(
 		errorMessage: string,
 		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
-	): boolean {
+	): Promise<boolean> {
 		// Cancel any existing timer
 		this.cancel();
 
@@ -124,8 +124,9 @@ export class RateLimitWatchdog {
 				`in ${this.config.cooldownMs}ms. Error: ${errorMessage}`
 		);
 
-		// Set processing state to rate_limit_cooldown
-		void this.stateManager.setRateLimitCooldown({
+		// Set processing state to rate_limit_cooldown (awaited to prevent
+		// race with user messages or retry-now overwriting the state).
+		await this.stateManager.setRateLimitCooldown({
 			retryCount: this.retryCount,
 			maxRetries: this.config.maxAutoRetries,
 			retryAt,

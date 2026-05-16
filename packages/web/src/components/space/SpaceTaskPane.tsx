@@ -66,6 +66,7 @@ const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
 	queued: 'Queued',
 	idle: 'Idle',
 	waiting_for_input: 'Waiting',
+	cooldown: 'Cooldown',
 	completed: 'Done',
 	failed: 'Failed',
 	interrupted: 'Interrupted',

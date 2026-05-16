@@ -7,6 +7,7 @@
  * - Max retries exceeded
  * - RetryNow bypasses cooldown
  * - Reset clears state
+ * - Null message guard
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
@@ -64,8 +65,8 @@ describe('RateLimitWatchdog', () => {
 	});
 
 	describe('scheduleRetry', () => {
-		it('schedules a retry and sets rate_limit_cooldown state', () => {
-			const result = watchdog.scheduleRetry('429 rate limit', {
+		it('schedules a retry and sets rate_limit_cooldown state', async () => {
+			const result = await watchdog.scheduleRetry('429 rate limit', {
 				uuid: 'msg-1',
 				content: 'hello',
 			});
@@ -80,29 +81,36 @@ describe('RateLimitWatchdog', () => {
 			expect(state.retryAt).toBeGreaterThan(Date.now() - 1000);
 		});
 
-		it('increments retryCount on subsequent calls', () => {
-			watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
+		it('increments retryCount on subsequent calls', async () => {
+			await watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
 			watchdog.cancel(); // Cancel before scheduling next
 
-			watchdog.scheduleRetry('429', { uuid: 'msg-2', content: 'world' });
+			await watchdog.scheduleRetry('429', { uuid: 'msg-2', content: 'world' });
 
 			expect(watchdog.getState().retryCount).toBe(2);
 		});
 
-		it('returns false when max retries exceeded', () => {
+		it('returns false when max retries exceeded', async () => {
 			for (let i = 0; i < 3; i++) {
-				watchdog.scheduleRetry('429', { uuid: `msg-${i}`, content: `test-${i}` });
+				await watchdog.scheduleRetry('429', { uuid: `msg-${i}`, content: `test-${i}` });
 				watchdog.cancel();
 			}
 
 			// 4th attempt should fail
-			const result = watchdog.scheduleRetry('429', { uuid: 'msg-4', content: 'nope' });
+			const result = await watchdog.scheduleRetry('429', { uuid: 'msg-4', content: 'nope' });
 			expect(result).toBe(false);
 			expect(watchdog.getState().retryCount).toBe(3);
 		});
 
+		it('returns false when lastUserMessage is null', async () => {
+			const result = await watchdog.scheduleRetry('429', null);
+			expect(result).toBe(false);
+			expect(watchdog.getState().status).toBe('idle');
+			expect(watchdog.isPending()).toBe(false);
+		});
+
 		it('fires the retry callback after cooldown', async () => {
-			watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
+			await watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
 
 			// Wait for cooldown (100ms) + buffer
 			await new Promise((resolve) => setTimeout(resolve, 200));
@@ -114,8 +122,8 @@ describe('RateLimitWatchdog', () => {
 	});
 
 	describe('cancel', () => {
-		it('cancels a pending retry', () => {
-			watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
+		it('cancels a pending retry', async () => {
+			await watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
 			expect(watchdog.isPending()).toBe(true);
 
 			watchdog.cancel();
@@ -125,7 +133,7 @@ describe('RateLimitWatchdog', () => {
 		});
 
 		it('does not fire callback after cancellation', async () => {
-			watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
+			await watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
 			watchdog.cancel();
 
 			// Wait past cooldown
@@ -136,8 +144,8 @@ describe('RateLimitWatchdog', () => {
 	});
 
 	describe('retryNow', () => {
-		it('immediately fires the retry callback', () => {
-			watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
+		it('immediately fires the retry callback', async () => {
+			await watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
 
 			const result = watchdog.retryNow();
 
@@ -154,8 +162,8 @@ describe('RateLimitWatchdog', () => {
 	});
 
 	describe('reset', () => {
-		it('clears all state', () => {
-			watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
+		it('clears all state', async () => {
+			await watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
 			watchdog.reset();
 
 			expect(watchdog.getState().status).toBe('idle');
@@ -167,7 +175,7 @@ describe('RateLimitWatchdog', () => {
 
 	describe('destroy', () => {
 		it('cancels timers and clears callback', async () => {
-			watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
+			await watchdog.scheduleRetry('429', { uuid: 'msg-1', content: 'hello' });
 			watchdog.destroy();
 
 			// Wait past cooldown
