@@ -3,11 +3,9 @@
  *
  * Covers:
  * - space.task.sendMessage: happy path, missing params, task not found,
- *   no Task Agent session, TaskAgentManager error propagation,
- *   cross-space isolation, message length validation
- * - space.task.getMessages: happy path (live session), fallback to DB,
- *   cursor parsing, limit capping, missing params, task not found,
- *   no Task Agent session, cross-space isolation
+ *   @mention routing, explicit node-agent target, image attachments,
+ *   channel-cycle reset on human touch
+ * - space.task.activateNodeAgent: lazy-activation of workflow node agents
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
@@ -118,11 +116,7 @@ function createMockTaskAgentManager(
 	liveSession: Partial<AgentSession> | null = null,
 	ensuredTask: SpaceTask = mockTaskWithSession
 ): TaskAgentManagerInterface {
-	return {
-		ensureTaskAgentSession: mock(async (_taskId: string) => ensuredTask),
-		injectTaskAgentMessage: mock(async (_taskId: string, _message: string) => {}),
-		getTaskAgent: mock((_taskId: string) => (liveSession ?? undefined) as AgentSession | undefined),
-	};
+	return {};
 }
 
 function createMockDatabase(
@@ -174,7 +168,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 	/**
 	 * Sets up all mocks and registers handlers.
 	 * @param task       Task to return from repository (null = "not found")
-	 * @param liveSession Live AgentSession to return from getTaskAgent (null = not in memory)
+	 * @param liveSession Live AgentSession (unused after task-agent removal)
 	 */
 	function setup(
 		task: SpaceTask | null = mockTaskWithSession,
@@ -224,61 +218,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 		it('registers space.task.sendMessage handler', () => {
 			expect(handlers.has('space.task.sendMessage')).toBe(true);
 		});
-
-		it('registers space.task.getMessages handler', () => {
-			expect(handlers.has('space.task.getMessages')).toBe(true);
-		});
-
-		it('registers space.task.ensureAgentSession handler', () => {
-			expect(handlers.has('space.task.ensureAgentSession')).toBe(true);
-		});
-	});
-
-	// ─── space.task.ensureAgentSession ─────────────────────────────────────────
-
-	describe('space.task.ensureAgentSession', () => {
-		beforeEach(() => setup());
-
-		it('ensures a task session and returns session metadata', async () => {
-			const result = await call('space.task.ensureAgentSession', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-			});
-
-			expect(result).toMatchObject({
-				taskId: 'task-1',
-				sessionId: 'space:space-1:task:task-1',
-			});
-			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-1');
-			expect((internalEventBus.publish as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
-				'space.task.updated'
-			);
-		});
-
-		it('throws when spaceId is missing', async () => {
-			await expect(call('space.task.ensureAgentSession', { taskId: 'task-1' })).rejects.toThrow(
-				'spaceId is required'
-			);
-		});
-
-		it('throws when taskId is missing', async () => {
-			await expect(call('space.task.ensureAgentSession', { spaceId: 'space-1' })).rejects.toThrow(
-				'taskId is required'
-			);
-		});
-
-		it('throws when task is not found', async () => {
-			setup(null);
-			await expect(
-				call('space.task.ensureAgentSession', { spaceId: 'space-1', taskId: 'ghost' })
-			).rejects.toThrow('Task not found: ghost');
-		});
-
-		it('throws for cross-space task access', async () => {
-			await expect(
-				call('space.task.ensureAgentSession', { spaceId: 'space-other', taskId: 'task-1' })
-			).rejects.toThrow('Task not found: task-1');
-		});
 	});
 
 	// ─── space.task.sendMessage ────────────────────────────────────────────────
@@ -286,21 +225,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
 	describe('space.task.sendMessage', () => {
 		beforeEach(() => setup());
 
-		it('injects a message and returns { ok: true }', async () => {
-			const result = await call('space.task.sendMessage', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-				message: 'Please continue',
-			});
-
-			expect(result).toEqual({ ok: true });
-			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-1');
-			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
-				'task-1',
-				'Please continue',
-				false,
-				undefined
-			);
+		it('throws "Target agent is required" when no target and no @mentions', async () => {
+			await expect(
+				call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: 'Please continue',
+				})
+			).rejects.toThrow('Target agent is required');
 		});
 
 		it('throws when spaceId is missing', async () => {
@@ -343,7 +275,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			await expect(
 				call('space.task.sendMessage', { spaceId: 'space-1', taskId: 'ghost', message: 'Hello' })
 			).rejects.toThrow('Task not found: ghost');
-			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
 		});
 
 		it('throws when taskId belongs to a different space (cross-space isolation)', async () => {
@@ -354,133 +285,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 					message: 'Hello',
 				})
 			).rejects.toThrow('Task not found: task-1');
-			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
-		});
-
-		it('auto-ensures Task Agent session when task has no taskAgentSessionId yet', async () => {
-			setup(mockTaskWithoutSession, null, {
-				...mockTaskWithoutSession,
-				taskAgentSessionId: 'space:space-1:task:task-2',
-				status: 'in_progress',
-			});
-
-			const result = await call('space.task.sendMessage', {
-				spaceId: 'space-1',
-				taskId: 'task-2',
-				message: 'Hello',
-			});
-
-			expect(result).toEqual({ ok: true });
-			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-2');
-			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
-				'task-2',
-				'Hello',
-				false,
-				undefined
-			);
-			expect((internalEventBus.publish as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
-				'space.task.updated'
-			);
-		});
-
-		it('propagates errors from TaskAgentManager', async () => {
-			(taskAgentManager.injectTaskAgentMessage as ReturnType<typeof mock>).mockRejectedValue(
-				new Error('Task Agent session not found for task task-1')
-			);
-
-			await expect(
-				call('space.task.sendMessage', { spaceId: 'space-1', taskId: 'task-1', message: 'Hello' })
-			).rejects.toThrow('Task Agent session not found');
-		});
-
-		it('propagates ensureTaskAgentSession failure when task has no session', async () => {
-			setup(mockTaskWithoutSession);
-			(taskAgentManager.ensureTaskAgentSession as ReturnType<typeof mock>).mockRejectedValue(
-				new Error('Failed to spawn task agent: workspace not configured')
-			);
-
-			await expect(
-				call('space.task.sendMessage', { spaceId: 'space-1', taskId: 'task-2', message: 'Hello' })
-			).rejects.toThrow('Failed to spawn task agent');
-			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
-		});
-
-		it('message injected via sendMessage is visible in getMessages response', async () => {
-			// Use a mutable array: starts with only the initial messages (no injected message yet).
-			// injectTaskAgentMessage will push to this array, simulating what the real session does.
-			const sessionMessages: SDKMessage[] = [...mockSDKMessages];
-			const liveSession: Partial<AgentSession> = {
-				getSDKMessages: mock((_limit?: number, _before?: number) => ({
-					messages: sessionMessages,
-					hasMore: false,
-				})),
-			};
-
-			setup(mockTaskWithSession, liveSession);
-
-			// Override inject to push into the shared mutable array (mirrors real session behavior)
-			(taskAgentManager.injectTaskAgentMessage as ReturnType<typeof mock>).mockImplementation(
-				async (_taskId: string, message: string) => {
-					sessionMessages.push({
-						type: 'user',
-						uuid: 'msg-injected' as import('crypto').UUID,
-						session_id: 'space:space-1:task:task-1',
-						parent_tool_use_id: null,
-						message: { role: 'user', content: [{ type: 'text', text: message }] },
-					} as unknown as SDKMessage);
-				}
-			);
-
-			// Before send: message is NOT in the session
-			expect(sessionMessages).not.toContainEqual(expect.objectContaining({ uuid: 'msg-injected' }));
-
-			// Inject message via handler
-			const sendResult = await call('space.task.sendMessage', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-				message: 'Please continue the work',
-			});
-			expect(sendResult).toEqual({ ok: true });
-
-			// After send: getMessages should return the injected message in the unified thread
-			const getResult = (await call('space.task.getMessages', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-			})) as { messages: SDKMessage[]; hasMore: boolean; sessionId: string };
-
-			expect(getResult.sessionId).toBe('space:space-1:task:task-1');
-			expect(getResult.messages).toContainEqual(
-				expect.objectContaining({
-					uuid: 'msg-injected',
-					message: expect.objectContaining({
-						content: expect.arrayContaining([
-							expect.objectContaining({ text: 'Please continue the work' }),
-						]),
-					}),
-				})
-			);
-		});
-
-		it('emits space.task.updated after injecting message when session was missing', async () => {
-			const updatedTask: SpaceTask = {
-				...mockTaskWithoutSession,
-				taskAgentSessionId: 'space:space-1:task:task-2',
-				status: 'in_progress',
-			};
-			setup(mockTaskWithoutSession, null, updatedTask);
-
-			await call('space.task.sendMessage', {
-				spaceId: 'space-1',
-				taskId: 'task-2',
-				message: 'Hello',
-			});
-
-			const publishCalls = (internalEventBus.publish as ReturnType<typeof mock>).mock.calls;
-			expect(publishCalls.length).toBe(1);
-			expect(publishCalls[0]?.[0]).toBe('space.task.updated');
-			expect(publishCalls[0]?.[1]).toMatchObject({
-				task: expect.objectContaining({ id: 'task-2' }),
-			});
 		});
 
 		// ─── Image attachment routing ─────────────────────────────────────────────
@@ -493,42 +297,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				media_type: 'image/png' as const,
 				data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
 			};
-
-			it('forwards images to injectTaskAgentMessage when no target / no @mention', async () => {
-				setup();
-
-				await call('space.task.sendMessage', {
-					spaceId: 'space-1',
-					taskId: 'task-1',
-					message: 'Look at this',
-					images: [sampleImage],
-				});
-
-				expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
-					'task-1',
-					'Look at this',
-					false,
-					[sampleImage]
-				);
-			});
-
-			it('treats images: [] as no images (passes undefined to injectTaskAgentMessage)', async () => {
-				setup();
-
-				await call('space.task.sendMessage', {
-					spaceId: 'space-1',
-					taskId: 'task-1',
-					message: 'Plain text',
-					images: [],
-				});
-
-				expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
-					'task-1',
-					'Plain text',
-					false,
-					undefined
-				);
-			});
 
 			it('forwards images to injectSubSessionMessage on @mention routing', async () => {
 				const mockTaskWithWorkflowRun: SpaceTask = {
@@ -682,162 +450,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 		});
 	});
 
-	// ─── space.task.getMessages ────────────────────────────────────────────────
-
-	describe('space.task.getMessages', () => {
-		it('returns messages from live session when Task Agent is active', async () => {
-			const liveSession = createMockAgentSession(mockSDKMessages);
-			setup(mockTaskWithSession, liveSession);
-
-			const result = await call('space.task.getMessages', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-			});
-
-			expect(result).toMatchObject({
-				messages: mockSDKMessages,
-				hasMore: false,
-				sessionId: 'space:space-1:task:task-1',
-			});
-			expect(liveSession.getSDKMessages).toHaveBeenCalledWith(50, undefined);
-			expect(db.getSDKMessages).not.toHaveBeenCalled();
-		});
-
-		it('falls back to DB when Task Agent session is not in memory', async () => {
-			setup(mockTaskWithSession, null);
-			const dbMessages = mockSDKMessages;
-			(db.getSDKMessages as ReturnType<typeof mock>).mockReturnValue({
-				messages: dbMessages,
-				hasMore: false,
-			});
-
-			const result = await call('space.task.getMessages', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-			});
-
-			expect(result).toMatchObject({
-				messages: dbMessages,
-				hasMore: false,
-				sessionId: 'space:space-1:task:task-1',
-			});
-			expect(db.getSDKMessages).toHaveBeenCalledWith('space:space-1:task:task-1', 50, undefined);
-		});
-
-		it('uses default limit of 50 when not provided', async () => {
-			const liveSession = createMockAgentSession();
-			setup(mockTaskWithSession, liveSession);
-
-			await call('space.task.getMessages', { spaceId: 'space-1', taskId: 'task-1' });
-
-			expect(liveSession.getSDKMessages).toHaveBeenCalledWith(50, undefined);
-		});
-
-		it('passes limit parameter to session', async () => {
-			const liveSession = createMockAgentSession();
-			setup(mockTaskWithSession, liveSession);
-
-			await call('space.task.getMessages', { spaceId: 'space-1', taskId: 'task-1', limit: 10 });
-
-			expect(liveSession.getSDKMessages).toHaveBeenCalledWith(10, undefined);
-		});
-
-		it('caps limit at 200', async () => {
-			const liveSession = createMockAgentSession();
-			setup(mockTaskWithSession, liveSession);
-
-			await call('space.task.getMessages', { spaceId: 'space-1', taskId: 'task-1', limit: 999 });
-
-			expect(liveSession.getSDKMessages).toHaveBeenCalledWith(200, undefined);
-		});
-
-		it('enforces minimum limit of 1', async () => {
-			const liveSession = createMockAgentSession();
-			setup(mockTaskWithSession, liveSession);
-
-			await call('space.task.getMessages', { spaceId: 'space-1', taskId: 'task-1', limit: 0 });
-
-			expect(liveSession.getSDKMessages).toHaveBeenCalledWith(1, undefined);
-		});
-
-		it('parses numeric cursor and passes as before timestamp', async () => {
-			const liveSession = createMockAgentSession();
-			setup(mockTaskWithSession, liveSession);
-
-			await call('space.task.getMessages', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-				cursor: '1700000000000',
-			});
-
-			expect(liveSession.getSDKMessages).toHaveBeenCalledWith(50, 1700000000000);
-		});
-
-		it('ignores non-numeric cursor', async () => {
-			const liveSession = createMockAgentSession();
-			setup(mockTaskWithSession, liveSession);
-
-			await call('space.task.getMessages', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-				cursor: 'invalid',
-			});
-
-			expect(liveSession.getSDKMessages).toHaveBeenCalledWith(50, undefined);
-		});
-
-		it('returns hasMore: true when session has more messages', async () => {
-			const liveSession: Partial<AgentSession> = {
-				getSDKMessages: mock(() => ({
-					messages: mockSDKMessages,
-					hasMore: true,
-				})),
-			};
-			setup(mockTaskWithSession, liveSession);
-
-			const result = (await call('space.task.getMessages', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-			})) as { hasMore: boolean };
-
-			expect(result.hasMore).toBe(true);
-		});
-
-		it('throws when spaceId is missing', async () => {
-			setup(mockTaskWithSession);
-			await expect(call('space.task.getMessages', { taskId: 'task-1' })).rejects.toThrow(
-				'spaceId is required'
-			);
-		});
-
-		it('throws when taskId is missing', async () => {
-			setup(mockTaskWithSession);
-			await expect(call('space.task.getMessages', { spaceId: 'space-1' })).rejects.toThrow(
-				'taskId is required'
-			);
-		});
-
-		it('throws when task is not found', async () => {
-			setup(null);
-			await expect(
-				call('space.task.getMessages', { spaceId: 'space-1', taskId: 'ghost' })
-			).rejects.toThrow('Task not found: ghost');
-		});
-
-		it('throws when taskId belongs to a different space (cross-space isolation)', async () => {
-			await expect(
-				call('space.task.getMessages', { spaceId: 'space-other', taskId: 'task-1' })
-			).rejects.toThrow('Task not found: task-1');
-		});
-
-		it('throws when Task Agent session is not started (no taskAgentSessionId)', async () => {
-			setup(mockTaskWithoutSession);
-			await expect(
-				call('space.task.getMessages', { spaceId: 'space-1', taskId: 'task-2' })
-			).rejects.toThrow('Task Agent session not started for task: task-2');
-		});
-	});
-
 	// ─── @mention routing ─────────────────────────────────────────────────────────
 
 	describe('@mention routing in space.task.sendMessage', () => {
@@ -889,8 +501,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				false,
 				undefined
 			);
-			// Should NOT have routed to Task Agent
-			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
 		});
 
 		it('multiple @mentions route to all mentioned agents', async () => {
@@ -912,7 +522,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(res.routedTo).toContain('Coder');
 			expect(res.routedTo).toContain('Reviewer');
 			expect(injectSubSession).toHaveBeenCalledTimes(2);
-			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
 		});
 
 		it('invalid @mention throws error listing available agents', async () => {
@@ -1004,27 +613,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			);
 		});
 
-		it('message without @mentions falls back to Task Agent routing', async () => {
-			const { injectSubSession } = setupWithMention([
-				{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
-			]);
-
-			const result = await call('space.task.sendMessage', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-				message: 'Please continue the work',
-			});
-
-			expect(result).toEqual({ ok: true });
-			expect(injectSubSession).not.toHaveBeenCalled();
-			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
-				'task-1',
-				'Please continue the work',
-				false,
-				undefined
-			);
-		});
-
 		it('explicit node-agent target routes by node execution id without @mention text', async () => {
 			const { injectSubSession } = setupWithMention([
 				{
@@ -1060,26 +648,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				false,
 				undefined
 			);
-			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
-		});
-
-		it('@mention falls back to Task Agent when task has no workflowRunId', async () => {
-			const taskWithoutRun: SpaceTask = { ...mockTaskWithSession, workflowRunId: undefined };
-			const { injectSubSession } = setupWithMention(
-				[{ agentName: 'Coder', agentSessionId: 'session-coder-1' }],
-				taskWithoutRun
-			);
-
-			const result = await call('space.task.sendMessage', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-				message: '@Coder please help',
-			});
-
-			// Falls back to Task Agent since no workflowRunId
-			expect(result).toEqual({ ok: true });
-			expect(injectSubSession).not.toHaveBeenCalled();
-			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalled();
 		});
 
 		it('routes @mention to idle agents — core fix for the reported bug', async () => {
@@ -1637,12 +1205,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			hub = mh.hub;
 			handlers = mh.handlers;
 			// Manager WITHOUT injectSubSessionMessage
-			taskAgentManager = {
-				ensureTaskAgentSession: mock(async () => mockTaskWithRun),
-				injectTaskAgentMessage: mock(async () => {}),
-				getTaskAgent: mock(() => undefined),
-				// no injectSubSessionMessage
-			};
+			taskAgentManager = {};
 			db = createMockDatabase(mockTaskWithRun);
 			internalEventBus = {
 				publish: mock(async () => ({ delivered: 0, failures: [] })),
@@ -1725,16 +1288,20 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			};
 		}
 
-		it('resets cycle counters after a successful direct task-agent injection (no @mention)', async () => {
-			const { handlers: h, resetter, internalEventBus: dh } = setupForReset(mockTaskWithRun);
+		it('resets cycle counters after a successful @mention injection (no explicit target)', async () => {
+			const {
+				handlers: h,
+				resetter,
+				internalEventBus: dh,
+			} = setupForReset(mockTaskWithRun, { withNodeExec: true });
 
 			const result = await (h.get('space.task.sendMessage') as RequestHandler)({
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				message: 'Please continue the work',
+				message: '@Coder please continue the work',
 			});
 
-			expect(result).toEqual({ ok: true });
+			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
 			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
 			expect(resetter.resetAllForRun).toHaveBeenCalledWith('run-cyc-1');
 
@@ -1781,53 +1348,22 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				resetter,
 				internalEventBus: dh,
 			} = setupForReset(mockTaskWithRun, {
+				withNodeExec: true,
 				resetRows: 0,
 			});
 
 			const result = await (h.get('space.task.sendMessage') as RequestHandler)({
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				message: 'Please continue',
+				message: '@Coder please continue',
 			});
 
-			expect(result).toEqual({ ok: true });
+			expect(result).toMatchObject({ ok: true });
 			// The reset statement still runs (it's cheap and idempotent)...
 			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
 			// ...but no event is published because nothing actually changed.
 			const publishCalls = (dh.publish as ReturnType<typeof mock>).mock.calls;
 			expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
-		});
-
-		it('does NOT reset when the task has no workflowRunId', async () => {
-			const { handlers: h, resetter, internalEventBus: dh } = setupForReset(mockTaskNoRun);
-
-			await (h.get('space.task.sendMessage') as RequestHandler)({
-				spaceId: 'space-1',
-				taskId: 'task-1',
-				message: 'Please continue',
-			});
-
-			expect(resetter.resetAllForRun).not.toHaveBeenCalled();
-			const publishCalls = (dh.publish as ReturnType<typeof mock>).mock.calls;
-			expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
-		});
-
-		it('does NOT reset when injectTaskAgentMessage fails (error path, no reset)', async () => {
-			const { handlers: h, taskAgentManager: tm, resetter } = setupForReset(mockTaskWithRun);
-			(tm.injectTaskAgentMessage as ReturnType<typeof mock>).mockRejectedValue(
-				new Error('inject failed')
-			);
-
-			await expect(
-				(h.get('space.task.sendMessage') as RequestHandler)({
-					spaceId: 'space-1',
-					taskId: 'task-1',
-					message: 'Please continue',
-				})
-			).rejects.toThrow('inject failed');
-
-			// Reset must not fire when injection fails.
-			expect(resetter.resetAllForRun).not.toHaveBeenCalled();
 		});
 
 		it('does NOT reset when @mention routing fails (all mentions unresolved)', async () => {
@@ -1845,7 +1381,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 		});
 
 		it('swallows resetter errors and still returns success (best-effort side-effect)', async () => {
-			const { handlers: h, resetter } = setupForReset(mockTaskWithRun);
+			const { handlers: h, resetter } = setupForReset(mockTaskWithRun, { withNodeExec: true });
 			(resetter.resetAllForRun as ReturnType<typeof mock>).mockImplementation(() => {
 				throw new Error('DB connection lost');
 			});
@@ -1853,11 +1389,11 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			const result = await (h.get('space.task.sendMessage') as RequestHandler)({
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				message: 'Please continue',
+				message: '@Coder please continue',
 			});
 
 			// RPC success is not impacted by a failed side-effect.
-			expect(result).toEqual({ ok: true });
+			expect(result).toMatchObject({ ok: true });
 			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
 		});
 
@@ -1904,12 +1440,22 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+			// Add nodeExecutionRepo so @mention routing resolves.
+			const nodeExecRepo = makeNodeExecutionRepo([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1', status: 'in_progress' },
+			]);
+			const injectSubSession = mock(async (_sid: string, _msg: string) => {});
+			const taskAgentWithInject = {
+				...taskAgent,
+				injectSubSessionMessage: injectSubSession,
+			};
 			setupSpaceTaskMessageHandlers(
 				mh.hub,
-				taskAgent,
+				taskAgentWithInject,
 				localDb,
 				localInternalEventBus,
-				undefined,
+				nodeExecRepo,
 				cycleRepo
 			);
 
@@ -1917,9 +1463,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			const result = await (mh.handlers.get('space.task.sendMessage') as RequestHandler)({
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				message: 'Hold on, I have feedback',
+				message: '@Coder hold on, I have feedback',
 			});
-			expect(result).toEqual({ ok: true });
+			expect(result).toMatchObject({ ok: true });
 
 			// Cycle count must now be 0.
 			expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(0);
@@ -1960,9 +1506,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			// injectSubSessionMessage is called directly, not via the RPC.
 			const injectSubSession = mock(async (_sid: string, _msg: string) => {});
 			const taskAgent: TaskAgentManagerInterface = {
-				ensureTaskAgentSession: mock(async () => mockTaskWithSession),
-				injectTaskAgentMessage: mock(async () => {}),
-				getTaskAgent: mock(() => undefined),
 				injectSubSessionMessage: injectSubSession,
 			};
 
@@ -1980,21 +1523,35 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			// Setup a handler WITHOUT the resetter argument — simulates older wiring
 			// or callers that opt out of reset-on-human-touch.
 			const mh = createMockMessageHub();
-			const taskAgent = createMockTaskAgentManager(null, mockTaskWithRun);
+			let taskAgent = createMockTaskAgentManager(null, mockTaskWithRun);
 			const localDb = createMockDatabase(mockTaskWithRun);
 			const localInternalEventBus = {
 				publish: mock(async () => ({ delivered: 0, failures: [] })),
 				publishAsync: mock(() => {}),
 			} as unknown as InternalEventBus<DaemonInternalEventMap>;
-			setupSpaceTaskMessageHandlers(mh.hub, taskAgent, localDb, localInternalEventBus);
+			const nodeExecRepo = makeNodeExecutionRepo([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1', status: 'in_progress' },
+			]);
+			const injectSubSession = mock(async (_sid: string, _msg: string) => {});
+			taskAgent = {
+				...taskAgent,
+				injectSubSessionMessage: injectSubSession,
+			};
+			setupSpaceTaskMessageHandlers(
+				mh.hub,
+				taskAgent,
+				localDb,
+				localInternalEventBus,
+				nodeExecRepo
+			);
 
 			const result = await (mh.handlers.get('space.task.sendMessage') as RequestHandler)({
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				message: 'Please continue',
+				message: '@Coder please continue',
 			});
 
-			expect(result).toEqual({ ok: true });
+			expect(result).toMatchObject({ ok: true });
 			// Without a resetter, no cyclesReset event should be published.
 			const publishCalls = (localInternalEventBus.publish as ReturnType<typeof mock>).mock.calls;
 			expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);

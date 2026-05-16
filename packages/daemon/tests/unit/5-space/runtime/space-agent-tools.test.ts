@@ -2105,8 +2105,6 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
 
 interface FakeTaskAgentManager {
 	manager: TaskAgentManager;
-	ensureCalls: string[];
-	taskAgentInjects: Array<{ taskId: string; message: string }>;
 	subSessionInjects: Array<{ sessionId: string; message: string; isSyntheticMessage?: boolean }>;
 	/** Session IDs that should throw `Sub-session not found` on inject. */
 	deadSessionIds: Set<string>;
@@ -2117,29 +2115,10 @@ interface FakeTaskAgentManager {
 
 function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
 	const state: Omit<FakeTaskAgentManager, 'manager'> = {
-		ensureCalls: [],
-		taskAgentInjects: [],
 		subSessionInjects: [],
 		deadSessionIds: new Set(),
 	};
 	const manager = {
-		async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
-			state.ensureCalls.push(taskId);
-			if (state.onEnsure) await state.onEnsure(taskId);
-			const task = ctx.taskRepo.getTask(taskId);
-			if (!task) throw new Error(`Task not found: ${taskId}`);
-			// Synthesise a sessionId the same way the real manager would.
-			if (!task.taskAgentSessionId) {
-				ctx.taskRepo.updateTask(taskId, {
-					taskAgentSessionId: `space:${task.spaceId}:task:${taskId}`,
-					status: task.status === 'open' ? 'in_progress' : task.status,
-				});
-			}
-			return ctx.taskRepo.getTask(taskId) as SpaceTask;
-		},
-		async injectTaskAgentMessage(taskId: string, message: string): Promise<void> {
-			state.taskAgentInjects.push({ taskId, message });
-		},
 		async injectSubSessionMessage(
 			sessionId: string,
 			message: string,
@@ -2280,9 +2259,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.error).toMatch(/task_id or task_number/);
 	});
 
-	test('auto-spawns the task agent and injects when no node_id is provided', async () => {
+	test('returns error when no node_id is provided (task-agent removed)', async () => {
 		const task = await createTask('Auto-spawn task');
-		expect(task.taskAgentSessionId).toBeFalsy();
 
 		const tam = makeFakeTaskAgentManager(ctx);
 		const result = await makeHandlersWith(tam).send_message_to_task({
@@ -2291,18 +2269,10 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		});
 		const parsed = JSON.parse(result.content[0].text);
 
-		expect(parsed.success).toBe(true);
-		expect(parsed.target).toBe('task-agent');
-		expect(tam.ensureCalls).toEqual([task.id]);
-		expect(tam.taskAgentInjects).toEqual([
-			{ taskId: task.id, message: spaceAgentToTaskEnvelope(task, 'kick off work') },
-		]);
-		// task-agent session id is now recorded on the task
-		const refreshed = ctx.taskRepo.getTask(task.id);
-		expect(refreshed?.taskAgentSessionId).toBeTruthy();
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/target agent is required/i);
 	});
-
-	test('auto-spawn reopens done/cancelled tasks (archived is the only tombstone)', async () => {
+	test('returns error for done tasks when no node_id (task-agent removed)', async () => {
 		const task = await createTask('Reopen task');
 		ctx.taskRepo.updateTask(task.id, { status: 'done' });
 
@@ -2312,11 +2282,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			message: 'please revisit',
 		});
 		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(true);
-		expect(tam.ensureCalls).toEqual([task.id]);
-		expect(tam.taskAgentInjects).toEqual([
-			{ taskId: task.id, message: spaceAgentToTaskEnvelope(task, 'please revisit') },
-		]);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/target agent is required/i);
 	});
 
 	test('returns an error when the task is archived', async () => {
@@ -2343,12 +2310,10 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsedWithNode.error).toMatch(/archived/);
 
 		// Neither path should have touched the task agent.
-		expect(tam.ensureCalls).toHaveLength(0);
-		expect(tam.taskAgentInjects).toHaveLength(0);
 		expect(tam.subSessionInjects).toHaveLength(0);
 	});
 
-	test('resolves task_number to the correct task', async () => {
+	test('resolves task_number and returns error without node_id', async () => {
 		const taskA = await createTask('task A');
 		const taskB = await createTask('task B');
 		expect(taskA.taskNumber).not.toBe(taskB.taskNumber);
@@ -2359,11 +2324,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			message: 'hi B',
 		});
 		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(true);
-		expect(parsed.task_id).toBe(taskB.id);
-		expect(tam.taskAgentInjects).toEqual([
-			{ taskId: taskB.id, message: spaceAgentToTaskEnvelope(taskB, 'hi B') },
-		]);
+		// Resolves task_number to task_id but returns error because no node_id
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/target agent is required/i);
 	});
 
 	test('returns an error when task_number does not match any task in this space', async () => {
@@ -2424,8 +2387,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			},
 		]);
 		// The Task Agent path was not touched.
-		expect(tam.ensureCalls).toHaveLength(0);
-		expect(tam.taskAgentInjects).toHaveLength(0);
 	});
 
 	test('node_id by execution UUID targets that specific execution', async () => {
@@ -2741,7 +2702,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		]);
 	});
 
-	test('task_id takes precedence when both task_id and task_number are supplied', async () => {
+	test('task_id takes precedence over task_number (returns error without node_id)', async () => {
 		const taskA = await createTask('task A');
 		const taskB = await createTask('task B');
 
@@ -2749,14 +2710,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const result = await makeHandlersWith(tam).send_message_to_task({
 			task_id: taskA.id,
 			task_number: taskB.taskNumber,
-			message: 'hello',
+			message: 'target A',
 		});
 		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(true);
-		expect(parsed.task_id).toBe(taskA.id);
-		expect(tam.taskAgentInjects).toEqual([
-			{ taskId: taskA.id, message: spaceAgentToTaskEnvelope(taskA, 'hello') },
-		]);
+		// task_id takes precedence but returns error because no node_id
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/target agent is required/i);
 	});
 
 	test('falls back to activateNode when a previously-live session rejects injection', async () => {

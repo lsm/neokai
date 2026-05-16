@@ -175,14 +175,19 @@ describe('SpaceTaskPane — image passthrough', () => {
 		await waitFor(() => expect(captured.onSend).toBeTruthy());
 
 		const sampleImage = { media_type: 'image/png' as const, data: 'AAAAB' };
-		const target = { id: 'task-agent', kind: 'task_agent' as const, label: 'Task Agent' };
+		const target = {
+			id: 'node:n1:coder',
+			kind: 'node_agent' as const,
+			label: 'Coder',
+			agentName: 'coder',
+		};
 
 		await (captured.onSend as Function)('check this screenshot', target, [sampleImage]);
 
 		expect(mockSendTaskMessage).toHaveBeenCalledWith(
 			'task-1',
 			'check this screenshot',
-			{ kind: 'task_agent' },
+			{ kind: 'node_agent', agentName: 'coder' },
 			[sampleImage]
 		);
 	});
@@ -192,13 +197,18 @@ describe('SpaceTaskPane — image passthrough', () => {
 
 		await waitFor(() => expect(captured.onSend).toBeTruthy());
 
-		const target = { id: 'task-agent', kind: 'task_agent' as const, label: 'Task Agent' };
+		const target = {
+			id: 'node:n1:coder',
+			kind: 'node_agent' as const,
+			label: 'Coder',
+			agentName: 'coder',
+		};
 		await (captured.onSend as Function)('plain text', target);
 
 		expect(mockSendTaskMessage).toHaveBeenCalledWith(
 			'task-1',
 			'plain text',
-			{ kind: 'task_agent' },
+			{ kind: 'node_agent', agentName: 'coder' },
 			undefined
 		);
 	});

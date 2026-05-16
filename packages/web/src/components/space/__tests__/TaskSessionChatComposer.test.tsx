@@ -163,8 +163,6 @@ describe('TaskSessionChatComposer', () => {
 		renderComposer({ canSend: true, isSending: false });
 		expect(lastChatComposerProps?.isWaitingForInput).toBe(false);
 	});
-
-	expect(lastChatComposerProps?.inputPlaceholder).toBe('Message Coder...');
 });
 
 it('forwards auto-scroll state to ChatComposer', () => {
