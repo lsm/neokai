@@ -151,48 +151,21 @@ Keep the boundary clear:
 
 - `conversationId` groups app messages for UI/history/replies.
 - `target` decides which actor receives the message.
-- `context.sessionId` / stored SDK message links point to the actual LLM transcript.
+- `targets` resolve to actors; SDK session links point to the actual LLM transcript.
 - Task/workflow timelines can project selected messages from conversations, but they are not themselves
   LLM-visible chat targets.
 
 ### Context
 
-Task/workflow/session IDs are context and audit metadata, not chat targets.
-
-```ts
-type MessageContext = {
-	spaceId: string;
-	taskId?: string;
-	workflowRunId?: string;
-	nodeId?: string;
-	sessionId?: string;
-	agentName?: string;
-	originMessageId?: string;
-	originConversationId?: string;
-};
-```
-
-Use context for:
-
-- authorization
-- worker alias resolution
-- pending delivery lookup
-- audit
-- UI badges / task timeline projection
-- reply routing
+v1 does not use a separate `MessageContext` type. Metadata that callers and wrappers already know —
+`workflowRunId`, `nodeId`, `agentName`, `sessionId` — is either encoded in the target address, available
+to the resolver from wrapper context, or derivable at query time. Only `spaceId` is hard-scoped to the
+message record itself, and it is already a top-level `MessageRecord` field.
 
 ### Message
 
 ```ts
-type MessageKind =
-	| 'chat'
-	| 'question'
-	| 'answer'
-	| 'blocked'
-	| 'handoff'
-	| 'approval_request'
-	| 'approval_result'
-	| 'system_event';
+type MessageKind = 'message' | 'system';
 
 type MessageAttachment = {
 	id?: string;
@@ -210,7 +183,8 @@ type MessageRecord = {
 	targets: string[]; // raw target strings after wrapper translation
 	body: string;
 	kind: MessageKind;
-	context: MessageContext;
+	workflowRunId?: string; // workflow scope; resolver uses for worker alias/pending delivery
+	taskId?: string; // task scope; UI timeline projection and audit
 	conversationId?: string;
 	replyToMessageId?: string;
 	attachments?: MessageAttachment[];
@@ -220,6 +194,10 @@ type MessageRecord = {
 };
 ```
 
+`MessageKind` stays intentionally small: `message` for actor-authored communication, `system` for
+runtime-generated audit/delivery records. Product semantics such as question, answer, blocked, handoff,
+approval request/result belong in `data` and/or UI/runtime projections, not transport-level kinds.
+
 `data` is required for compatibility with current `node-agent send_message({ data })`: gated channel
 payloads are merged into gate state today and must keep working after cutover. `attachments` preserves
 current human task messaging images/files instead of forcing a side channel. `idempotencyKey` is
@@ -228,6 +206,11 @@ message. For legacy pending worker delivery this preserves the current
 `(workflowRunId, targetAgentName, idempotencyKey)` behavior: retrying the same delivery suppresses a
 pending duplicate for that recipient, while multicast/broadcast can still create legitimate deliveries to
 other recipients using the same key.
+
+`spaceId` is required on every message. v1 messaging is Space-scoped — standalone sessions outside a
+Space continue using existing `sdk_messages` / SDK transcript patterns, not this messaging layer. If
+future needs require messaging outside Spaces, `spaceId` becomes optional and a `scope` or `domain` field
+generalizes it, but that is not designed now.
 
 ### Delivery
 
@@ -299,7 +282,9 @@ type SendMessageInput = {
 	target?: string | string[];
 	body: string;
 	kind?: MessageKind;
-	context?: Partial<MessageContext>;
+	spaceId: string;
+	workflowRunId?: string;
+	taskId?: string;
 	conversationId?: string;
 	replyToMessageId?: string;
 	attachments?: MessageAttachment[];
@@ -344,9 +329,11 @@ const translatedTargets = translateLegacyNodeTargets(target, {
 send_message({
 	target: translatedTargets,
 	body: message,
-	kind: messageKind ?? 'chat',
+	kind: messageKind ?? 'message',
 	data,
-	context: { spaceId, taskId, workflowRunId, nodeId, agentName },
+	spaceId,
+	workflowRunId,
+	taskId,
 });
 ```
 
