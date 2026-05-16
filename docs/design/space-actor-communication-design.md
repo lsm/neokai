@@ -93,6 +93,10 @@ Notes:
   one workflow node can host multiple agent slots with independent inbox, retry, and delivery state.
 - Worker aliases like `@coder` and `@review` are contextual only. Do not register them as global Space
   handles. Globally addressable workers use exact worker-slot addresses such as `@worker:<run>/<node>/<agent>`.
+- Worker address syntax uses `/` as a delimiter between `<run>`, `<node>`, and `<agent>`. v1 assumes node
+  and agent names do not contain `/`. If a future workflow uses `/` in names, an escaping rule (e.g.
+  percent-encoding) or ID-based fallback must be added; for now this is a validation constraint, not a
+  runtime concern.
 
 ### Address syntax
 
@@ -259,12 +263,8 @@ Keep resolver deterministic:
 7. Resolve `@worker:<node>/<agent>` using `workflowRunId` from context.
 8. Resolve `@worker:<run>/<node>/<agent>` if sender can access that run.
 9. Resolve optional `#<name>` channel/topic if enabled.
-10. If caller omitted `target`, use current context fallback (`@coordinator`, `@role:task-manager`,
-    explicit worker from task/workflow context, or triage channel).
-11. If caller provided an explicit target and it does not resolve, return an error. Do not silently
-    fallback; typos and stale handles must not leak content to another actor.
-12. If fallback target cannot resolve, create a failed delivery/audit row with `targetRef` set to the
-    attempted fallback string and no `targetActorId`, then return an explicit error.
+10. If target does not resolve, return an error. Do not silently fallback; typos and stale handles must
+    not leak content to another actor.
 
 Important seeding rule:
 
@@ -278,8 +278,7 @@ Important seeding rule:
 
 ```ts
 type SendMessageInput = {
-	/** Optional only for context-fallback paths; explicit callers should pass a target. */
-	target?: string | string[];
+	target: string | string[];
 	body: string;
 	kind?: MessageKind;
 	spaceId: string;
@@ -295,7 +294,6 @@ type SendMessageInput = {
 type SendMessageResult = {
 	messageId: string;
 	deliveries: DeliveryRecord[];
-	fallbackUsed?: string;
 };
 ```
 
@@ -353,8 +351,8 @@ Legacy node targets must be translated before calling generic `send_message`:
 | `string[]` multicast | translate each element independently with these rules, flatten, and de-dupe by recipient target |
 | `space-agent` | reserved compatibility target; route to Coordinator / Space Agent actor (`@coordinator`) |
 | `task-agent` | removed legacy target; reject explicitly or map only in temporary migration shims for old queued rows, never as a worker alias |
-| bare agent name | resolve through workflow topology/node executions to matching `(nodeId, agentName)`, then format exact worker-slot target |
-| bare node name | resolve node; if one agent slot, format exact worker-slot target; if multiple slots, use caller context or require an exact slot |
+| bare agent name | expand to all `(nodeId, agentName)` matches across run topology (fan-out); each match becomes a separate `@worker:<run>/<node>/<agent>` delivery |
+| bare node name | expand to all agent slots in that node (fan-out); each slot becomes a separate `@worker:<run>/<node>/<agent>` delivery |
 | already generic `@...` / `#...` | pass through |
 
 ### Task message compatibility wrapper
