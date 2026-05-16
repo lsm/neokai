@@ -890,13 +890,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * Send a message to a task. Targets the Task Agent by default; optionally
-		 * targets a specific workflow node via `node_id` (execution UUID or agent name).
+		 * Send a message to a task. Requires a `node_id` (execution UUID or agent name)
+		 * to target a specific workflow node agent.
 		 *
-		 * Auto-spawn / auto-activate semantics:
-		 * - When no `node_id` is given and the Task Agent has not been spawned yet,
-		 *   `taskAgentManager.ensureTaskAgentSession()` is called first so the message
-		 *   is injected as the first input (effectively starting the task).
+		 * Auto-activate semantics:
 		 * - When `node_id` is given but the target node has no live sub-session, the
 		 *   `activateNode` callback (if configured) is invoked to lazily activate the
 		 *   node, reusing an existing session for cyclic re-entry or marking a pending
@@ -952,32 +949,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
-			// --- Path A: no node_id — send to the Task Agent (auto-spawn if needed) ---
+			// --- Path A: no node_id — target is required ---
 			if (!args.node_id) {
-				try {
-					// Record reply route so task-agent replies go back to this session.
-					if (replyRoutingRegistry && mySessionId) {
-						replyRoutingRegistry.set(task.id, mySessionId);
-					}
-					await taskAgentManager.ensureTaskAgentSession(task.id);
-					await taskAgentManager.injectTaskAgentMessage(
-						task.id,
-						formatAgentMessage({
-							fromLevel: outboundSenderLevel,
-							fromAgentName: outboundSenderDisplayName,
-							toLevel: 'task-agent',
-							body: args.message,
-							taskId: task.id,
-							taskNumber: task.taskNumber,
-							replyToSessionId: mySessionId,
-						}),
-						true
-					);
-					return jsonResult({ success: true, task_id: task.id, target: 'task-agent' });
-				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					return jsonResult({ success: false, error: message });
-				}
+				return jsonResult({
+					success: false,
+					error: 'Target agent is required. Use node_id to specify a target agent.',
+				});
 			}
 
 			// --- Path B: node_id provided — target a specific workflow node ---

@@ -1,33 +1,30 @@
 /**
  * TaskAgentManager
  *
- * Central integration point that manages the lifecycle of Task Agent sessions
- * and their sub-sessions (node agents). Each SpaceTask gets exactly one Task
- * Agent session, and that session spawns sub-sessions for each workflow node.
+ * Manages the lifecycle of workflow node-agent sub-sessions for Space tasks.
+ * Each SpaceTask can have multiple node-agent sub-sessions (one per workflow node slot).
  *
  * ## Session hierarchy
  *
  * ```
- * Task Agent session  (space:${spaceId}:task:${taskId})
- *   └── Sub-session   (space:${spaceId}:task:${taskId}:node:${nodeId})
- *   └── Sub-session   (...)
+ * Sub-session  (space:${spaceId}:task:${taskId}:exec:${executionId})
+ * Sub-session  (...)
  * ```
  *
  * ## In-memory maps
  *
- * - `taskAgentSessions`  — taskId → Task Agent AgentSession
- * - `subSessions`        — taskId → (nodeId → AgentSession)
- * - `spawningTasks`      — set of taskIds currently being spawned (concurrency guard)
+ * - `subSessions`           — taskId → (nodeId → AgentSession)
+ * - `agentSessionIndex`     — agentSessionId → AgentSession (reverse index)
+ * - `spawningExecutionIds`  — set of execution IDs currently being spawned
  *
  * The maps are fast-lookup caches; session data is the source of truth in the DB.
- * On daemon restart, maps must be rebuilt via rehydration (Task 5.3).
+ * On daemon restart, maps must be rebuilt via rehydration.
  *
  * ## Sub-session lifecycle
  *
  * Sub-sessions are created with `AgentSession.fromInit()`, which persists them to
- * the DB. This mirrors the Space runtime pattern for task agent sessions.
- * DB records include `{ internal: true, parentTaskId }` in context metadata so
- * they can be filtered from user-visible session lists.
+ * the DB. DB records include `{ internal: true, parentTaskId }` in context metadata
+ * so they can be filtered from user-visible session lists.
  *
  * ## Completion detection
  *
@@ -36,7 +33,6 @@
  * registered `onComplete` callbacks are fired.
  */
 
-import { existsSync } from 'node:fs';
 import { generateUUID, resolveNodeAgents } from '@neokai/shared';
 import type {
 	Space,
@@ -76,8 +72,15 @@ import type { PendingAgentMessageRepository } from '../../../storage/repositorie
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
-import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
-import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
+/** Agent identity metadata for sub-session creation. */
+export interface SubSessionMemberInfo {
+	/** ID of the SpaceAgent config this sub-session uses */
+	agentId?: string;
+	/** Agent slot name from WorkflowNodeAgent.name (e.g. 'coder', 'reviewer') */
+	agentName?: string;
+	/** Workflow node ID — used to link the sub-session to its NodeExecution record */
+	nodeId?: string;
+}
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
@@ -87,7 +90,7 @@ import {
 	PermanentSpawnError,
 	validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
-import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
+import type { DbQueryMcpServer } from '../../db-query/tools';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -96,7 +99,6 @@ import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
-import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import {
 	buildCustomAgentTaskMessage,
 	resolveAgentInit,
@@ -282,12 +284,6 @@ export class TaskAgentManager {
 	}
 
 	/**
-	 * Maps taskId → AgentSession for active Task Agent sessions.
-	 * One entry per task while the Task Agent is running.
-	 */
-	private taskAgentSessions = new Map<string, AgentSession>();
-
-	/**
 	 * Maps taskId → (nodeId → AgentSession) for sub-sessions.
 	 * Sub-session IDs follow the convention:
 	 *   `space:${spaceId}:task:${taskId}:node:${nodeId}`
@@ -300,12 +296,6 @@ export class TaskAgentManager {
 	 * to cancel a specific agent session by its NodeExecution.agentSessionId.
 	 */
 	private agentSessionIndex = new Map<string, AgentSession>();
-
-	/**
-	 * Tracks taskIds currently being spawned — prevents concurrent
-	 * spawnTaskAgent() calls from creating duplicate Task Agent sessions.
-	 */
-	private spawningTasks = new Set<string>();
 
 	/**
 	 * Tracks node_execution IDs currently spawning a workflow-node session.
@@ -329,7 +319,7 @@ export class TaskAgentManager {
 	 * Maps taskId → absolute worktree path for active tasks.
 	 * Populated in spawnTaskAgent() after worktree creation.
 	 * Used by createSubSessionFactory() to forward the worktree path to sub-sessions.
-	 * Also populated during rehydrateTaskAgent() from the workflow run config.
+	 * Also populated during rehydrate() from the workflow run config.
 	 */
 	private taskWorktreePaths = new Map<string, string>();
 
@@ -368,9 +358,6 @@ export class TaskAgentManager {
 	}
 
 	*getTrackedAgentRootPids(): Iterable<number> {
-		for (const [, session] of this.taskAgentSessions) {
-			yield* session.getTrackedAgentRootPids();
-		}
 		for (const [, nodeSessions] of this.subSessions) {
 			for (const [, session] of nodeSessions) {
 				yield* session.getTrackedAgentRootPids();
@@ -381,11 +368,6 @@ export class TaskAgentManager {
 	getTrackedAgentRootPidsSplit(): { live: number[]; exited: number[] } {
 		const live: number[] = [];
 		const exited: number[] = [];
-		for (const [, session] of this.taskAgentSessions) {
-			const split = session.getTrackedAgentRootPidsSplit();
-			live.push(...split.live);
-			exited.push(...split.exited);
-		}
 		for (const [, nodeSessions] of this.subSessions) {
 			for (const [, session] of nodeSessions) {
 				const split = session.getTrackedAgentRootPidsSplit();
@@ -457,16 +439,10 @@ export class TaskAgentManager {
 	private async archiveOnTaskArchived(taskId: string): Promise<void> {
 		// 1. Snapshot session IDs BEFORE cleanup clears the maps.
 		const sessionIds = new Set<string>();
-		const taskAgentSession = this.taskAgentSessions.get(taskId);
-		if (taskAgentSession) sessionIds.add(taskAgentSession.session.id);
 		const nodeMap = this.subSessions.get(taskId);
 		if (nodeMap) {
 			for (const [sid] of nodeMap) sessionIds.add(sid);
 		}
-		// Fallback: if the in-memory map is empty (e.g. after daemon restart
-		// without rehydrate), use the DB-recorded task-agent session ID.
-		const task = this.config.taskRepo.getTask(taskId);
-		if (task?.taskAgentSessionId) sessionIds.add(task.taskAgentSessionId);
 
 		// 2. In-memory teardown (DB + worktree + jsonl preserved by cleanup).
 		try {
@@ -489,6 +465,7 @@ export class TaskAgentManager {
 
 		// 4. Remove the space-level task worktree (disk cleanup). The DB task
 		// row remains so the UI can still display the archived task.
+		const task = this.config.taskRepo.getTask(taskId);
 		if (this.config.worktreeManager && task?.spaceId) {
 			try {
 				await this.config.worktreeManager.removeTaskWorktree(task.spaceId, taskId);
@@ -498,449 +475,6 @@ export class TaskAgentManager {
 					`TaskAgentManager: failed to remove worktree for archived task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
 				);
 			}
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// Public — Task Agent lifecycle
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Ensure a task has an attached Task Agent session.
-	 *
-	 * For standalone tasks opened directly in the UI, this provides a deterministic
-	 * way to start the orchestration session on demand.
-	 *
-	 * Behavior:
-	 * - If the task already has `taskAgentSessionId`, return the current task.
-	 * - Otherwise spawn a Task Agent session and persist the session ID.
-	 * - If the task was `pending`, promote it to `in_progress` once the session starts.
-	 *
-	 * Returns the latest task snapshot from the repository.
-	 */
-	async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
-		const initialTask = this.config.taskRepo.getTask(taskId);
-		if (!initialTask) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
-
-		let task = initialTask;
-
-		if (task.taskAgentSessionId) {
-			const restored = await this.restoreTaskAgentFromPersistedSession(task);
-			if (restored) {
-				const refreshedTask = this.config.taskRepo.getTask(taskId);
-				if (!refreshedTask) {
-					throw new Error(`Task not found after restoring task agent session: ${taskId}`);
-				}
-				return refreshedTask;
-			}
-
-			log.warn(
-				`TaskAgentManager.ensureTaskAgentSession: stale taskAgentSessionId "${task.taskAgentSessionId}" on task ${taskId}; clearing and respawning`
-			);
-
-			this.taskAgentSessions.delete(taskId);
-			this.config.taskRepo.updateTask(taskId, { taskAgentSessionId: null });
-
-			const refreshedTask = this.config.taskRepo.getTask(taskId);
-			if (!refreshedTask) {
-				throw new Error(`Failed to reload task after clearing stale session: ${taskId}`);
-			}
-			task = refreshedTask;
-		}
-
-		const space = await this.config.spaceManager.getSpace(task.spaceId);
-		if (!space) {
-			throw new Error(`Space not found: ${task.spaceId}`);
-		}
-
-		const workflowRun = task.workflowRunId
-			? this.config.workflowRunRepo.getRun(task.workflowRunId)
-			: null;
-		const workflow = workflowRun
-			? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
-			: null;
-
-		await this.spawnTaskAgent(task, space, workflow ?? null, workflowRun ?? null, {
-			kickoff: false,
-		});
-
-		if (task.status === 'open') {
-			this.config.taskRepo.updateTask(taskId, { status: 'in_progress' });
-		}
-
-		const refreshed = this.config.taskRepo.getTask(taskId);
-		if (!refreshed) {
-			throw new Error(`Failed to reload task after starting Task Agent: ${taskId}`);
-		}
-		return refreshed;
-	}
-
-	/**
-	 * Restore an in-memory Task Agent from a persisted session ID on the task.
-	 *
-	 * Returns true when a live in-memory session is available after this call.
-	 */
-	private async restoreTaskAgentFromPersistedSession(task: SpaceTask): Promise<boolean> {
-		const sessionId = task.taskAgentSessionId;
-		if (!sessionId) return false;
-
-		// Already active in memory.
-		const live = this.taskAgentSessions.get(task.id);
-		if (live) return true;
-
-		// No persisted session metadata means we cannot restore.
-		const dbSession = this.config.db.getSession(sessionId) as { type?: string } | null;
-		if (!dbSession) return false;
-		const sessionType = dbSession.type;
-
-		try {
-			if (sessionType !== undefined && sessionType !== 'space_task_agent') {
-				return false;
-			}
-			await this.rehydrateTaskAgent(task, sessionId);
-		} catch (err) {
-			log.warn(
-				`TaskAgentManager: failed to restore persisted task-agent session ${sessionId} for task ${task.id}:`,
-				err
-			);
-			return false;
-		}
-
-		return this.taskAgentSessions.has(task.id);
-	}
-
-	/**
-	 * Spawn a Task Agent session for a SpaceTask.
-	 *
-	 * Idempotent: if a Task Agent session already exists for this task (or is
-	 * currently being spawned), returns its session ID without creating another.
-	 *
-	 * Flow:
-	 *   1. Concurrency guard + idempotency check
-	 *   2. Generate session ID (with monotonic suffix on restart if ID collides in DB)
-	 *   3. Create AgentSessionInit via createTaskAgentInit()
-	 *   4. Create session via AgentSession.fromInit() → persists to DB
-	 *   5. Create and attach Task Agent MCP server
-	 *   6. Update SpaceTask.taskAgentSessionId
-	 *   7. Start streaming query
-	 *   8. Inject initial task context message
-	 *   9. Store in taskAgentSessions, remove from spawningTasks
-	 *
-	 * @returns The session ID of the (possibly already-existing) Task Agent session.
-	 */
-	async spawnTaskAgent(
-		task: SpaceTask,
-		space: Space,
-		workflow: SpaceWorkflow | null,
-		workflowRun: SpaceWorkflowRun | null,
-		options: SpawnTaskAgentOptions = {}
-	): Promise<string> {
-		const taskId = task.id;
-
-		// --- Idempotency: already spawned
-		const existing = this.taskAgentSessions.get(taskId);
-		if (existing) {
-			return existing.session.id;
-		}
-
-		// --- Concurrency guard: currently being spawned (tick loop race)
-		if (this.spawningTasks.has(taskId)) {
-			// Poll until the session appears — the concurrently running spawn will
-			// complete shortly and add it to taskAgentSessions.
-			const CONCURRENT_SPAWN_TIMEOUT_MS = 30_000;
-			const deadline = Date.now() + CONCURRENT_SPAWN_TIMEOUT_MS;
-			return new Promise((resolve, reject) => {
-				const interval = setInterval(() => {
-					const session = this.taskAgentSessions.get(taskId);
-					if (session) {
-						clearInterval(interval);
-						resolve(session.session.id);
-						return;
-					}
-					// Also stop if it's no longer spawning (spawn failed)
-					if (!this.spawningTasks.has(taskId)) {
-						clearInterval(interval);
-						reject(
-							new Error(`Concurrent spawn for task ${taskId} failed before session was created`)
-						);
-						return;
-					}
-					// Timeout guard — prevents indefinite polling if first spawn hangs
-					if (Date.now() >= deadline) {
-						clearInterval(interval);
-						reject(
-							new Error(
-								`Concurrent spawn for task ${taskId} timed out after ${CONCURRENT_SPAWN_TIMEOUT_MS}ms`
-							)
-						);
-					}
-				}, 50);
-			});
-		}
-
-		this.spawningTasks.add(taskId);
-
-		try {
-			// --- Generate session ID with collision avoidance on restart
-			const spaceId = space.id;
-			const baseSessionId = `space:${spaceId}:task:${taskId}`;
-			const sessionId = this.resolveSessionId(baseSessionId);
-
-			// --- Create task worktree (one per task, shared by all node agents).
-			// Falls back to space.workspacePath when worktreeManager is not configured.
-			let workspacePath = space.workspacePath;
-			if (this.config.worktreeManager) {
-				try {
-					const result = await this.config.worktreeManager.createTaskWorktree(
-						spaceId,
-						taskId,
-						task.title,
-						task.taskNumber
-					);
-					workspacePath = result.path;
-					this.taskWorktreePaths.set(taskId, result.path);
-					log.info(
-						`TaskAgentManager: created worktree for task ${taskId} at ${result.path} (slug: ${result.slug})`
-					);
-
-					// Worktree path is stored in-memory in taskWorktreePaths map.
-					// Persisting to run config is no longer supported.
-					void workflowRun;
-				} catch (err) {
-					log.warn(
-						`TaskAgentManager: failed to create worktree for task ${taskId}, falling back to space workspace: ${err instanceof Error ? err.message : String(err)}`
-					);
-				}
-			}
-
-			// --- Create AgentSessionInit
-			const init = createTaskAgentInit({
-				task,
-				space,
-				workflow,
-				workflowRun,
-				sessionId,
-				workspacePath,
-			});
-
-			// --- Create the session in DB via AgentSession.fromInit()
-			const agentSession = AgentSession.fromInit(
-				init,
-				this.config.db,
-				this.config.messageHub,
-				this.config.internalEventBus,
-				this.config.getApiKey,
-				this.config.defaultModel,
-				this.config.skillsManager,
-				this.config.appMcpServerRepo
-			);
-
-			// --- Build the SpaceTaskManager for this space (needed by tool handlers)
-			const taskManager = new SpaceTaskManager(
-				this.config.db.getDatabase(),
-				spaceId,
-				this.config.reactiveDb
-			);
-
-			// --- Build and attach MCP server with live runtime dependencies
-			const workflowRunId = workflowRun?.id ?? '';
-
-			const mcpServer = createTaskAgentMcpServer({
-				taskId,
-				space,
-				workflowRunId,
-				taskRepo: this.config.taskRepo,
-				nodeExecutionRepo: this.config.nodeExecutionRepo,
-				taskManager,
-				messageInjector: (subSessionId, message) =>
-					this.injectSubSessionMessage(subSessionId, message, true),
-				internalEventBus: this.config.internalEventBus,
-				gateDataRepo: this.config.gateDataRepo,
-				workflowRunRepo: this.config.workflowRunRepo,
-				workflowManager: this.config.spaceWorkflowManager,
-				getSpaceAutonomyLevel: async (sid) => {
-					const s = await this.config.spaceManager.getSpace(sid);
-					return s?.autonomyLevel ?? 1;
-				},
-				myAgentName: 'task-agent',
-				onGateChanged: (runId, gateId) => {
-					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
-				},
-				pendingMessageRepo: this.config.pendingMessageRepo,
-				spaceAgentInjector: this.config.spaceAgentInjector,
-				taskAgentManager: this,
-				artifactRepo: this.config.artifactRepo,
-				replyRoutingLookup: () => {
-					const registry = this.config.replyRoutingRegistry;
-					return registry ? registry.get(taskId) : null;
-				},
-			});
-
-			// mergeRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
-			// object is structurally compatible at runtime — the AgentSession only reads
-			// the `server` property for the live Server instance. The cast is safe because
-			// createTaskAgentMcpServer returns { server, cleanup } which satisfies the
-			// runtime shape used inside AgentSession.mergeRuntimeMcpServers().
-			//
-			// Merge registry-sourced MCP servers from AppMcpLifecycleManager alongside the
-			// in-process task-agent server. The task-agent server always wins on collision
-			// since it provides the core orchestration tools required for task management.
-			//
-			// Note: task agent sessions are short-lived (one per task), so there is no
-			// mcp.registry.changed subscription here. Registry changes during a running task
-			// are not hot-reloaded; they take effect when the next task agent is spawned.
-			//
-			// Resolves the session's space > room > session scope chain against
-			// mcp_enablement so per-space overrides from the space settings UI
-			// are honored.
-			const registryMcpServers =
-				this.config.appMcpManager?.getEnabledMcpConfigsForSession({
-					id: sessionId,
-					context: { spaceId },
-				}) ?? {};
-			for (const name of Object.keys(registryMcpServers)) {
-				if (name === 'task-agent') {
-					log.warn(
-						`Task agent session ${sessionId}: MCP server name collision on 'task-agent' — ` +
-							`in-process task-agent server takes precedence over registry entry.`
-					);
-				}
-			}
-			const taskMcpServers: Record<string, McpServerConfig> = {
-				...registryMcpServers,
-				'task-agent': mcpServer as unknown as McpServerConfig,
-			};
-			// Create a space-scoped db-query server when dbPath is configured.
-			if (this.config.dbPath) {
-				const dbQueryServer = createDbQueryMcpServer({
-					dbPath: this.config.dbPath,
-					scopeType: 'space',
-					scopeValue: spaceId,
-				});
-				this.taskDbQueryServers.set(taskId, dbQueryServer);
-				taskMcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
-			}
-
-			// Attach `space-agent-tools` alongside `task-agent` so the task agent
-			// can coordinate directly with the rest of the Space (e.g., via
-			// `send_message_to_agent`) in the same way the Space chat session
-			// can. Safe because tool handlers gate on autonomy + writer checks.
-			const spaceAgentMcpServer = createSpaceAgentMcpServer({
-				spaceId,
-				runtime: this.config.spaceRuntimeService.getSharedRuntime(),
-				workflowManager: this.config.spaceWorkflowManager,
-				spaceManager: this.config.spaceManager,
-				taskRepo: this.config.taskRepo,
-				nodeExecutionRepo: this.config.nodeExecutionRepo,
-				workflowRunRepo: this.config.workflowRunRepo,
-				taskManager,
-				spaceAgentManager: this.config.spaceAgentManager,
-				taskAgentManager: this,
-				gateDataRepo: this.config.gateDataRepo,
-				internalEventBus: this.config.internalEventBus,
-				onGateChanged: (runId, gateId) => {
-					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
-				},
-				pendingMessageQueue: this.config.pendingMessageRepo,
-				getSpaceAutonomyLevel: async (sid) => {
-					const s = await this.config.spaceManager.getSpace(sid);
-					return s?.autonomyLevel ?? 1;
-				},
-				myAgentName: 'task-agent',
-				mySessionId: sessionId,
-				auditLogRepo: this.auditLogRepo,
-				replyRoutingRegistry: this.config.replyRoutingRegistry,
-			});
-			taskMcpServers['space-agent-tools'] = spaceAgentMcpServer as unknown as McpServerConfig;
-
-			// Use merge semantics so any servers already present (e.g. injected by a
-			// concurrent subsystem before this path runs) are preserved. In practice the
-			// session is freshly created and the map is empty, but merge is safer than
-			// the deprecated replace-all setRuntimeMcpServers.
-			agentSession.mergeRuntimeMcpServers(taskMcpServers);
-
-			// --- Persist taskAgentSessionId on the SpaceTask
-			this.config.taskRepo.updateTask(taskId, { taskAgentSessionId: sessionId });
-
-			// --- Store in map before streaming start to allow getTaskAgent() calls
-			this.taskAgentSessions.set(taskId, agentSession);
-
-			// --- Register in SessionManager cache so getSessionAsync() returns the live
-			// instance with MCP tools attached rather than creating a duplicate from DB.
-			// Without this, RPC handlers (message.send, message.sdkMessages, etc.) would
-			// create a competing AgentSession with duplicate InternalEventBus<DaemonInternalEventMap> subscriptions.
-			this.config.sessionManager.registerSession(agentSession);
-
-			// --- Start streaming query
-			await agentSession.startStreamingQuery();
-
-			// --- Block until the SDK has emitted its `init` message and the
-			// resulting sdkSessionId is persisted. Without this await, a daemon
-			// restart between `startStreamingQuery()` and the first inbound SDK
-			// message would leave the DB row with `sdkSessionId = null` — on
-			// rehydrate the SDK has no transcript to resume, so the agent's
-			// conversation history is silently lost. This is the primary root
-			// cause of the "task-agent session lost after daemon restart" bug.
-			//
-			// Best-effort with timeout: worst case we fall through and accept
-			// the pre-fix behaviour, but in practice the SDK init message
-			// arrives within ~1–2 seconds.
-			try {
-				await agentSession.awaitSdkSessionCaptured(15_000);
-			} catch (err) {
-				log.warn(
-					`TaskAgentManager: sdkSessionId capture timed out for task-agent session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-				);
-			}
-
-			// --- Eagerly spawn sub-sessions for all workflow node agents.
-			// Each gets `startStreamingQuery` + `awaitSdkSessionCaptured` so the
-			// SDK transcript is persisted before any kickoff work happens.
-			// Deliberately runs BEFORE the task-agent kickoff message so that
-			// a daemon restart at any later point can always resume every
-			// session with a valid sdkSessionId.
-			if (workflow && workflowRun) {
-				try {
-					await this.eagerlySpawnWorkflowNodeAgents({
-						task,
-						space,
-						workflow,
-						workflowRun,
-						workspacePath,
-					});
-				} catch (err) {
-					log.warn(
-						`TaskAgentManager: eager sub-session spawn failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
-					);
-				}
-			}
-
-			// --- Optional kickoff message
-			// Event-driven mode can spawn the session in an idle state and let
-			// explicit inbound messages (human/agent) wake orchestration.
-			const shouldKickoff = options.kickoff ?? true;
-			if (shouldKickoff) {
-				const availableAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
-				const initialMessage = buildTaskAgentInitialMessage({
-					task,
-					space,
-					workflow: workflow ?? undefined,
-					workflowRun: workflowRun ?? undefined,
-					availableAgents,
-				});
-				await this.injectMessageIntoSession(agentSession, initialMessage);
-			}
-
-			log.info(`TaskAgentManager: spawned task agent for task ${taskId}, session ${sessionId}`);
-			return sessionId;
-		} catch (err) {
-			// Remove from map if we added it prematurely
-			this.taskAgentSessions.delete(taskId);
-			throw err;
-		} finally {
-			this.spawningTasks.delete(taskId);
 		}
 	}
 
@@ -1220,160 +754,6 @@ export class TaskAgentManager {
 	 *   A restart at any later point can safely resume every session with
 	 *   full history.
 	 *
-	 * The sub-sessions are started but _not_ kicked off — no user message
-	 * is injected. When the workflow activates the corresponding node later,
-	 * `spawnWorkflowNodeAgentForExecution` calls `createSubSession` which
-	 * discovers the pre-spawned session via `eagerSubSessionIds` and reuses
-	 * it (re-attaching the node-agent MCP server with fresh node context
-	 * and firing the kickoff message).
-	 *
-	 * Best-effort per-agent: one slot failure must not break the whole
-	 * pre-spawn pass.
-	 */
-	private async eagerlySpawnWorkflowNodeAgents(ctx: {
-		task: SpaceTask;
-		space: Space;
-		workflow: SpaceWorkflow;
-		workflowRun: SpaceWorkflowRun;
-		workspacePath: string;
-	}): Promise<void> {
-		const { task, space, workflow, workflowRun, workspacePath } = ctx;
-		const taskId = task.id;
-		const spaceId = space.id;
-
-		// Build a map of unique (agentName → {slot, nodeId}) picking the first
-		// occurrence in workflow.nodes iteration order. This matches the reuse
-		// contract: one session per agent name per task lifetime.
-		const eagerTargets = new Map<
-			string,
-			{ slot: ReturnType<typeof resolveNodeAgents>[number]; nodeId: string }
-		>();
-		for (const node of workflow.nodes) {
-			for (const slot of resolveNodeAgents(node)) {
-				if (!slot.agentId) continue;
-				if (eagerTargets.has(slot.name)) continue;
-				eagerTargets.set(slot.name, { slot, nodeId: node.id });
-			}
-		}
-
-		if (eagerTargets.size === 0) return;
-
-		const nameIndex = this.eagerSubSessionIds.get(taskId) ?? new Map<string, string>();
-
-		for (const [agentName, { slot, nodeId }] of eagerTargets) {
-			try {
-				// Stable per-agent session ID so the DB row survives daemon restarts
-				// without needing a NodeExecution link.
-				const baseSessionId = `space:${spaceId}:task:${taskId}:agent:${this.sanitizeAgentNameForId(agentName)}`;
-				const sessionId = this.resolveSessionId(baseSessionId);
-
-				const node = workflow.nodes.find((candidate) => candidate.id === nodeId);
-				const slotOverrides = this.buildSlotOverrides(slot, {
-					node,
-					workflow,
-					workflowRun,
-				});
-
-				let init = resolveAgentInit({
-					task,
-					space,
-					agentManager: this.config.spaceAgentManager,
-					sessionId,
-					workspacePath,
-					workflowRun,
-					workflow,
-					slotOverrides,
-					agentId: slot.agentId!,
-				});
-
-				// Attach the same MCP server surface that spawnWorkflowNodeAgentForExecution
-				// attaches, so the session is indistinguishable from a normally-spawned one
-				// the moment the workflow activates its node.
-				const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
-					taskId,
-					sessionId,
-					agentName,
-					spaceId,
-					workflowRun.id,
-					workspacePath,
-					nodeId
-				);
-				init = {
-					...init,
-					mcpServers: {
-						...init.mcpServers,
-						'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-					},
-				};
-
-				// Create the session via fromInit (bypass createSubSession's reuse path
-				// because we are the first caller and there's nothing to reuse yet).
-				const subSession = AgentSession.fromInit(
-					init,
-					this.config.db,
-					this.config.messageHub,
-					this.config.internalEventBus,
-					this.config.getApiKey,
-					this.config.defaultModel,
-					this.config.skillsManager,
-					this.config.appMcpServerRepo
-				);
-
-				// Merge registry-sourced MCP servers alongside the per-session ones.
-				// Resolve via the session-aware resolver so scope='space' / scope='session'
-				// overrides in `mcp_enablement` are honoured.
-				const registryMcpServers =
-					this.config.appMcpManager?.getEnabledMcpConfigsForSession({
-						id: sessionId,
-						context: { spaceId },
-					}) ?? {};
-				const mergedMcpServers = {
-					...registryMcpServers,
-					...init.mcpServers,
-				};
-				if (Object.keys(mergedMcpServers).length > 0) {
-					subSession.mergeRuntimeMcpServers(mergedMcpServers);
-				}
-
-				// Register in the same in-memory maps as normal sub-sessions so the rest
-				// of the manager can find them transparently.
-				if (!this.subSessions.has(taskId)) {
-					this.subSessions.set(taskId, new Map());
-				}
-				this.subSessions.get(taskId)!.set(sessionId, subSession);
-				this.agentSessionIndex.set(sessionId, subSession);
-				this.config.sessionManager.registerSession(subSession);
-
-				// Record in the eager index so createSubSession's reuse path picks this up
-				// on the real node activation.
-				nameIndex.set(agentName, sessionId);
-
-				// Start the streaming query so the SDK subprocess launches and emits its
-				// init message. No kickoff user message — the session sits idle until the
-				// workflow activation triggers the real spawn call.
-				await subSession.startStreamingQuery();
-				try {
-					await subSession.awaitSdkSessionCaptured(15_000);
-				} catch (err) {
-					log.warn(
-						`TaskAgentManager.eagerlySpawn: sdkSessionId capture timed out for eager sub-session ${sessionId} (agent=${agentName}): ${err instanceof Error ? err.message : String(err)}`
-					);
-				}
-
-				log.info(
-					`TaskAgentManager.eagerlySpawn: pre-spawned sub-session ${sessionId} for agent "${agentName}" (task ${taskId}, node ${nodeId})`
-				);
-			} catch (err) {
-				log.warn(
-					`TaskAgentManager.eagerlySpawn: failed to pre-spawn sub-session for agent "${agentName}" (task ${taskId}): ${err instanceof Error ? err.message : String(err)}`
-				);
-			}
-		}
-
-		if (nameIndex.size > 0) {
-			this.eagerSubSessionIds.set(taskId, nameIndex);
-		}
-	}
 
 	/**
 	 * Sanitize an agent slot name so it is safe to use as a component of a
@@ -1860,43 +1240,6 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Inject a message into a Task Agent session.
-	 * Used by Space Agent's `send_message_to_task` tool.
-	 *
-	 * `images` is forwarded so human-driven RPCs (`space.task.sendMessage`) can
-	 * deliver image attachments to a Task Agent session. Synthetic injects from
-	 * other agents pass `undefined` and behave exactly as before.
-	 */
-	async injectTaskAgentMessage(
-		taskId: string,
-		message: string,
-		isSyntheticMessage = false,
-		images?: MessageImage[]
-	): Promise<void> {
-		let session = this.taskAgentSessions.get(taskId);
-		if (!session) {
-			const task = this.config.taskRepo.getTask(taskId);
-			if (task?.taskAgentSessionId) {
-				const restored = await this.restoreTaskAgentFromPersistedSession(task);
-				if (restored) {
-					session = this.taskAgentSessions.get(taskId);
-				}
-			}
-		}
-		if (!session) {
-			throw new Error(`Task Agent session not found for task ${taskId}`);
-		}
-		await this.injectMessageIntoSession(
-			session,
-			message,
-			'immediate',
-			undefined,
-			isSyntheticMessage,
-			images
-		);
-	}
-
-	/**
 	 * Inject a message into a sub-session.
 	 * Called by the Task Agent MCP tool handler via the messageInjector callback.
 	 *
@@ -2217,8 +1560,8 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/** Returns true if the given taskId is currently being spawned. */
-	isSpawning(taskId: string): boolean {
-		return this.spawningTasks.has(taskId);
+	isSpawning(_taskId: string): boolean {
+		return false;
 	}
 
 	/** Returns true if the given node execution is currently being spawned. */
@@ -2231,20 +1574,8 @@ export class TaskAgentManager {
 		const indexed = this.agentSessionIndex.get(sessionId);
 		if (indexed) return this.isAgentSessionAlive(indexed);
 
-		for (const taskAgent of this.taskAgentSessions.values()) {
-			if (taskAgent.session.id === sessionId) {
-				return this.isAgentSessionAlive(taskAgent);
-			}
-		}
-
 		// Final check: if SessionManager still holds the live object, treat as alive.
 		const session = this.config.sessionManager.getSession(sessionId);
-		return session ? this.isAgentSessionAlive(session) : false;
-	}
-
-	/** Returns true if the Task Agent session for the given task is in a live state. */
-	isTaskAgentAlive(taskId: string): boolean {
-		const session = this.taskAgentSessions.get(taskId);
 		return session ? this.isAgentSessionAlive(session) : false;
 	}
 
@@ -2285,9 +1616,9 @@ export class TaskAgentManager {
 		return undefined;
 	}
 
-	/** Returns the Task Agent's AgentSession, or undefined if not spawned. */
-	getTaskAgent(taskId: string): AgentSession | undefined {
-		return this.taskAgentSessions.get(taskId);
+	/** No-op — task-agent LLM sessions are no longer spawned. */
+	getTaskAgent(_taskId: string): AgentSession | undefined {
+		return undefined;
 	}
 
 	/** Returns a sub-session by its session ID, or undefined if not found. */
@@ -2307,7 +1638,6 @@ export class TaskAgentManager {
 	 *
 	 * Lookup order (mirrors `isSessionAlive`):
 	 *  1. `agentSessionIndex` (fast reverse index for sub-sessions)
-	 *  2. `taskAgentSessions` map (Task Agents)
 	 *  3. `SessionManager.getSession()` (general session cache)
 	 *
 	 * Step 3 may **lazy-hydrate** an AgentSession from the database if it's
@@ -2335,10 +1665,6 @@ export class TaskAgentManager {
 	getAgentSessionById(sessionId: string): AgentSession | undefined {
 		const indexed = this.agentSessionIndex.get(sessionId);
 		if (indexed) return indexed;
-
-		for (const taskAgent of this.taskAgentSessions.values()) {
-			if (taskAgent.session.id === sessionId) return taskAgent;
-		}
 
 		// SessionManager.getSession may hydrate a fresh AgentSession from DB;
 		// that's intentional — see method JSDoc for why. Normalize null → undefined
@@ -2438,79 +1764,59 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Rehydrate Task Agent sessions after a daemon restart.
+	 * Rehydrate node-agent sub-sessions after a daemon restart.
 	 *
 	 * Queries `space_tasks` for tasks with status `in_progress`, `review`,
-	 * `blocked`, or `approved` that have a non-null `taskAgentSessionId`. For
-	 * each such task that has a `space_task_agent` session type in the DB,
-	 * restores the Task Agent session via `AgentSession.restore()`, re-attaches
-	 * the MCP server and system prompt, restarts the streaming query, and
-	 * injects a re-orientation message so the agent resumes from where it left
-	 * off. See `SpaceTaskRepository.listActiveWithTaskAgentSession` for the
-	 * full justification of which statuses are included.
-	 *
-	 * After each Task Agent is restored, `rehydrateTaskAgent` also eagerly
-	 * rehydrates every workflow sub-session attached to its workflow run via
-	 * `rehydrateSubSessionsForRun` — see that method for the full rationale.
-	 * Without that step, sub-sessions whose `node-agent` MCP server is
-	 * in-process-only would silently sit without it after a restart, breaking
-	 * peer messaging the moment a UI overlay or peer message reached them
-	 * (task #126 failure mode).
+	 * `blocked`, or `approved` that have a non-null `taskAgentSessionId`.
+	 * For each active task, clears the stale `taskAgentSessionId` (task-agent
+	 * LLM sessions are no longer spawned) and eagerly rehydrates workflow
+	 * sub-sessions via `rehydrateSubSessionsForRun`.
 	 *
 	 * This method is called from `SpaceRuntime.rehydrateExecutors()` after
-	 * WorkflowExecutors are loaded, so executors are ready when Task Agents run.
+	 * WorkflowExecutors are loaded, so executors are ready when sub-sessions run.
 	 */
 	async rehydrate(): Promise<void> {
 		const activeTasks = this.config.taskRepo.listActiveWithTaskAgentSession();
 
-		let attempted = 0;
-		let failed = 0;
 		let selfHealed = 0;
+		const processedRunIds = new Set<string>();
 
 		for (const task of activeTasks) {
-			const sessionId = task.taskAgentSessionId;
-			if (!sessionId) continue;
+			// Clear stale taskAgentSessionId (task-agent LLM sessions removed)
+			if (task.taskAgentSessionId) {
+				const dbSession = this.config.db.getSession(task.taskAgentSessionId);
+				if (!dbSession) {
+					log.warn(
+						`TaskAgentManager.rehydrate: task ${task.id} references missing session ${task.taskAgentSessionId} — clearing dangling task_agent_session_id`
+					);
+					try {
+						this.config.taskRepo.updateTask(task.id, { taskAgentSessionId: null });
+						selfHealed++;
+					} catch (err) {
+						log.warn(
+							`TaskAgentManager.rehydrate: failed to clear dangling task_agent_session_id for task ${task.id}:`,
+							err
+						);
+					}
+				}
+			}
 
-			// Skip if already in the map (e.g. double rehydrate call)
-			if (this.taskAgentSessions.has(task.id)) continue;
-
-			const dbSession = this.config.db.getSession(sessionId);
-			if (!dbSession || dbSession.type !== 'space_task_agent') {
-				// Dangling FK: task still references a session that no longer exists
-				// in the DB (or was replaced by another type). Clear the reference so
-				// the UI's `spaceTaskActivity.byTask` LiveQuery stops inner-joining on
-				// a ghost row (which hides the task agent and canvas) and so the task
-				// becomes eligible to spawn a fresh Task Agent on its next run.
-				log.warn(
-					`TaskAgentManager.rehydrate: task ${task.id} references missing session ${sessionId} — clearing dangling task_agent_session_id`
-				);
+			// Rehydrate sub-sessions for this task's workflow run
+			if (task.workflowRunId && !processedRunIds.has(task.workflowRunId)) {
+				processedRunIds.add(task.workflowRunId);
 				try {
-					this.config.taskRepo.updateTask(task.id, { taskAgentSessionId: null });
-					selfHealed++;
+					await this.rehydrateSubSessionsForRun(task.workflowRunId);
 				} catch (err) {
 					log.warn(
-						`TaskAgentManager.rehydrate: failed to clear dangling task_agent_session_id for task ${task.id}:`,
+						`TaskAgentManager.rehydrate: failed to rehydrate sub-sessions for run ${task.workflowRunId}:`,
 						err
 					);
 				}
-				continue;
-			}
-
-			attempted++;
-			try {
-				await this.rehydrateTaskAgent(task, sessionId);
-			} catch (err) {
-				failed++;
-				log.warn(
-					`TaskAgentManager.rehydrate: failed to rehydrate task ${task.id} (session ${sessionId}):`,
-					err
-				);
 			}
 		}
 
-		const succeeded = attempted - failed;
 		log.info(
-			`TaskAgentManager.rehydrate: attempted=${attempted} succeeded=${succeeded} failed=${failed} selfHealed=${selfHealed}`
+			`TaskAgentManager.rehydrate: processed ${processedRunIds.size} run(s), selfHealed=${selfHealed}`
 		);
 	}
 
@@ -2537,7 +1843,7 @@ export class TaskAgentManager {
 			this.taskArchiveListenerUnsub();
 			this.taskArchiveListenerUnsub = null;
 		}
-		const taskIds = Array.from(this.taskAgentSessions.keys());
+		const taskIds = Array.from(this.subSessions.keys());
 		await Promise.allSettled(taskIds.map((taskId) => this.shutdownTask(taskId)));
 		log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks shut down)`);
 	}
@@ -2557,13 +1863,6 @@ export class TaskAgentManager {
 				this.agentSessionIndex.delete(subSessionId);
 			}
 			this.subSessions.delete(taskId);
-		}
-
-		// 2. Stop Task Agent session
-		const taskAgentSession = this.taskAgentSessions.get(taskId);
-		if (taskAgentSession) {
-			await this.stopSessionPreserveDb(taskAgentSession.session.id, taskAgentSession);
-			this.taskAgentSessions.delete(taskId);
 		}
 
 		// 3. Drop the in-memory worktree path (DB record is preserved)
@@ -2600,7 +1899,7 @@ export class TaskAgentManager {
 	 * This method:
 	 *   - Interrupts and cleans up every in-memory AgentSession for the task.
 	 *   - Drops completion callbacks and session listeners.
-	 *   - Clears in-memory maps (`subSessions`, `taskAgentSessions`,
+	 *   - Clears in-memory maps (`subSessions`,
 	 *     `taskWorktreePaths`, `taskDbQueryServers`, `agentSessionIndex`).
 	 *   - Closes any db-query MCP server file handles.
 	 *
@@ -2627,15 +1926,6 @@ export class TaskAgentManager {
 			for (const sid of sessionIdsToClean) {
 				this.agentSessionIndex.delete(sid);
 			}
-		}
-
-		// 2. Stop Task Agent session (interrupt + cleanup, preserve DB).
-		const taskAgentSession = this.taskAgentSessions.get(taskId);
-		if (taskAgentSession) {
-			const agentSessionId = taskAgentSession.session.id;
-			sessionIdsToClean.add(agentSessionId);
-			await this.stopSessionPreserveDb(agentSessionId, taskAgentSession);
-			this.taskAgentSessions.delete(taskId);
 		}
 
 		// 3. stopSessionPreserveDb already removed per-session listeners and
@@ -2833,14 +2123,10 @@ export class TaskAgentManager {
 			});
 		}
 
-		const taskAgentSession = this.taskAgentSessions.get(parentTaskId);
-		if (!taskAgentSession) return;
-
 		const failedNodeId = failedExecution?.workflowNodeId ?? 'unknown-node';
-		await this.injectMessageIntoSession(
-			taskAgentSession,
-			`[NODE_FAILED] Node "${failedNodeId}" sub-session (${subSessionId}) reported an error: ${error}\nEscalation reason: ${RUNTIME_ESCALATION_REASONS.NODE_FAILURE}\nWorkflow progression is runtime-driven; use this as context for human coordination only.`,
-			'defer'
+		log.warn(
+			`TaskAgentManager: node "${failedNodeId}" sub-session (${subSessionId}) failed: ${error}. ` +
+				`Execution marked blocked; runtime tick will handle escalation.`
 		);
 	}
 
@@ -3109,277 +2395,6 @@ export class TaskAgentManager {
 		}
 		throw new Error(
 			`Could not find available session ID for base "${baseId}" after ${MAX_ATTEMPTS} attempts`
-		);
-	}
-
-	/**
-	 * Rehydrate a single Task Agent session after daemon restart.
-	 *
-	 * 1. Loads the associated Space, Workflow, and WorkflowRun from the DB.
-	 * 2. Restores the AgentSession via `AgentSession.restore()` — the session
-	 *    already exists in the DB; `restore()` skips fingerprint comparison and
-	 *    avoids any risk of invalidating `sdkSessionId` across restarts.
-	 * 3. Re-attaches MCP server and system prompt (runtime-only, not persisted).
-	 * 4. Adds the session to `taskAgentSessions` before streaming starts.
-	 * 5. Restarts the streaming query so the SDK resumes from conversation history.
-	 * 6. Injects a re-orientation message so the agent checks its current state and
-	 *    continues from where it left off.
-	 * 7. Eagerly rehydrates every workflow sub-session attached to the workflow
-	 *    run via `rehydrateSubSessionsForRun`, so the in-process `node-agent`
-	 *    and `space-agent-tools` MCP servers are re-attached BEFORE any UI
-	 *    overlay or peer message can reach a sub-session (task #126 fix).
-	 */
-	private async rehydrateTaskAgent(task: SpaceTask, sessionId: string): Promise<void> {
-		const taskId = task.id;
-		const spaceId = task.spaceId;
-
-		// --- Load Space
-		const space = await this.config.spaceManager.getSpace(spaceId);
-		if (!space) {
-			log.warn(
-				`TaskAgentManager.rehydrate: space ${spaceId} not found for task ${taskId}, skipping`
-			);
-			return;
-		}
-
-		// --- Load Workflow and WorkflowRun (if applicable)
-		let workflow: SpaceWorkflow | null = null;
-		let workflowRun: SpaceWorkflowRun | null = null;
-		if (task.workflowRunId) {
-			workflowRun = this.config.workflowRunRepo.getRun(task.workflowRunId);
-			if (workflowRun) {
-				workflow = this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId);
-			}
-		}
-
-		// --- Restore the existing AgentSession from DB via restore().
-		// restore() is the correct path for daemon-restart rehydration of an already-persisted
-		// session: it skips fingerprint comparison and avoids invalidating sdkSessionId
-		// (which would break conversation continuity for tasks resuming mid-execution).
-		const agentSession = AgentSession.restore(
-			sessionId,
-			this.config.db,
-			this.config.messageHub,
-			this.config.internalEventBus,
-			this.config.getApiKey,
-			this.config.skillsManager,
-			this.config.appMcpServerRepo,
-			{ autoReplayPendingMessages: false }
-		);
-		if (!agentSession) {
-			log.warn(
-				`TaskAgentManager.rehydrate: session ${sessionId} not found in DB for task ${taskId}, skipping`
-			);
-			return;
-		}
-
-		// --- Restore worktree path from SpaceWorktreeRepository (persisted at spawn time).
-		// Only restores the path when the worktree directory still exists on disk —
-		// if the directory was deleted between restarts (manual cleanup, disk failure),
-		// fall back to space.workspacePath to avoid directing sub-sessions at a
-		// non-existent location.
-		const rehydrateWorkspacePath = await (async () => {
-			if (!this.config.worktreeManager) {
-				return space.workspacePath;
-			}
-			const storedPath = await this.config.worktreeManager.getTaskWorktreePath(spaceId, taskId);
-			if (storedPath && existsSync(storedPath)) {
-				this.taskWorktreePaths.set(taskId, storedPath);
-				return storedPath;
-			}
-			if (storedPath) {
-				log.warn(
-					`TaskAgentManager.rehydrate: worktree path ${storedPath} no longer exists on disk for task ${taskId} — falling back to space workspace`
-				);
-			}
-			return space.workspacePath;
-		})();
-
-		// --- Build the SpaceTaskManager for this space
-		const taskManager = new SpaceTaskManager(
-			this.config.db.getDatabase(),
-			spaceId,
-			this.config.reactiveDb
-		);
-
-		// --- Build and attach MCP server (runtime-only, not persisted)
-		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
-
-		const mcpServer = createTaskAgentMcpServer({
-			taskId,
-			space,
-			workflowRunId: rehydrateWorkflowRunId,
-			taskRepo: this.config.taskRepo,
-			nodeExecutionRepo: this.config.nodeExecutionRepo,
-			taskManager,
-			messageInjector: (subSessionId, message) =>
-				this.injectSubSessionMessage(subSessionId, message, true),
-			internalEventBus: this.config.internalEventBus,
-			gateDataRepo: this.config.gateDataRepo,
-			workflowRunRepo: this.config.workflowRunRepo,
-			workflowManager: this.config.spaceWorkflowManager,
-			getSpaceAutonomyLevel: async (sid) => {
-				const s = await this.config.spaceManager.getSpace(sid);
-				return s?.autonomyLevel ?? 1;
-			},
-			myAgentName: 'task-agent',
-			onGateChanged: (runId, gateId) => {
-				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
-			},
-			pendingMessageRepo: this.config.pendingMessageRepo,
-			spaceAgentInjector: this.config.spaceAgentInjector,
-			taskAgentManager: this,
-			artifactRepo: this.config.artifactRepo,
-			replyRoutingLookup: () => {
-				const registry = this.config.replyRoutingRegistry;
-				return registry ? registry.get(taskId) : null;
-			},
-		});
-
-		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
-		// mirroring the same logic in spawnTaskAgent() so rehydrated sessions have the
-		// same MCP configuration as freshly spawned ones. Session-aware resolver
-		// — scope='space' / scope='session' overrides survive restarts.
-		const rehydrateRegistryMcpServers =
-			this.config.appMcpManager?.getEnabledMcpConfigsForSession({
-				id: sessionId,
-				context: { spaceId },
-			}) ?? {};
-		for (const name of Object.keys(rehydrateRegistryMcpServers)) {
-			if (name === 'task-agent') {
-				log.warn(
-					`Rehydrating task agent session ${sessionId}: MCP server name collision on 'task-agent' — ` +
-						`in-process task-agent server takes precedence over registry entry.`
-				);
-			}
-		}
-		const rehydrateMcpServers: Record<string, McpServerConfig> = {
-			...rehydrateRegistryMcpServers,
-			'task-agent': mcpServer as unknown as McpServerConfig,
-		};
-		// Create a space-scoped db-query server when dbPath is configured.
-		if (this.config.dbPath) {
-			const rehydrateDbQueryServer = createDbQueryMcpServer({
-				dbPath: this.config.dbPath,
-				scopeType: 'space',
-				scopeValue: spaceId,
-			});
-			// Close any stale server for this taskId before storing the new one.
-			const staleDbQueryServer = this.taskDbQueryServers.get(taskId);
-			if (staleDbQueryServer) {
-				try {
-					staleDbQueryServer.close();
-				} catch (err) {
-					log.warn(
-						`Failed to close stale db-query server during rehydration for task ${taskId}:`,
-						err
-					);
-				}
-			}
-			this.taskDbQueryServers.set(taskId, rehydrateDbQueryServer);
-			rehydrateMcpServers['db-query'] = rehydrateDbQueryServer as unknown as McpServerConfig;
-		}
-
-		// Re-attach `space-agent-tools` so the rehydrated task agent has the same
-		// tool surface as a freshly spawned task agent. This server is not persisted to
-		// DB (see session-repository.ts) and is not re-attached by SpaceRuntimeService
-		// because rehydrated sessions do not fire the `session.created` event that the
-		// service subscribes to. Without this, the task agent cannot call list_peers /
-		// send_message / read_gate / etc. after a daemon restart.
-		const rehydrateSpaceAgentMcpServer = createSpaceAgentMcpServer({
-			spaceId,
-			runtime: this.config.spaceRuntimeService.getSharedRuntime(),
-			workflowManager: this.config.spaceWorkflowManager,
-			spaceManager: this.config.spaceManager,
-			taskRepo: this.config.taskRepo,
-			nodeExecutionRepo: this.config.nodeExecutionRepo,
-			workflowRunRepo: this.config.workflowRunRepo,
-			taskManager,
-			spaceAgentManager: this.config.spaceAgentManager,
-			taskAgentManager: this,
-			gateDataRepo: this.config.gateDataRepo,
-			internalEventBus: this.config.internalEventBus,
-			onGateChanged: (runId, gateId) => {
-				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
-			},
-			pendingMessageQueue: this.config.pendingMessageRepo,
-			getSpaceAutonomyLevel: async (sid) => {
-				const s = await this.config.spaceManager.getSpace(sid);
-				return s?.autonomyLevel ?? 1;
-			},
-			myAgentName: 'task-agent',
-			mySessionId: sessionId,
-			auditLogRepo: this.auditLogRepo,
-			replyRoutingRegistry: this.config.replyRoutingRegistry,
-		});
-		rehydrateMcpServers['space-agent-tools'] =
-			rehydrateSpaceAgentMcpServer as unknown as McpServerConfig;
-
-		// Use merge semantics: the restored session has no in-memory MCP servers
-		// (they are stripped from DB persistence) so this is effectively a full set,
-		// but mergeRuntimeMcpServers is safer than the deprecated replace-all API.
-		agentSession.mergeRuntimeMcpServers(rehydrateMcpServers);
-
-		// Re-attach system prompt (runtime-only, not persisted).
-		// Generated fresh from createTaskAgentInit() so it reflects the current task/workflow state.
-		const init = createTaskAgentInit({
-			task,
-			space,
-			workflow,
-			workflowRun,
-			sessionId,
-			workspacePath: rehydrateWorkspacePath,
-		});
-		if (init.systemPrompt) {
-			agentSession.setRuntimeSystemPrompt(init.systemPrompt);
-		}
-
-		// --- Store in map before streaming start
-		this.taskAgentSessions.set(taskId, agentSession);
-
-		// Old SDK transcripts may lack assistant message usage. Sanitize only during
-		// rehydration, before the SDK reads JSONL history while resuming.
-		this.sanitizeSDKSessionTranscriptForRehydration(agentSession, rehydrateWorkspacePath);
-
-		// --- Restart the streaming query (SDK resumes from conversation history in DB)
-		await agentSession.startStreamingQuery();
-		await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
-
-		// --- Inject re-orientation message so the agent checks state and continues.
-		const reorientMessage = task.workflowRunId
-			? 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
-				'Please review recent [NODE_*] event messages and continue orchestration in event-driven mode.'
-			: 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
-				'Please check the current task status and continue from where you left off.';
-		await this.injectMessageIntoSession(agentSession, reorientMessage);
-
-		// --- Eagerly rehydrate every workflow sub-session for this task.
-		//
-		// Without this, sub-sessions (coder/reviewer/etc.) that the workflow had
-		// already spawned before the daemon restart sit out-of-memory until
-		// `injectSubSessionMessage` is invoked. That lazy path is fine for the
-		// "Task Agent calls a tool that injects a message" flow, but it has two
-		// gaps that bite us in the wild (task #126):
-		//
-		//   1. UI/RPC paths that resolve a sub-session via
-		//      `SessionManager.getSessionAsync` short-circuit on
-		//      `AgentSession.restore()` and never reach `rehydrateSubSession` —
-		//      the bare restored session has neither `node-agent` nor
-		//      `space-agent-tools` attached, so `write_gate` / `read_gate` /
-		//      `send_message` calls die silently with "No such tool available".
-		//   2. A sub-session sitting idle at a gate has no incoming message to
-		//      trigger lazy rehydration, so the in-process MCP servers stay
-		//      missing for as long as the workflow waits.
-		//
-		// Eager rehydration here closes both gaps: every sub-session whose
-		// NodeExecution still has an `agentSessionId` (i.e. was spawned before
-		// the restart) is restored, registered in the in-memory maps + the
-		// SessionManager cache, and re-attached with `node-agent` +
-		// `space-agent-tools` BEFORE any UI/RPC consumer can ask for it.
-		await this.rehydrateSubSessionsForRun(workflowRun?.id ?? null);
-
-		log.info(
-			`TaskAgentManager.rehydrate: rehydrated task agent for task ${taskId} (session ${sessionId})`
 		);
 	}
 
@@ -4402,7 +3417,7 @@ export class TaskAgentManager {
 
 	/**
 	 * Build a node agent MCP server for a newly spawned sub-session.
-	 * Called from the `buildNodeAgentMcpServer` callback passed to createTaskAgentMcpServer().
+	 * Called from the `buildNodeAgentMcpServer` callback in buildNodeAgentMcpServerForSession().
 	 *
 	 * Creates a ChannelResolver from the workflow run's config at spawn time and injects
 	 * it directly into the node agent MCP server config. This avoids a per-call DB lookup
@@ -4482,11 +3497,6 @@ export class TaskAgentManager {
 				}),
 			channelRouter: nodeAgentChannelRouter,
 			nodeGroups,
-			taskAgentRouter: async (message) => {
-				const ensuredTask = await this.ensureTaskAgentSession(taskId);
-				await this.injectTaskAgentMessage(taskId, message, true);
-				return { sessionId: ensuredTask.taskAgentSessionId ?? '' };
-			},
 			spaceAgentInjector: this.config.spaceAgentInjector,
 			// Wire reply routing so node-agent replies to space-agent route back
 			// to the originating ad-hoc member session instead of space:chat:.
@@ -4745,33 +3755,14 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Inject a user-turn message into the Task Agent session for a task.
-	 *
-	 * Thin wrapper around `injectTaskAgentMessage` that matches the
-	 * `TaskAgentInjector` shape consumed by `PostApprovalRouter`: returns
-	 * `{ injected, sessionId }` instead of throwing when no Task Agent session
-	 * exists for the task. Callers treat `injected: false` as a best-effort miss
-	 * (log + continue) rather than a hard error.
+	 * No-op — task-agent LLM sessions are no longer spawned.
+	 * Kept as a stub for callers that check `injected: false` (e.g. PostApprovalRouter).
 	 */
 	async injectIntoTaskAgent(
-		taskId: string,
-		message: string
+		_taskId: string,
+		_message: string
 	): Promise<{ injected: boolean; sessionId?: string }> {
-		const existing = this.taskAgentSessions.get(taskId);
-		const persisted = existing ? null : this.config.taskRepo.getTask(taskId);
-		if (!existing && !persisted?.taskAgentSessionId) {
-			return { injected: false };
-		}
-		try {
-			await this.injectTaskAgentMessage(taskId, message, true);
-		} catch (err) {
-			log.warn(
-				`TaskAgentManager.injectIntoTaskAgent: failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
-			);
-			return { injected: false };
-		}
-		const session = this.taskAgentSessions.get(taskId);
-		return { injected: true, sessionId: session?.session.id };
+		return { injected: false };
 	}
 
 	/**
