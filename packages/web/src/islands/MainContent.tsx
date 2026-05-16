@@ -18,9 +18,6 @@ const SpaceIsland = lazy(() => import('./SpaceIsland.tsx'));
 const SessionsPage = lazy(() =>
 	import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
 );
-const Inbox = lazy(() =>
-	import('../components/inbox/Inbox.tsx').then((m) => ({ default: m.Inbox }))
-);
 
 // Lazy-loaded settings panels
 const GeneralSettings = lazy(() =>
@@ -86,8 +83,8 @@ function SpacesWelcome() {
 					</svg>
 					<h1 class="text-base font-semibold text-gray-100">Autonomous agent workspaces</h1>
 					<p class="mt-2 text-sm text-gray-500 leading-relaxed">
-						Spaces coordinate teams of agents around a project goal. Create one to assign
-						missions, track handoffs, review gates, and jump into the sessions doing the work.
+						Spaces coordinate teams of agents around a project goal. Create one to assign missions,
+						track handoffs, review gates, and jump into the sessions doing the work.
 					</p>
 				</div>
 			</div>
@@ -125,8 +122,6 @@ export default function MainContent() {
 	} else if (navSection === 'settings') {
 		// Settings sub-section changes don't re-animate — only the major section switch does
 		contentKey = 'settings';
-	} else if (navSection === 'inbox') {
-		contentKey = 'inbox';
 	} else {
 		contentKey = 'home';
 	}
@@ -195,15 +190,6 @@ export default function MainContent() {
 						</Suspense>
 					</div>
 				</div>
-			);
-		}
-
-		// Inbox route
-		if (navSection === 'inbox') {
-			return (
-				<Suspense fallback={lazyFallback}>
-					<Inbox />
-				</Suspense>
 			);
 		}
 

@@ -13,7 +13,6 @@ const {
 	mockNavigateToSession,
 	mockNavigateToSessions,
 	mockNavigateToSettings,
-	mockNavigateToInbox,
 	mockNavigateToSpaces,
 } = vi.hoisted(() => ({
 	mockNavigateToSpace: vi.fn(),
@@ -24,11 +23,10 @@ const {
 	mockNavigateToSession: vi.fn(),
 	mockNavigateToSessions: vi.fn(),
 	mockNavigateToSettings: vi.fn(),
-	mockNavigateToInbox: vi.fn(),
 	mockNavigateToSpaces: vi.fn(),
 }));
 
-let mockNavSectionSignal!: Signal<'chats' | 'inbox' | 'spaces' | 'settings'>;
+let mockNavSectionSignal!: Signal<'chats' | 'spaces' | 'settings'>;
 let mockContextPanelOpenSignal!: Signal<boolean>;
 let mockCurrentSpaceIdSignal!: Signal<string | null>;
 let mockCurrentSpaceConfigureTabSignal!: Signal<'agents' | 'workflows' | 'settings'>;
@@ -137,7 +135,6 @@ vi.mock('../../lib/router.ts', () => ({
 	navigateToSession: mockNavigateToSession,
 	navigateToSessions: mockNavigateToSessions,
 	navigateToSettings: mockNavigateToSettings,
-	navigateToInbox: mockNavigateToInbox,
 	navigateToSpaces: mockNavigateToSpaces,
 	navigateToSpace: mockNavigateToSpace,
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
@@ -294,12 +291,10 @@ describe('ContextPanel', () => {
 
 		fireEvent.click(screen.getByLabelText('Spaces'));
 		fireEvent.click(screen.getByLabelText('Chats'));
-		fireEvent.click(screen.getByLabelText('Inbox'));
 		fireEvent.click(screen.getByLabelText('Settings'));
 
 		expect(mockNavigateToSpaces).toHaveBeenCalledTimes(1);
 		expect(mockNavigateToSessions).toHaveBeenCalledTimes(1);
-		expect(mockNavigateToInbox).toHaveBeenCalledTimes(1);
 		expect(mockNavigateToSettings).toHaveBeenCalledTimes(1);
 	});
 

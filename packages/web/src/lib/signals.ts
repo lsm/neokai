@@ -20,7 +20,7 @@ export const sessionsSignal = signal<Session[]>([]);
 export const slashCommandsSignal = signal<string[]>([]);
 
 // Navigation section signal - which nav item is active
-export type NavSection = 'chats' | 'inbox' | 'spaces' | 'settings';
+export type NavSection = 'chats' | 'spaces' | 'settings';
 export const navSectionSignal = signal<NavSection>('spaces');
 
 // Space navigation signals

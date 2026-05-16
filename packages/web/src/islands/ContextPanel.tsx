@@ -437,11 +437,6 @@ export function ContextPanel() {
 							</nav>
 						</div>
 					)}
-					{navSection === 'inbox' && (
-						<div class="flex-1 flex items-center justify-center px-6 text-center">
-							<p class="text-sm text-gray-500">Inbox opens in the main view.</p>
-						</div>
-					)}
 				</div>
 
 				<div class={`flex items-center gap-1 p-2 border-t ${borderColors.ui.default}`}>

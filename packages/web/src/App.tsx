@@ -41,7 +41,6 @@ import {
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
 	navigateToSpaceTask,
-	navigateToInbox,
 	navigateToSettings,
 	createSessionPath,
 	createSpacePath,
@@ -156,9 +155,7 @@ export function App() {
 												? '/sessions'
 												: navSection === 'settings'
 													? '/settings'
-													: navSection === 'inbox'
-														? '/inbox'
-														: '/spaces';
+													: '/spaces';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -190,8 +187,6 @@ export function App() {
 					navigateToSessions(true);
 				} else if (navSection === 'settings') {
 					navigateToSettings(true);
-				} else if (navSection === 'inbox') {
-					navigateToInbox(true);
 				} else {
 					navigateToHome(true);
 				}
