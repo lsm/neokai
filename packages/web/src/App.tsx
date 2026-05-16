@@ -3,7 +3,6 @@ import { effect, batch } from '@preact/signals';
 import { useViewportSafety } from './hooks/useViewportSafety.ts';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts.ts';
 
-import { NavRail } from './islands/NavRail.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
@@ -202,10 +201,7 @@ export function App() {
 	return (
 		<>
 			<div class="flex h-dvh overflow-hidden bg-dark-800 relative pt-safe">
-				{/* Navigation Rail (desktop only) */}
-				<NavRail />
-
-				{/* Context Panel - always visible */}
+				{/* Sidebar — section switcher, section content, settings */}
 				<ContextPanel />
 
 				{/* Main Content — rounded-left "card" on desktop; the dark-950 shell

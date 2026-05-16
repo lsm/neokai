@@ -8,13 +8,10 @@ import {
 	currentSpaceTasksFilterTabSignal,
 	currentSpaceViewModeSignal,
 	settingsSectionSignal,
-	type NavSection,
 	type SettingsSection,
 } from '../lib/signals.ts';
 import {
-	navigateToSessions,
 	navigateToSettings,
-	navigateToInbox,
 	navigateToSpaces,
 	navigateToSpace,
 	navigateToSpaceAgent,
@@ -24,10 +21,9 @@ import {
 } from '../lib/router.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
-import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
-import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
+import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
 import { SessionsSidebar } from './SessionsSidebar.tsx';
 import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
 import { spaceStore } from '../lib/space-store.ts';
@@ -172,65 +168,12 @@ export function ContextPanel() {
 	const currentSpaceViewMode = currentSpaceViewModeSignal.value;
 	const currentSpaceSessionId = currentSpaceSessionIdSignal.value;
 
-	// Inbox takes full content width — no sidebar needed
-	if (navSection === 'inbox') return null;
-
 	// When a specific space is selected in the spaces section, show space-specific panel
 	const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
-
-	// Section config
-	const sectionConfig = {
-		chats: {
-			title: 'Sessions',
-			emptyIcon: '💬',
-			emptyTitle: 'No sessions yet',
-			emptyDesc: 'Start a new session to begin',
-			actionLabel: 'New Session',
-		},
-		spaces: {
-			title: 'Spaces',
-			emptyTitle: 'No spaces yet',
-			emptyDesc: 'Create a space to orchestrate agents',
-			actionLabel: 'Create Space',
-		},
-		inbox: {
-			title: 'Inbox',
-			emptyIcon: '📥',
-			emptyTitle: 'No items',
-			emptyDesc: 'Tasks awaiting review will appear here',
-			actionLabel: 'Inbox',
-		},
-		settings: {
-			title: 'Settings',
-			emptyIcon: '⚙️',
-			emptyTitle: 'Settings',
-			emptyDesc: 'Configure your preferences',
-			actionLabel: 'Open Settings',
-		},
-	};
-
-	const config = sectionConfig[navSection];
-	const headerTitle = isSpaceDetail ? (spaceStore.space.value?.name ?? 'Space') : config.title;
+	const headerTitle = spaceStore.space.value?.name ?? 'Space';
 
 	const handlePanelClose = () => {
 		contextPanelOpenSignal.value = false;
-	};
-
-	const handleMobileNavClick = (section: NavSection) => {
-		switch (section) {
-			case 'chats':
-				navigateToSessions();
-				break;
-			case 'inbox':
-				navigateToInbox();
-				break;
-			case 'spaces':
-				navigateToSpaces();
-				break;
-			case 'settings':
-				navigateToSettings();
-				break;
-		}
 	};
 
 	const handleSpaceSwitch = (spaceId: string) => {
@@ -261,19 +204,12 @@ export function ContextPanel() {
 		contextPanelOpenSignal.value = false;
 	};
 
-	// On the spaces list view (no space selected), hide the panel completely so
-	// SpacesPage fills the viewport. BottomTabBar owns mobile global navigation.
-	if (navSection === 'spaces' && !isSpaceDetail) {
-		contextPanelOpenSignal.value = false;
-		return null;
-	}
-
 	const activeSpaces = spaceStore.spacesWithTasks.value.filter(
 		(space) => space.status === 'active'
 	);
 
 	const spaceSwitcherContent = (
-		<div class="flex-1 overflow-y-auto py-2 md:hidden" data-testid="mobile-space-switcher">
+		<div class="flex-1 overflow-y-auto py-2" data-testid="space-switcher">
 			{activeSpaces.length === 0 ? (
 				<div class="px-4 py-8 text-center">
 					<svg
@@ -305,7 +241,7 @@ export function ContextPanel() {
 								class={cn(
 									'w-full rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors',
 									isCurrent
-										? 'bg-blue-950/40 border border-blue-800/50 text-gray-100'
+										? 'bg-white/10 border border-transparent text-gray-100'
 										: 'border border-transparent text-gray-400 hover:bg-white/5 hover:text-gray-100'
 								)}
 							>
@@ -330,7 +266,7 @@ export function ContextPanel() {
 								</div>
 								{isCurrent && (
 									<svg
-										class="w-4 h-4 text-blue-400 flex-shrink-0"
+										class="w-4 h-4 text-gray-300 flex-shrink-0"
 										fill="none"
 										viewBox="0 0 24 24"
 										stroke="currentColor"
@@ -392,123 +328,75 @@ export function ContextPanel() {
 					overflow-hidden
 				`}
 			>
-				{/* Mobile nav strip - replaces NavRail on mobile. */}
-				<div
-					class={`flex items-center gap-1 px-2 py-2 border-b ${borderColors.ui.default} md:hidden`}
-				>
-					{MAIN_NAV_ITEMS.map((item) => (
-						<NavIconButton
-							key={item.id}
-							active={navSection === item.id}
-							onClick={() => handleMobileNavClick(item.id)}
-							label={item.label}
-						>
-							{item.icon}
-						</NavIconButton>
-					))}
-					<div class="ml-auto flex items-center gap-1">
-						<DaemonStatusIndicator />
-						<NavIconButton
-							active={navSection === SETTINGS_NAV_ITEM.id}
-							onClick={() => handleMobileNavClick(SETTINGS_NAV_ITEM.id)}
-							label={SETTINGS_NAV_ITEM.label}
-						>
-							{SETTINGS_NAV_ITEM.icon}
-						</NavIconButton>
-					</div>
-				</div>
+				<SectionSwitcher onClose={handlePanelClose} />
 
-				{/* Header — hidden for chats; SessionsSidebar owns its own top area */}
-				{navSection !== 'chats' && (
-					<div class={`px-4 h-[65px] flex items-center border-b ${borderColors.ui.default}`}>
-						<div class="flex-1 flex items-center justify-between">
-							{isSpaceDetail ? (
-								<>
-									<h2 class="md:hidden min-w-0 flex-1 text-lg font-semibold text-gray-100 truncate">
-										Switch Space
-									</h2>
-									<div class="hidden md:flex items-center gap-1 min-w-0 flex-1 overflow-hidden pointer-events-none">
-										<button
-											onClick={() => navigateToSpaces()}
-											class="p-1 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
-											title="Back to Spaces"
-										>
-											<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width={2}
-													d="M15 19l-7-7 7-7"
-												/>
-											</svg>
-										</button>
-										<h2 class="min-w-0 flex-1 text-lg font-semibold text-gray-100 truncate pointer-events-none">
-											{headerTitle}
-										</h2>
-										<button
-											onClick={() => navigateToSpaceConfigure(currentSpaceId!)}
-											class={cn(
-												'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0 pointer-events-auto',
-												currentSpaceViewMode === 'configure'
-													? 'bg-white/10 text-gray-100'
-													: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
-											)}
-											title="Configure space"
-											aria-label="Configure space"
-										>
-											<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width={2}
-													d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-												/>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width={2}
-													d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-												/>
-											</svg>
-										</button>
-									</div>
-								</>
-							) : (
-								<h2 class="text-lg font-semibold text-gray-100 truncate mr-2">{headerTitle}</h2>
+				{/* Space-detail header — back / name / configure (desktop) */}
+				{isSpaceDetail && (
+					<div
+						class={`hidden md:flex px-4 h-[57px] items-center gap-1 border-b ${borderColors.ui.default}`}
+					>
+						<button
+							type="button"
+							onClick={() => navigateToSpaces()}
+							class="p-1 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+							title="Back to Spaces"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M15 19l-7-7 7-7"
+								/>
+							</svg>
+						</button>
+						<h2 class="min-w-0 flex-1 text-sm font-semibold text-gray-100 truncate">
+							{headerTitle}
+						</h2>
+						<button
+							type="button"
+							onClick={() => navigateToSpaceConfigure(currentSpaceId!)}
+							class={cn(
+								'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0',
+								currentSpaceViewMode === 'configure'
+									? 'bg-white/10 text-gray-100'
+									: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
 							)}
-							{/* Close button for mobile */}
-							<button
-								onClick={handlePanelClose}
-								class="md:hidden p-1.5 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
-								title="Close panel"
-							>
-								<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M6 18L18 6M6 6l12 12"
-									/>
-								</svg>
-							</button>
-						</div>
+							title="Configure space"
+							aria-label="Configure space"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+								/>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+								/>
+							</svg>
+						</button>
 					</div>
 				)}
 
-				{/* Content — key triggers fade-in (animate-fadeIn) on section change */}
+				{/* Section content — key triggers fade-in on section change */}
 				<div
 					key={navSection + (isSpaceDetail ? '-space-detail' : '')}
 					class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
 				>
 					{navSection === 'chats' && (
-						<SessionsSidebar
-							onSessionSelect={() => (contextPanelOpenSignal.value = false)}
-							onClose={handlePanelClose}
-						/>
+						<SessionsSidebar onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
 					)}
+					{navSection === 'spaces' && !isSpaceDetail && spaceSwitcherContent}
 					{navSection === 'spaces' && isSpaceDetail && (
 						<>
-							{spaceSwitcherContent}
+							<div class="md:hidden flex-1 flex flex-col overflow-hidden">
+								{spaceSwitcherContent}
+							</div>
 							<div class="hidden md:flex flex-1 overflow-hidden flex-col">
 								<SpaceDetailPanel
 									spaceId={currentSpaceId!}
@@ -518,48 +406,70 @@ export function ContextPanel() {
 						</>
 					)}
 					{navSection === 'settings' && (
-						<div class="flex-1 flex flex-col overflow-hidden">
-							{/* Settings navigation list */}
-							<div class="flex-1 overflow-y-auto">
-								<nav class="py-2">
-									{SETTINGS_SECTIONS.map((section) => {
-										const isActive = activeSettingsSection === section.id;
-										return (
-											<button
-												key={section.id}
-												onClick={() => navigateToSettings(section.id)}
-												class={cn(
-													'w-full px-4 py-3 flex items-center gap-3 text-left',
-													'transition-colors duration-150',
-													isActive
-														? 'bg-white/10 text-gray-100'
-														: 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
-												)}
-											>
-												<SectionIcon type={section.icon} />
-												<span class="truncate">{section.label}</span>
-												{isActive && (
-													<svg
-														class="w-4 h-4 ml-auto text-blue-400"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke="currentColor"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															stroke-width={2}
-															d="M9 5l7 7-7 7"
-														/>
-													</svg>
-												)}
-											</button>
-										);
-									})}
-								</nav>
-							</div>
+						<div class="flex-1 overflow-y-auto">
+							<nav class="py-2">
+								{SETTINGS_SECTIONS.map((section) => {
+									const isActive = activeSettingsSection === section.id;
+									return (
+										<button
+											key={section.id}
+											type="button"
+											onClick={() => navigateToSettings(section.id)}
+											class={cn(
+												'w-full px-4 py-3 flex items-center gap-3 text-left transition-colors duration-150',
+												isActive
+													? 'bg-white/10 text-gray-100'
+													: 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+											)}
+										>
+											<SectionIcon type={section.icon} />
+											<span class="truncate">{section.label}</span>
+										</button>
+									);
+								})}
+							</nav>
 						</div>
 					)}
+					{navSection === 'inbox' && (
+						<div class="flex-1 flex items-center justify-center px-6 text-center">
+							<p class="text-sm text-gray-500">Inbox opens in the main view.</p>
+						</div>
+					)}
+				</div>
+
+				<div class={`flex items-center gap-1 p-2 border-t ${borderColors.ui.default}`}>
+					<button
+						type="button"
+						onClick={() => navigateToSettings()}
+						class={cn(
+							'flex-1 flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors',
+							navSection === 'settings'
+								? 'bg-white/10 text-gray-100'
+								: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
+						)}
+					>
+						<svg
+							class="w-4 h-4 text-gray-400"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+							/>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+							/>
+						</svg>
+						<span>Settings</span>
+					</button>
+					<DaemonStatusIndicator />
 				</div>
 			</div>
 			<SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />

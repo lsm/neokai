@@ -18,7 +18,6 @@ const SpaceIsland = lazy(() => import('./SpaceIsland.tsx'));
 const SessionsPage = lazy(() =>
 	import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
 );
-const SpacesPage = lazy(() => import('./SpacesPage.tsx').then((m) => ({ default: m.SpacesPage })));
 const Inbox = lazy(() =>
 	import('../components/inbox/Inbox.tsx').then((m) => ({ default: m.Inbox }))
 );
@@ -63,6 +62,37 @@ const lazyFallback = (
 		<div class="text-xs text-gray-600">Loading...</div>
 	</div>
 );
+
+function SpacesWelcome() {
+	return (
+		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
+			<div class="md:hidden flex items-center px-3 py-2">
+				<MobileMenuButton />
+			</div>
+			<div class="flex-1 flex items-center justify-center px-6 pb-16">
+				<div class="max-w-sm text-center">
+					<svg
+						class="w-12 h-12 mx-auto mb-4 text-gray-700"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={1.5}
+							d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+						/>
+					</svg>
+					<h1 class="text-base font-semibold text-gray-100">Select a space</h1>
+					<p class="mt-2 text-sm text-gray-500 leading-relaxed">
+						Select a space from the sidebar, or create one to start coordinating agents.
+					</p>
+				</div>
+			</div>
+		</div>
+	);
+}
 
 export default function MainContent() {
 	// IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
@@ -115,13 +145,9 @@ export default function MainContent() {
 			);
 		}
 
-		// /spaces route: show standalone spaces page (no sidebar)
+		// /spaces route: sidebar owns the list; main pane stays quiet.
 		if (navSection === 'spaces') {
-			return (
-				<Suspense fallback={lazyFallback}>
-					<SpacesPage />
-				</Suspense>
-			);
+			return <SpacesWelcome />;
 		}
 
 		// If there's a valid session, show the chat
@@ -142,7 +168,7 @@ export default function MainContent() {
 			);
 		}
 
-		// If Settings is selected in NavRail, show the selected settings section content
+		// If Settings is selected, show the selected settings section content
 		if (navSection === 'settings') {
 			return (
 				<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
@@ -181,11 +207,7 @@ export default function MainContent() {
 		}
 
 		// Default: Space-first landing surface
-		return (
-			<Suspense fallback={lazyFallback}>
-				<SpacesPage />
-			</Suspense>
-		);
+		return <SpacesWelcome />;
 	}
 
 	// Wrap content in a keyed div so Preact remounts it (and replays animate-fadeIn-200)
