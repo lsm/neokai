@@ -65,36 +65,38 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	AgentProcessingState,
-	ChatMessage,
-	ContextInfo,
-	CurrentModelInfo,
-	DeclarativeToolGuard,
-	McpServerConfig,
 	MessageContent,
-	MessageHub,
-	MessageOrigin,
-	Provider,
-	QuestionDraftResponse,
-	RewindMode,
-	RewindPreview,
-	RewindResult,
-	SelectiveRewindPreview,
-	SelectiveRewindResult,
 	Session,
-	SessionConfig,
+	SessionType,
 	SessionContext,
 	SessionFeatures,
+	SessionConfig,
 	SessionMetadata,
-	SessionType,
-	SkillEnablementOverride,
+	ContextInfo,
+	QuestionDraftResponse,
+	MessageHub,
+	CurrentModelInfo,
+	RewindPreview,
+	RewindResult,
+	RewindMode,
+	SelectiveRewindPreview,
+	SelectiveRewindResult,
 	SystemPromptConfig,
+	McpServerConfig,
+	Provider,
 } from '@neokai/shared';
-import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
-import type { Database } from '../../storage/database';
-import { ErrorManager } from '../error-manager';
+import type {
+	ChatMessage,
+	MessageOrigin,
+	SkillEnablementOverride,
+	DeclarativeToolGuard,
+} from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import { Database } from '../../storage/database';
+import { ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
+import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -208,38 +210,38 @@ export interface AgentSessionRuntimeOptions {
 	) => Promise<{ success: boolean; error?: string }>;
 }
 
-import {
-	AskUserQuestionHandler,
-	type AskUserQuestionHandlerContext,
-} from './ask-user-question-handler';
-import { ContextTracker } from './context-tracker';
-import {
-	EventSubscriptionSetup,
-	type EventSubscriptionSetupContext,
-} from './event-subscription-setup';
-import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 // Extracted components
 import { MessageQueue } from './message-queue';
-import { MessageRecoveryHandler } from './message-recovery-handler';
-import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
 import { ProcessingStateManager } from './processing-state-manager';
+import { ContextTracker } from './context-tracker';
+import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
+import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder';
 import {
 	QueryLifecycleManager,
 	type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager';
-import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder';
+import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
 import {
-	type OriginalEnvVars,
+	AskUserQuestionHandler,
+	type AskUserQuestionHandlerContext,
+} from './ask-user-question-handler';
+import {
 	QueryRunner,
 	type QueryRunnerContext,
+	type OriginalEnvVars,
 	type TrackedAgentProcess,
 } from './query-runner';
-import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
-import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
+import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
-import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
+import {
+	EventSubscriptionSetup,
+	type EventSubscriptionSetupContext,
+} from './event-subscription-setup';
+import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
+import { MessageRecoveryHandler } from './message-recovery-handler';
+import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
+import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 
 /**
  * AgentSession - Pure facade that delegates to specialized handlers
@@ -1130,8 +1132,8 @@ export class AgentSession
 	// Private Helpers
 	// ============================================================================
 
-	async restartQuery(options?: { force?: boolean }): Promise<void> {
-		await this.lifecycleManager.restartQuery(options);
+	async restartQuery(): Promise<void> {
+		await this.lifecycleManager.restartQuery();
 	}
 
 	/**

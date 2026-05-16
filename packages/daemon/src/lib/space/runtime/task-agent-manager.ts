@@ -37,79 +37,79 @@
  */
 
 import { existsSync } from 'node:fs';
+import { generateUUID, resolveNodeAgents } from '@neokai/shared';
 import type {
-	McpServerConfig,
-	MessageContent,
-	MessageHub,
-	MessageImage,
-	MessageOrigin,
-	NodeExecution,
 	Space,
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
+	NodeExecution,
+	MessageHub,
+	McpServerConfig,
+	MessageContent,
+	MessageImage,
+	MessageOrigin,
 	WorkflowNodeAgent,
 } from '@neokai/shared';
-import { generateUUID, resolveNodeAgents } from '@neokai/shared';
-import type { SDKUserMessage } from '@neokai/shared/sdk';
+import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
+import type { SkillsManager } from '../../skills-manager';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
 import type { UUID } from 'crypto';
+import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
+import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
+import type { SessionManager } from '../../session-manager';
+import type { SpaceManager } from '../managers/space-manager';
+import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
-import { Logger } from '../../logger';
-import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
-import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
-import { validateImageSizes } from '../../session/message-persistence';
-import type { SessionManager } from '../../session-manager';
-import type { SkillsManager } from '../../skills-manager';
-import {
-	type AgentMessageLevel,
-	extractReplyToSessionId,
-	formatAgentMessage,
-} from '../agent-message-envelope';
-import {
-	buildCustomAgentTaskMessage,
-	resolveAgentInit,
-	type SlotOverrides,
-} from '../agents/custom-agent';
-import { buildTaskAgentInitialMessage, createTaskAgentInit } from '../agents/task-agent';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceManager } from '../managers/space-manager';
-import { SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
-import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
-import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
+import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
+import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
+import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { jsonResult } from '../tools/tool-result';
-import { AgentMessageRouter } from './agent-message-router';
-import { ChannelResolver } from './channel-resolver';
-import { ChannelRouter } from './channel-router';
-import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
-import { executeGateScript } from './gate-script-executor';
-import type { ReplyRoutingRegistry } from './reply-routing-registry';
-import type { SpaceRuntimeService } from './space-runtime-service';
 import {
 	assertExecutionValidAgainstWorkflow,
 	PermanentSpawnError,
 	validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
+import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
+import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
+import { ChannelResolver } from './channel-resolver';
+import { ChannelRouter } from './channel-router';
+import { AgentMessageRouter } from './agent-message-router';
+import type { ReplyRoutingRegistry } from './reply-routing-registry';
+import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import { executeGateScript } from './gate-script-executor';
+import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
+import {
+	buildCustomAgentTaskMessage,
+	resolveAgentInit,
+	type SlotOverrides,
+} from '../agents/custom-agent';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
+import { Logger } from '../../logger';
+import { SpaceTaskManager } from '../managers/space-task-manager';
+import {
+	formatAgentMessage,
+	extractReplyToSessionId,
+	type AgentMessageLevel,
+} from '../agent-message-envelope';
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
@@ -4270,9 +4270,9 @@ export class TaskAgentManager {
 		});
 
 		// Restart the running query so the SDK mounts the fresh node-agent server.
-		// force: true ensures idle eager-spawn sessions (whose empty initial query
-		// has already exited) also start fresh with the updated server config.
-		await session.restartQuery({ force: true });
+		// If no query is running this is a no-op (restartQuery returns early when
+		// messageQueue.isRunning() is false).
+		await session.restartQuery();
 	}
 
 	/**

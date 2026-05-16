@@ -13,26 +13,26 @@
  * - Full reset with cost tracking, state management, and client notification
  */
 
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { MessageContent, MessageHub, NeokaiActionMessage, Session } from '@neokai/shared';
+import type { MessageContent, Session, MessageHub, NeokaiActionMessage } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
-import type { Database } from '../../storage/database';
-import type { ErrorManager } from '../error-manager';
-import { ErrorCategory } from '../error-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
-import {
-	findSDKSessionFileGlobally,
-	getSDKSessionFilePath,
-	migrateSDKSessionFile,
-	validateAndRepairSDKSession,
-} from '../sdk-session-file-manager';
-import type { InterruptHandler } from './interrupt-handler';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { SDKMessageHandler } from './sdk-message-handler';
+import type { InterruptHandler } from './interrupt-handler';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { Database } from '../../storage/database';
+import type { ErrorManager } from '../error-manager';
+import { ErrorCategory } from '../error-manager';
+import { Logger } from '../logger';
+import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import {
+	validateAndRepairSDKSession,
+	findSDKSessionFileGlobally,
+	migrateSDKSessionFile,
+	getSDKSessionFilePath,
+} from '../sdk-session-file-manager';
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
@@ -744,18 +744,11 @@ export class QueryLifecycleManager {
 	 *
 	 * If currently processing, defers the restart until idle.
 	 * Used when settings change and SDK needs to reload.
-	 *
-	 * Pass `force: true` to restart even when the session is idle (not running).
-	 * Used by MCP reinject paths that need to apply new server config to a session
-	 * that may have already finished its eager-spawn empty query.
 	 */
-	async restartQuery(options?: { force?: boolean }): Promise<void> {
+	async restartQuery(): Promise<void> {
 		const { messageQueue, stateManager } = this.ctx;
 
 		if (!messageQueue.isRunning() || !this.ctx.queryObject) {
-			if (options?.force) {
-				await this.ctx.startStreamingQuery();
-			}
 			return;
 		}
 

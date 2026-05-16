@@ -10,23 +10,22 @@
  * - Provider environment variable management
  */
 
-import { spawn as nodeSpawn } from 'node:child_process';
-import type { Options, Query, SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { MessageContent, MessageHub, Session } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { Options, Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
-import type { Database } from '../../storage/database';
-import { ErrorCategory, type ErrorManager } from '../error-manager';
-import type { Logger } from '../logger';
-import type { OriginalEnvVars } from '../provider-service';
-import type { AskUserQuestionHandler } from './ask-user-question-handler';
+import type { MessageContent, Session, MessageHub } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
+import { generateUUID } from '@neokai/shared';
+import { Database } from '../../storage/database';
+import { ErrorCategory, ErrorManager } from '../error-manager';
+import { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
+import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from './transient-error-patterns';
-
+import type { OriginalEnvVars } from '../provider-service';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -312,11 +311,10 @@ export class QueryRunner {
 			const isWorkflowSubSession = !!(
 				session.context?.spaceId &&
 				session.id.includes(':task:') &&
-				(session.id.includes(':exec:') || session.id.includes(':agent:'))
+				session.id.includes(':exec:')
 			);
 			// Best-effort taskId / workflowRunId extraction from sub-session ids.
-			// Exec sessions: "space:<spaceId>:task:<taskId>:exec:<execId>"
-			// Eager-spawn sessions: "space:<spaceId>:task:<taskId>:agent:<agentName>"
+			// Sub-session id shape: "space:<spaceId>:task:<taskId>:exec:<execId>".
 			// The fields are diagnostic only — never used to drive behavior.
 			const subSessionTaskId = isWorkflowSubSession
 				? session.id.split(':task:')[1]?.split(':')[0]

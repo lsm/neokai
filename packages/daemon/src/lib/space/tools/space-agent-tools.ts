@@ -1992,10 +1992,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		);
 	}
 
-	// alwaysLoad: space-agent tools are mandatory workflow infrastructure the
-	// agent prompt references by name. Without this they are deferred behind
-	// tool search and never enter the turn-1 prompt. See node-agent-tools.ts.
-	return createSdkMcpServer({ name: 'space-agent', tools, alwaysLoad: true });
+	return createSdkMcpServer({ name: 'space-agent', tools });
 }
 
 export type SpaceAgentMcpServer = ReturnType<typeof createSpaceAgentMcpServer>;
