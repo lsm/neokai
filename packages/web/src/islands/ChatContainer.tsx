@@ -1210,6 +1210,8 @@ export default function ChatContainer({
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
 				onBack={onBack}
+				messages={messages}
+				toolInputsMap={maps.toolInputsMap}
 			/>
 
 			{/* Messages */}

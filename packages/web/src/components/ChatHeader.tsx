@@ -9,12 +9,13 @@
  * - Space sessions hide features that aren't applicable
  */
 
-import type { Session, SessionFeatures } from '@neokai/shared';
+import type { ChatMessage, Session, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { connectionState } from '../lib/state';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
 import { MobileMenuButton } from './ui/MobileMenuButton';
+import { SessionInfoPanelButton } from './SessionInfoPanel.tsx';
 
 export interface ChatHeaderProps {
 	session: Session | null;
@@ -28,6 +29,8 @@ export interface ChatHeaderProps {
 	archiving?: boolean;
 	resettingAgent?: boolean;
 	readonly?: boolean;
+	messages?: ChatMessage[];
+	toolInputsMap?: Map<string, unknown>;
 	/**
 	 * When provided, renders a left-arrow back button in the header's left
 	 * slot (replacing the `MobileMenuButton`) that invokes this callback on
@@ -51,6 +54,8 @@ export function ChatHeader({
 	archiving = false,
 	resettingAgent = false,
 	readonly = false,
+	messages = [],
+	toolInputsMap = new Map(),
 	onBack,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
@@ -227,6 +232,14 @@ export function ChatHeader({
 						items={getHeaderActions()}
 					/>
 				</div>
+
+				{features.sessionInfo && (
+					<SessionInfoPanelButton
+						session={session}
+						messages={messages}
+						toolInputsMap={toolInputsMap}
+					/>
+				)}
 			</div>
 		</div>
 	);
