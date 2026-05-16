@@ -60,7 +60,6 @@ import {
 	ProcessWatchdog,
 	type ProcessSnapshot,
 } from './lib/process-watchdog';
-import { warmupSDKCliBinary } from './lib/agent/sdk-cli-resolver';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -934,16 +933,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			throw error;
 		}
 	};
-
-	// Warm up SDK CLI binary — resolves from node_modules/cache or downloads.
-	// Scheduled after ALL awaits in createDaemonApp so it doesn't fire during
-	// neoAgentManager.provision() or other async startup steps. The setTimeout
-	// runs after this function returns, so callers (dev-server, prod-server)
-	// can set up their own server before warmup begins.
-	// Non-fatal: daemon continues if download fails. resolveSDKCliPath() retries on first query.
-	if (process.env.NODE_ENV !== 'test') {
-		setTimeout(warmupSDKCliBinary, 0);
-	}
 
 	return {
 		server,

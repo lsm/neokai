@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
 import { createDaemonApp } from '@neokai/daemon/app';
 import type { Config } from '@neokai/daemon/config';
+import { warmupSDKCliBinary } from '@neokai/daemon/lib/agent/sdk-cli-resolver';
 import { resolve } from 'path';
 import { createLogger } from '@neokai/shared';
 import {
@@ -160,6 +161,10 @@ export async function startProdServer(config: Config) {
 			return createJsonErrorResponse(error instanceof Error ? error.message : String(error));
 		},
 	});
+
+	// Warm up SDK CLI binary after unified server is bound.
+	// Non-fatal: download failure only means first query retries resolution.
+	setTimeout(warmupSDKCliBinary, 0);
 
 	console.log(`\n✨ Production server running!`);
 	printServerUrls(config.port, config.host);

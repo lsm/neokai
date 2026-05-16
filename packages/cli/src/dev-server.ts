@@ -1,4 +1,5 @@
 import { createDaemonApp } from '@neokai/daemon/app';
+import { warmupSDKCliBinary } from '@neokai/daemon/lib/agent/sdk-cli-resolver';
 import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
