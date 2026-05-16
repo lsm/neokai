@@ -224,11 +224,39 @@ export function setupSpaceTaskMessageHandlers(
 				);
 
 		if (matches.length === 0) {
-			const available = [...new Set(executions.map((e) => e.agentName))].sort();
-			throw new Error(
-				`Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? 'unknown'}. ` +
-					`Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
-			);
+			// No existing execution row for this agent. If the agent is declared
+			// in the workflow (e.g. a downstream node not yet activated), attempt
+			// lazy activation so the user's message triggers the agent spawn.
+			if (target.agentName && taskAgentManager.ensureWorkflowNodeActivationForAgent) {
+				const declared = taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(taskId) ?? [];
+				const normalizedName = target.agentName.toLowerCase();
+				if (declared.some((n) => n.toLowerCase() === normalizedName)) {
+					const didActivate = await taskAgentManager.ensureWorkflowNodeActivationForAgent(
+						taskId,
+						target.agentName,
+						{ reopenReason: 'human message to unstarted agent' }
+					);
+					if (didActivate) {
+						const refreshed = nodeExecutionRepo!
+							.listByWorkflowRun(task.workflowRunId!)
+							.filter((e) => e.status !== 'cancelled');
+						const activatedMatches = refreshed.filter(
+							(e) => e.agentName.toLowerCase() === normalizedName
+						);
+						if (activatedMatches.length > 0) {
+							matches.push(...activatedMatches);
+						}
+					}
+				}
+			}
+
+			if (matches.length === 0) {
+				const available = [...new Set(executions.map((e) => e.agentName))].sort();
+				throw new Error(
+					`Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? 'unknown'}. ` +
+						`Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
+				);
+			}
 		}
 
 		let activated = false;
