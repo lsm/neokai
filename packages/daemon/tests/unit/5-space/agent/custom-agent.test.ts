@@ -548,7 +548,14 @@ describe('createCustomAgentInit', () => {
 		expect(init.agent).toBe('restricted-agent');
 		expect(init.agents).toBeDefined();
 		expect(init.agents?.['restricted-agent']?.prompt).toBe('Visible prompt');
-		expect(init.agents?.['restricted-agent']?.tools).toEqual(['Read', 'Bash']);
+		// The agent definition omits `tools` — an AgentDefinition.tools allowlist
+		// would exclude MCP tools. Built-ins are restricted via `disallowedTools`.
+		expect(init.agents?.['restricted-agent']?.tools).toBeUndefined();
+		expect(init.agents?.['restricted-agent']?.disallowedTools).toEqual(
+			expect.arrayContaining(['Write', 'Edit'])
+		);
+		expect(init.agents?.['restricted-agent']?.disallowedTools).not.toContain('Read');
+		expect(init.agents?.['restricted-agent']?.disallowedTools).not.toContain('Bash');
 		expect(init.systemPrompt?.preset).toBe('claude_code');
 		expect(init.systemPrompt?.append).toBeUndefined();
 		expect(init.sdkToolsPreset).toEqual(['Read', 'Bash']);
