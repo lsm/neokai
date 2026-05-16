@@ -44,7 +44,7 @@ Current behavior must keep working:
 | Space Agent / default space chat agent | `coordinator` actor with `@coordinator` handle |
 | Human Space chat / ad-hoc session | `session` actor with `@session:<id>` address |
 | New persistent role agents | `agent` actor with handle and optional roles |
-| Workflow node agent / coder / reviewer | `worker` actor, scoped by `workflowRunId` + `nodeId` |
+| Workflow node agent / coder / reviewer | `worker` actor, scoped by `workflowRunId` + `nodeId` + `agentName` |
 | `node-agent send_message` | wrapper around generic `send_message` |
 | `send_message_to_task` | compatibility wrapper around generic `send_message` |
 | `pending_agent_messages` | delivery rows / queue with same retry, TTL, terminal state |
@@ -87,8 +87,10 @@ Notes:
 - `archived`: no new routing; stays visible in history.
 - `deleted`: soft-delete for privacy/admin removal; no routing/lookup/autocomplete; history keeps actor
   ID with redacted display metadata.
+- Worker actors are identity-scoped by `(workflowRunId, nodeId, agentName)`. `nodeId` alone is not enough:
+  one workflow node can host multiple agent slots with independent inbox, retry, and delivery state.
 - Worker aliases like `@coder` and `@review` are contextual only. Do not register them as global Space
-  handles. Globally addressable workers use `@worker:<run>/<node>`.
+  handles. Globally addressable workers use exact worker-slot addresses such as `@worker:<run>/<node>/<agent>`.
 
 ### Address syntax
 
@@ -99,8 +101,9 @@ Keep v1 syntax small:
 | `@handle` | Actor handle in current Space | `@coordinator`, `@task-manager` |
 | `@role:<role>` | Role binding in current Space | `@role:task-manager` |
 | `@session:<id>` | Space session actor | `@session:abc123` |
-| `@worker:<node>` | Worker in current workflow context | `@worker:Review` |
-| `@worker:<run>/<node>` | Worker in explicit workflow run | `@worker:f1089/Review` |
+| `@worker:<node>` | Worker node in current workflow context; valid only when node has one agent slot or caller context selects the slot | `@worker:Review` |
+| `@worker:<node>/<agent>` | Exact worker slot in current workflow context | `@worker:Review/reviewer` |
+| `@worker:<run>/<node>/<agent>` | Exact worker slot in explicit workflow run | `@worker:f1089/Review/reviewer` |
 | `#<name>` | Optional channel/topic handle if enabled | `#deployments` |
 
 Do not expose these as target syntax in v1:
@@ -130,6 +133,7 @@ type MessageContext = {
 	workflowRunId?: string;
 	nodeId?: string;
 	sessionId?: string;
+	agentName?: string;
 	originMessageId?: string;
 	originConversationId?: string;
 };
@@ -186,8 +190,11 @@ type MessageRecord = {
 `data` is required for compatibility with current `node-agent send_message({ data })`: gated channel
 payloads are merged into gate state today and must keep working after cutover. `attachments` preserves
 current human task messaging images/files instead of forcing a side channel. `idempotencyKey` is
-persisted on the message and checked per `(spaceId, senderActorId, idempotencyKey)` before insert so
-retry/restart dedupe and pending-message duplicate suppression survive migration.
+persisted on the message, but dedupe is evaluated per resolved recipient target/delivery, not per sender
+message. For legacy pending worker delivery this preserves the current
+`(workflowRunId, targetAgentName, idempotencyKey)` behavior: retrying the same delivery suppresses a
+pending duplicate for that recipient, while multicast/broadcast can still create legitimate deliveries to
+other recipients using the same key.
 
 ### Delivery
 
@@ -199,7 +206,10 @@ type DeliveryState = 'queued' | 'delivered' | 'failed' | 'expired' | 'skipped';
 type DeliveryRecord = {
 	deliveryId: string;
 	messageId: string;
-	targetActorId: string;
+	/** Present after resolution succeeds; absent for unresolved fallback/error audit rows. */
+	targetActorId?: string;
+	/** Raw or translated target this delivery represents, for audit and unresolved failures. */
+	targetRef: string;
 	state: DeliveryState;
 	attemptCount: number;
 	maxAttempts: number;
@@ -228,14 +238,17 @@ Keep resolver deterministic:
    queued delivery if activation/retry policy exists; `archived`/`deleted` do not route.
 4. Resolve `@role:<role>` using role binding.
 5. Resolve `@session:<id>` to session actor if session is user-facing/ad-hoc.
-6. Resolve `@worker:<node>` using `workflowRunId` from context.
-7. Resolve `@worker:<run>/<node>` if sender can access that run.
-8. Resolve optional `#<name>` channel/topic if enabled.
-9. If caller omitted `target`, use context fallback (`@coordinator`, `@role:task-manager`, legacy
-   task-agent coordinator, or triage channel).
-10. If caller provided an explicit target and it does not resolve, return an error. Do not silently
+6. Resolve `@worker:<node>` using `workflowRunId` plus current `agentName` context, or only if that
+   node has one routable agent slot.
+7. Resolve `@worker:<node>/<agent>` using `workflowRunId` from context.
+8. Resolve `@worker:<run>/<node>/<agent>` if sender can access that run.
+9. Resolve optional `#<name>` channel/topic if enabled.
+10. If caller omitted `target`, use context fallback (`@coordinator`, `@role:task-manager`, legacy
+    task-agent coordinator, or triage channel).
+11. If caller provided an explicit target and it does not resolve, return an error. Do not silently
     fallback; typos and stale handles must not leak content to another actor.
-11. If fallback target cannot resolve, create failed delivery and return explicit error.
+12. If fallback target cannot resolve, create a failed delivery/audit row with `targetRef` set to the
+    attempted fallback string and no `targetActorId`, then return an explicit error.
 
 Important seeding rule:
 
@@ -287,14 +300,20 @@ Do not add a full conversation management API until product needs it.
 Maps current workflow messaging into `send_message`:
 
 ```ts
-const translatedTarget = translateLegacyNodeTarget(target, { workflowRunId, nodeId });
+const translatedTargets = translateLegacyNodeTargets(target, {
+	spaceId,
+	taskId,
+	workflowRunId,
+	nodeId,
+	agentName,
+});
 
 send_message({
-	target: translatedTarget,
+	target: translatedTargets,
 	body: message,
 	kind: messageKind ?? 'chat',
 	data,
-	context: { spaceId, taskId, workflowRunId, nodeId },
+	context: { spaceId, taskId, workflowRunId, nodeId, agentName },
 });
 ```
 
@@ -304,15 +323,18 @@ Preserve:
 - gated channel payload merge from `data`
 - queued delivery for inactive target sessions
 - activation hooks
-- broadcast / node-name / agent-name resolution where supported today
+- broadcast, multicast array, reserved `task-agent` / `space-agent`, node-name, and agent-name resolution where supported today
 
 Legacy node targets must be translated before calling generic `send_message`:
 
 | Legacy target | Generic target |
 | --- | --- |
-| `'*'` | expand to topology-permitted `@worker:<run>/<node>` targets before send |
-| bare agent name | matching `@worker:<run>/<agentName>` or configured worker alias |
-| bare node name | `@worker:<run>/<nodeName>` |
+| `'*'` | expand before send to topology-permitted exact worker-slot targets `@worker:<run>/<node>/<agent>` |
+| `string[]` multicast | translate each element independently with these rules, flatten, and de-dupe by recipient target |
+| `task-agent` | reserved compatibility target; route to legacy task-agent/task coordinator actor, not a worker alias |
+| `space-agent` | reserved compatibility target; route to Coordinator / Space Agent actor (`@coordinator`) |
+| bare agent name | resolve through workflow topology/node executions to matching `(nodeId, agentName)`, then format exact worker-slot target |
+| bare node name | resolve node; if one agent slot, format exact worker-slot target; if multiple slots, use caller context or require an exact slot |
 | already generic `@...` / `#...` | pass through |
 
 ### `space-agent-tools.send_message_to_task`
