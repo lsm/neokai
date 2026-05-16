@@ -521,6 +521,41 @@ describe('QueryRunner', () => {
 			});
 		});
 
+		it('throws when member Space MCP still missing after self-heal callback', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'worker-session-1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = { spaceId: 's1' };
+				mockSession.config.mcpServers = {};
+				buildSpy
+					.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+					.mockResolvedValueOnce({
+						model: 'claude-sonnet-4-20250514',
+						mcpServers: {},
+					});
+
+				const onMissingMemberSpaceMcpServers = mock(async () => {
+					// Self-heal callback runs but does NOT fix the servers
+				});
+
+				const ctx = createContext({ onMissingMemberSpaceMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('worker-session-1', [
+					'space-agent-tools',
+				]);
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(handleErrorSpy).toHaveBeenCalled();
+				const error = handleErrorSpy.mock.calls[0][1] as Error;
+				expect(error.message).toContain('[MCP invariant]');
+				expect(error.message).toContain('still missing');
+				expect(error.message).toContain('member session');
+			});
+		});
+
 		it('skips member Space MCP invariant for sessions without spaceId', async () => {
 			await withAnthropicApiKey(async () => {
 				mockSession.id = 'plain-worker-1';

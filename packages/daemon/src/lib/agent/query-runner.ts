@@ -1103,16 +1103,18 @@ export class QueryRunner {
 	 *
 	 * Skipped for:
 	 *   - space_chat sessions (handled by ensureSpaceChatMcpInvariant)
+	 *   - space_task_agent sessions (legacy, intentionally not provisioned by
+	 *     attachSpaceToolsToMemberSession)
 	 *   - workflow sub-sessions (handled by node-agent self-heal)
 	 *   - sessions without context.spaceId
 	 */
 	private async ensureMemberSpaceMcpInvariant(queryOptions: Options): Promise<Options> {
 		const { session, logger } = this.ctx;
-
 		// Only applies to member sessions that belong to a Space but are not the
-		// Space chat session itself or a workflow sub-session.
+		// Space chat session itself, a legacy task-agent session, or a workflow sub-session.
 		if (!session.context?.spaceId) return queryOptions;
 		if (session.type === 'space_chat') return queryOptions;
+		if (session.type === 'space_task_agent') return queryOptions;
 		if (session.id.includes(':task:') && session.id.includes(':exec:')) return queryOptions;
 
 		const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
