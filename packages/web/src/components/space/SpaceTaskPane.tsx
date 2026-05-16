@@ -745,6 +745,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	}
 
 	const taskActionItems: DropdownMenuItem[] = [];
+	if (!isTerminalTask) {
+		taskActionItems.push({
+			label: 'Edit title, description, or priority',
+			onClick: () => {
+				setEditTaskError(null);
+				setShowEditTaskModal(true);
+			},
+		});
+	}
 	if (activityMembers.length > 0) {
 		taskActionItems.push(
 			...activityMembers.map((member) => ({
@@ -853,33 +862,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 					</div>
-					{!isTerminalTask && (
-						<button
-							type="button"
-							onClick={() => {
-								setEditTaskError(null);
-								setShowEditTaskModal(true);
-							}}
-							class="flex-shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-dark-800 hover:text-gray-200 transition-colors"
-							data-testid="task-edit-button"
-							aria-label="Edit Task"
-							title="Edit title, description, or priority"
-						>
-							<svg
-								class="w-4 h-4"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-								stroke-width={2}
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-								/>
-							</svg>
-						</button>
-					)}
 					{taskActionItems.length > 0 && (
 						<Dropdown
 							items={taskActionItems}
