@@ -1,16 +1,9 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { Session, WorkspaceHistoryEntry } from '@neokai/shared';
-import { navigateToSession } from '../lib/router.ts';
-import {
-	sessions,
-	hasArchivedSessions,
-	globalSettings,
-	connectionState,
-	authStatus,
-} from '../lib/state.ts';
+import { navigateToSession, navigateToSessions } from '../lib/router.ts';
+import { sessions, hasArchivedSessions, globalSettings } from '../lib/state.ts';
 import {
 	updateGlobalSettings,
-	createSession,
 	getWorkspaceHistory,
 	addWorkspaceToHistory,
 	removeWorkspaceFromHistory,
@@ -18,7 +11,6 @@ import {
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { isUserSession } from '../lib/session-utils.ts';
-import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { getCollapsedProjects, setCollapsedProjects } from '../lib/sidebar-prefs.ts';
 import SessionListItem from '../components/SessionListItem.tsx';
 import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
@@ -103,7 +95,6 @@ function buildView(
  * a flat Chats section for sessions that have no workspace yet.
  */
 export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarProps) {
-	const [creating, setCreating] = useState(false);
 	const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
 	// Project paths that are collapsed; empty means every project is expanded.
 	const [collapsed, setCollapsed] = useState<Set<string>>(() => getCollapsedProjects());
@@ -122,9 +113,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 	const showArchived = globalSettings.value?.showArchived ?? false;
 	const { projects, ungrouped } = buildView(sessionsList, history);
 	const hasContent = sessionsList.length > 0 || projects.length > 0;
-
-	const canCreate =
-		connectionState.value === 'connected' && (authStatus.value?.isAuthenticated ?? false);
 
 	const handleSessionClick = (sessionId: string) => {
 		navigateToSession(sessionId);
@@ -174,29 +162,11 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 		}
 	};
 
-	const handleNewChat = async () => {
-		if (!canCreate) {
-			toast.error('Not connected to server. Please wait...');
-			return;
-		}
-		setCreating(true);
-		try {
-			const response = await createSession({ workspacePath: undefined });
-			if (!response?.sessionId) {
-				toast.error('No sessionId in response');
-				return;
-			}
-			navigateToSession(response.sessionId);
-			onSessionSelect?.();
-		} catch (err) {
-			if (err instanceof ConnectionNotReadyError) {
-				toast.error('Connection lost. Please try again.');
-			} else {
-				toast.error(err instanceof Error ? err.message : 'Failed to create session');
-			}
-		} finally {
-			setCreating(false);
-		}
+	// "New chat" opens the empty-state landing; the session is created when the
+	// user submits text there.
+	const handleNewChat = () => {
+		navigateToSessions();
+		onSessionSelect?.();
 	};
 
 	return (
@@ -225,8 +195,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 					type="button"
 					data-testid="new-chat-button"
 					onClick={handleNewChat}
-					disabled={creating || !canCreate}
-					class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium text-gray-200 hover:bg-dark-850 hover:text-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+					class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium text-gray-200 hover:bg-dark-850 hover:text-gray-100 transition-colors"
 				>
 					<svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
