@@ -53,7 +53,6 @@ import type {
 	WorkflowRunArtifact,
 } from '@neokai/shared';
 import { isUUID, Logger } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { computed, signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
 
@@ -1869,29 +1868,6 @@ class SpaceStore {
 	}
 
 	/**
-	 * Ensure a Task Agent session exists for a task and return latest task state.
-	 */
-	async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
-		const spaceId = this.spaceId.value;
-		if (!spaceId) throw new Error('No space selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		const response = await hub.request<{ task: SpaceTask }>('space.task.ensureAgentSession', {
-			taskId,
-			spaceId,
-		});
-
-		if (!response?.task) throw new Error('Task session response missing task payload');
-
-		const nextTask = response.task;
-		this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, nextTask);
-
-		return nextTask;
-	}
-
-	/**
 	 * Send a human message into a task's agent thread.
 	 *
 	 * Returns the daemon response so callers can inspect delivered /
@@ -1905,9 +1881,7 @@ class SpaceStore {
 	async sendTaskMessage(
 		taskId: string,
 		message: string,
-		target?:
-			| { kind: 'task_agent' }
-			| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string },
+		target?: { kind: 'node_agent'; agentName: string; nodeExecutionId?: string },
 		images?: MessageImage[]
 	): Promise<{
 		ok: boolean;
@@ -2022,33 +1996,6 @@ class SpaceStore {
 	/**
 	 * Fetch a paginated snapshot of task-thread messages.
 	 */
-	async getTaskMessages(
-		taskId: string,
-		options?: { cursor?: string; limit?: number }
-	): Promise<{ messages: SDKMessage[]; hasMore: boolean; sessionId: string }> {
-		const spaceId = this.spaceId.value;
-		if (!spaceId) throw new Error('No space selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		const result = await hub.request<{
-			messages: SDKMessage[];
-			hasMore: boolean;
-			sessionId: string;
-		}>('space.task.getMessages', {
-			taskId,
-			spaceId,
-			cursor: options?.cursor,
-			limit: options?.limit,
-		});
-		return {
-			messages: result?.messages ?? [],
-			hasMore: result?.hasMore ?? false,
-			sessionId: result?.sessionId ?? '',
-		};
-	}
-
 	// ========================================
 	// Agent Methods
 	// ========================================

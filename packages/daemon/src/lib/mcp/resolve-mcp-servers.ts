@@ -16,8 +16,8 @@
  * This function is intentionally I/O-free: callers build the inputs (read the
  * registry, fetch the overrides for the session's scope chain) and pass them in.
  * Keeping resolution a pure function means:
- *   - Every session spawn path (`space_task_agent`, room chat, neo, ad-hoc
- *     coder sessions, …) funnels through the same decision logic.
+ *   - Every session spawn path (room chat, neo, ad-hoc coder sessions, …)
+ *     funnels through the same decision logic.
  *   - The precedence matrix is trivial to unit-test without a database.
  *   - The resolver never triggers surprise DB reads in hot paths.
  */

@@ -1,15 +1,14 @@
 /**
  * Space Task Message RPC Handlers
  *
- * RPC handlers for human ↔ Task Agent message routing:
- * - space.task.sendMessage — inject a human message into a Task Agent session
- * - space.task.getMessages — paginated snapshot of messages from a Task Agent session
+ * RPC handlers for human ↔ task agent message routing:
+ * - space.task.sendMessage — inject a human message into a task's node agent sessions
+ * - space.task.activateNodeAgent — lazy-activate a workflow node agent
  */
 
 import type { MessageHub, MessageImage } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
-import type { AgentSession } from '../agent/agent-session';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { Logger } from '../logger';
 
@@ -70,17 +69,6 @@ export interface NodeExecutionLookup {
  * Decouples RPC handlers from the concrete TaskAgentManager class.
  */
 export interface TaskAgentManagerInterface {
-	/** Ensure a Task Agent session exists for the given task and return latest task snapshot. */
-	ensureTaskAgentSession(taskId: string): Promise<import('@neokai/shared').SpaceTask>;
-	/** Inject a message into the Task Agent session for the given task. */
-	injectTaskAgentMessage(
-		taskId: string,
-		message: string,
-		isSyntheticMessage?: boolean,
-		images?: MessageImage[]
-	): Promise<void>;
-	/** Returns the live AgentSession for the given task, or undefined if not spawned. */
-	getTaskAgent(taskId: string): AgentSession | undefined;
 	/**
 	 * Optional: inject a message directly into a node agent sub-session by its session ID.
 	 * Required for @mention routing to specific agents.
@@ -142,7 +130,6 @@ export interface PendingAgentMessageQueue {
 }
 
 type SpaceTaskMessageTarget =
-	| { kind: 'task_agent' }
 	| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string }
 	| { kind: 'node_agent'; nodeExecutionId: string; agentName?: string };
 
@@ -237,11 +224,39 @@ export function setupSpaceTaskMessageHandlers(
 				);
 
 		if (matches.length === 0) {
-			const available = [...new Set(executions.map((e) => e.agentName))].sort();
-			throw new Error(
-				`Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? 'unknown'}. ` +
-					`Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
-			);
+			// No existing execution row for this agent. If the agent is declared
+			// in the workflow (e.g. a downstream node not yet activated), attempt
+			// lazy activation so the user's message triggers the agent spawn.
+			if (target.agentName && taskAgentManager.ensureWorkflowNodeActivationForAgent) {
+				const declared = taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(taskId) ?? [];
+				const normalizedName = target.agentName.toLowerCase();
+				if (declared.some((n) => n.toLowerCase() === normalizedName)) {
+					const didActivate = await taskAgentManager.ensureWorkflowNodeActivationForAgent(
+						taskId,
+						target.agentName,
+						{ reopenReason: 'human message to unstarted agent' }
+					);
+					if (didActivate) {
+						const refreshed = nodeExecutionRepo!
+							.listByWorkflowRun(task.workflowRunId!)
+							.filter((e) => e.status !== 'cancelled');
+						const activatedMatches = refreshed.filter(
+							(e) => e.agentName.toLowerCase() === normalizedName
+						);
+						if (activatedMatches.length > 0) {
+							matches.push(...activatedMatches);
+						}
+					}
+				}
+			}
+
+			if (matches.length === 0) {
+				const available = [...new Set(executions.map((e) => e.agentName))].sort();
+				throw new Error(
+					`Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? 'unknown'}. ` +
+						`Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
+				);
+			}
 		}
 
 		let activated = false;
@@ -332,44 +347,6 @@ export function setupSpaceTaskMessageHandlers(
 			delivered: false,
 		};
 	}
-
-	// ─── space.task.ensureAgentSession ──────────────────────────────────────────
-	messageHub.onRequest('space.task.ensureAgentSession', async (data) => {
-		const params = data as { spaceId: string; taskId: string };
-
-		if (!params.spaceId) {
-			throw new Error('spaceId is required');
-		}
-		if (!params.taskId) {
-			throw new Error('taskId is required');
-		}
-
-		// Validate task exists and belongs to the given space
-		const task = taskRepo.getTask(params.taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
-		}
-		if (task.spaceId !== params.spaceId) {
-			throw new Error(`Task not found: ${params.taskId}`);
-		}
-
-		const updatedTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
-
-		await internalEventBus.publish('space.task.updated', {
-			sessionId: 'global',
-			spaceId: params.spaceId,
-			taskId: params.taskId,
-			task: updatedTask,
-		});
-
-		log.info(`space.task.ensureAgentSession: ensured session for task ${params.taskId}`);
-
-		return {
-			taskId: updatedTask.id,
-			sessionId: updatedTask.taskAgentSessionId ?? null,
-			task: updatedTask,
-		};
-	});
 
 	// ─── space.task.sendMessage ─────────────────────────────────────────────────
 	messageHub.onRequest('space.task.sendMessage', async (data) => {
@@ -489,34 +466,10 @@ export function setupSpaceTaskMessageHandlers(
 		}
 		// ── end @mention routing ───────────────────────────────────────────────────
 
-		// No @mentions (or routing prerequisites not met): route to Task Agent
-		// Ensure a live Task Agent session exists before injecting. This recovers from:
-		// - first message on a task that has not spawned yet
-		// - persisted-but-not-live sessions after daemon restart
-		const sessionBefore = task.taskAgentSessionId ?? null;
-		const ensuredTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
-		const sessionAfter = ensuredTask.taskAgentSessionId ?? null;
-
-		if (sessionAfter !== sessionBefore) {
-			await internalEventBus.publish('space.task.updated', {
-				sessionId: 'global',
-				spaceId: params.spaceId,
-				taskId: params.taskId,
-				task: ensuredTask,
-			});
-		}
-
-		await taskAgentManager.injectTaskAgentMessage(params.taskId, params.message, false, images);
-		log.info(`space.task.sendMessage: injected message into task ${params.taskId}`);
-
-		// Human touch: `space.task.sendMessage` is the sole RPC boundary for
-		// human→task messages, so every successful call here resets the
-		// autonomous-cycle safety cap. Agent-to-agent paths (send_message tool
-		// → flushPendingMessagesForTarget → injectSubSessionMessage) bypass this
-		// RPC and are therefore correctly excluded from the reset.
-		await resetChannelCyclesOnHumanTouch(task.workflowRunId, params.taskId);
-
-		return { ok: true };
+		// No @mentions and no explicit target: require a target.
+		throw new Error(
+			'Target agent is required. Use @mention to specify a target agent, or select a target from the agent list.'
+		);
 	});
 
 	// ─── space.task.activateNodeAgent ───────────────────────────────────────────
@@ -667,55 +620,5 @@ export function setupSpaceTaskMessageHandlers(
 			queued: queuedMessageId !== null,
 			...(queuedMessageId !== null ? { queuedMessageId } : {}),
 		};
-	});
-
-	// ─── space.task.getMessages ─────────────────────────────────────────────────
-	messageHub.onRequest('space.task.getMessages', async (data) => {
-		const params = data as {
-			spaceId: string;
-			taskId: string;
-			cursor?: string;
-			limit?: number;
-		};
-
-		if (!params.spaceId) {
-			throw new Error('spaceId is required');
-		}
-		if (!params.taskId) {
-			throw new Error('taskId is required');
-		}
-
-		// Validate task exists and belongs to the given space
-		const task = taskRepo.getTask(params.taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
-		}
-		if (task.spaceId !== params.spaceId) {
-			throw new Error(`Task not found: ${params.taskId}`);
-		}
-		if (!task.taskAgentSessionId) {
-			throw new Error(`Task Agent session not started for task: ${params.taskId}`);
-		}
-
-		const sessionId = task.taskAgentSessionId;
-		const limit = Math.max(1, Math.min(params.limit ?? 50, 200));
-
-		// Parse cursor as a numeric timestamp for the `before` DB filter
-		let before: number | undefined;
-		if (params.cursor) {
-			const parsed = Number(params.cursor);
-			if (!Number.isNaN(parsed)) {
-				before = parsed;
-			}
-		}
-
-		// Prefer reading from the live in-memory session (if the Task Agent is active),
-		// falling back to the DB for completed or restarted sessions.
-		const liveSession = taskAgentManager.getTaskAgent(params.taskId);
-		const { messages, hasMore } = liveSession
-			? liveSession.getSDKMessages(limit, before)
-			: db.getSDKMessages(sessionId, limit, before);
-
-		return { messages, hasMore, sessionId };
 	});
 }

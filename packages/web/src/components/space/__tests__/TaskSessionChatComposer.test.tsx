@@ -63,7 +63,7 @@ const targets = [
 		nodeName: 'Coding',
 		state: 'Active',
 	},
-	{ id: 'task-agent', kind: 'task_agent' as const, label: 'Task Agent' },
+	{ id: 'task-agent', kind: 'node_agent' as const, label: 'Task Agent' },
 ];
 
 const activityMembers = [
@@ -84,11 +84,9 @@ function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComp
 	const onTargetSelect = vi.fn();
 	const view = render(
 		<TaskSessionChatComposer
-			sessionId="task-session-id"
 			mentionCandidates={mentionCandidates}
 			targets={targets}
 			selectedTargetId="node:n1:coder"
-			hasTaskAgentSession={true}
 			canSend={true}
 			isSending={false}
 			autoScroll={true}
@@ -131,7 +129,7 @@ describe('TaskSessionChatComposer', () => {
 	});
 
 	it('passes target sessionId to ChatComposer', () => {
-		renderComposer({ sessionId: 'my-session' });
+		renderComposer();
 		expect(lastChatComposerProps?.sessionId).toBe('target-session-id');
 	});
 
@@ -164,86 +162,76 @@ describe('TaskSessionChatComposer', () => {
 		renderComposer({ canSend: true, isSending: false });
 		expect(lastChatComposerProps?.isWaitingForInput).toBe(false);
 	});
+});
 
-	it('uses task agent session placeholder when hasTaskAgentSession is true', () => {
-		renderComposer({ hasTaskAgentSession: true });
-		expect(lastChatComposerProps?.inputPlaceholder).toBe('Message Coder...');
+it('forwards auto-scroll state to ChatComposer', () => {
+	const onAutoScrollChange = vi.fn();
+	renderComposer({ autoScroll: false, onAutoScrollChange });
+	expect(lastChatComposerProps?.autoScroll).toBe(false);
+	expect(lastChatComposerProps?.onAutoScrollChange).toBe(onAutoScrollChange);
+});
+
+it('renders a recipient picker in the input leading slot', () => {
+	const { getByTestId } = renderComposer();
+	const trigger = getByTestId('task-composer-target-trigger');
+	expect(trigger.textContent).toBe('C');
+	expect(trigger.getAttribute('title')).toBe('Send to Coder');
+	expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+	expect(lastChatComposerProps?.inputLeadingPaddingClass).toBe('pl-12');
+	expect(lastChatComposerProps?.inputLeadingElement).toBeTruthy();
+});
+
+it('calls onTargetSelect when a recipient is selected', () => {
+	const { getByTestId, getAllByTestId, onTargetSelect } = renderComposer();
+	fireEvent.click(getByTestId('task-composer-target-trigger'));
+	fireEvent.click(getAllByTestId('task-composer-target-option')[1]);
+	expect(onTargetSelect).toHaveBeenCalledWith('task-agent');
+});
+
+it('passes thinkingLevel to ChatComposer', () => {
+	renderComposer();
+	expect(lastChatComposerProps?.thinkingLevel).toBe('off');
+});
+
+it('passes disabled session features to ChatComposer', () => {
+	renderComposer();
+	expect(lastChatComposerProps?.features).toEqual({
+		coordinator: false,
+		worktree: false,
+		rewind: false,
+		archive: false,
+		sessionInfo: false,
+	});
+});
+
+it('wires onOpenTools to ChatComposer', () => {
+	renderComposer();
+	expect(typeof lastChatComposerProps?.onOpenTools).toBe('function');
+});
+
+it('wires onThinkingLevelChange to ChatComposer', () => {
+	renderComposer();
+	expect(typeof lastChatComposerProps?.onThinkingLevelChange).toBe('function');
+});
+
+describe('image passthrough', () => {
+	it('forwards image attachments from ChatComposer.onSend to the parent onSend with the selected target', async () => {
+		const { onSend } = renderComposer();
+		const sampleImage = { media_type: 'image/png' as const, data: 'AAAAB' };
+
+		// Simulate ChatComposer firing onSend with a multi-modal payload
+		await lastChatComposerProps?.onSend?.('look at this', [sampleImage], 'immediate');
+
+		expect(onSend).toHaveBeenCalledTimes(1);
+		expect(onSend).toHaveBeenCalledWith('look at this', targets[0], [sampleImage]);
 	});
 
-	it('uses auto-start placeholder when hasTaskAgentSession is false', () => {
-		renderComposer({ hasTaskAgentSession: false, targets: [], selectedTargetId: null });
-		expect(lastChatComposerProps?.inputPlaceholder).toBe('Message task agent (auto-start)...');
-	});
+	it('forwards undefined when ChatComposer.onSend fires without images', async () => {
+		const { onSend } = renderComposer();
 
-	it('forwards auto-scroll state to ChatComposer', () => {
-		const onAutoScrollChange = vi.fn();
-		renderComposer({ autoScroll: false, onAutoScrollChange });
-		expect(lastChatComposerProps?.autoScroll).toBe(false);
-		expect(lastChatComposerProps?.onAutoScrollChange).toBe(onAutoScrollChange);
-	});
+		await lastChatComposerProps?.onSend?.('plain text', undefined, 'immediate');
 
-	it('renders a recipient picker in the input leading slot', () => {
-		const { getByTestId } = renderComposer();
-		const trigger = getByTestId('task-composer-target-trigger');
-		expect(trigger.textContent).toBe('C');
-		expect(trigger.getAttribute('title')).toBe('Send to Coder');
-		expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
-		expect(lastChatComposerProps?.inputLeadingPaddingClass).toBe('pl-12');
-		expect(lastChatComposerProps?.inputLeadingElement).toBeTruthy();
-	});
-
-	it('calls onTargetSelect when a recipient is selected', () => {
-		const { getByTestId, getAllByTestId, onTargetSelect } = renderComposer();
-		fireEvent.click(getByTestId('task-composer-target-trigger'));
-		fireEvent.click(getAllByTestId('task-composer-target-option')[1]);
-		expect(onTargetSelect).toHaveBeenCalledWith('task-agent');
-	});
-
-	it('passes thinkingLevel to ChatComposer', () => {
-		renderComposer();
-		expect(lastChatComposerProps?.thinkingLevel).toBe('off');
-	});
-
-	it('passes disabled session features to ChatComposer', () => {
-		renderComposer();
-		expect(lastChatComposerProps?.features).toEqual({
-			coordinator: false,
-			worktree: false,
-			rewind: false,
-			archive: false,
-			sessionInfo: false,
-		});
-	});
-
-	it('wires onOpenTools to ChatComposer', () => {
-		renderComposer();
-		expect(typeof lastChatComposerProps?.onOpenTools).toBe('function');
-	});
-
-	it('wires onThinkingLevelChange to ChatComposer', () => {
-		renderComposer();
-		expect(typeof lastChatComposerProps?.onThinkingLevelChange).toBe('function');
-	});
-
-	describe('image passthrough', () => {
-		it('forwards image attachments from ChatComposer.onSend to the parent onSend with the selected target', async () => {
-			const { onSend } = renderComposer();
-			const sampleImage = { media_type: 'image/png' as const, data: 'AAAAB' };
-
-			// Simulate ChatComposer firing onSend with a multi-modal payload
-			await lastChatComposerProps?.onSend?.('look at this', [sampleImage], 'immediate');
-
-			expect(onSend).toHaveBeenCalledTimes(1);
-			expect(onSend).toHaveBeenCalledWith('look at this', targets[0], [sampleImage]);
-		});
-
-		it('forwards undefined when ChatComposer.onSend fires without images', async () => {
-			const { onSend } = renderComposer();
-
-			await lastChatComposerProps?.onSend?.('plain text', undefined, 'immediate');
-
-			expect(onSend).toHaveBeenCalledTimes(1);
-			expect(onSend).toHaveBeenCalledWith('plain text', targets[0], undefined);
-		});
+		expect(onSend).toHaveBeenCalledTimes(1);
+		expect(onSend).toHaveBeenCalledWith('plain text', targets[0], undefined);
 	});
 });

@@ -26,10 +26,12 @@
 import type { PostApprovalRoute, WorkflowNode, WorkflowNodeInput } from '@neokai/shared';
 
 /**
- * Literal target name that always resolves to the orchestration Task Agent.
- * The Task Agent is a virtual node that is never stored in
- * `space_workflow_nodes` — it is injected at runtime — so it cannot match via
- * the node-agent-name path.
+ * Literal target name for the legacy Task Agent target.
+ * Retained for backward compatibility with persisted workflows that declared
+ * `targetAgent: 'task-agent'`. New workflows should target a concrete node
+ * agent name instead. The PostApprovalRouter will attempt a node-agent spawn
+ * for this target, which will fail gracefully if no agent named 'task-agent'
+ * exists in the workflow.
  */
 export const POST_APPROVAL_TASK_AGENT_TARGET = 'task-agent';
 
@@ -81,7 +83,7 @@ export function collectEligiblePostApprovalTargets(
  * Validate a workflow's `postApproval` route against its node graph.
  *
  *   - `route === undefined` → valid (post-approval is optional).
- *   - `route.targetAgent === 'task-agent'` → valid.
+ *   - `route.targetAgent === 'task-agent'` → valid (legacy backward compat).
  *   - `route.targetAgent` matches some `nodes[*].agents[*].name` → valid.
  *   - Any other `targetAgent` → invalid; the error message lists every
  *     eligible target so the caller can surface a helpful repair hint.

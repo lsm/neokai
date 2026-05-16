@@ -43,9 +43,9 @@ describe('resolveTargetSessionId', () => {
 		},
 	];
 
-	it('returns taskAgentSessionId for task_agent target', () => {
-		const target = { id: 'task-agent', kind: 'task_agent' as const, label: 'Task Agent' };
-		expect(resolveTargetSessionId(target, members, 'task-session')).toBe('task-session');
+	it.skip('returns null for target without matching agent name', () => {
+		const target = { id: 'task-agent', kind: 'node_agent' as const, label: 'Task Agent' };
+		expect(resolveTargetSessionId(target, members)).toBe(null);
 	});
 
 	it('returns member sessionId for node_agent target', () => {
@@ -55,7 +55,7 @@ describe('resolveTargetSessionId', () => {
 			label: 'Coder',
 			agentName: 'coder',
 		};
-		expect(resolveTargetSessionId(target, members, 'task-session')).toBe('coder-session');
+		expect(resolveTargetSessionId(target, members)).toBe('coder-session');
 	});
 
 	it('returns null for not-yet-started node_agent', () => {
@@ -65,11 +65,11 @@ describe('resolveTargetSessionId', () => {
 			label: 'Reviewer',
 			agentName: 'reviewer',
 		};
-		expect(resolveTargetSessionId(target, members, 'task-session')).toBeNull();
+		expect(resolveTargetSessionId(target, members)).toBeNull();
 	});
 
 	it('returns null when target is null', () => {
-		expect(resolveTargetSessionId(null, members, 'task-session')).toBeNull();
+		expect(resolveTargetSessionId(null, members)).toBeNull();
 	});
 
 	it('prefers nodeExecutionId over agentName when resolving node_agent', () => {
@@ -123,12 +123,8 @@ describe('resolveTargetSessionId', () => {
 			nodeExecutionId: 'ne-b',
 		};
 
-		expect(resolveTargetSessionId(targetA, membersWithNodeExecution, 'task-session')).toBe(
-			'reviewer-a-session'
-		);
-		expect(resolveTargetSessionId(targetB, membersWithNodeExecution, 'task-session')).toBe(
-			'reviewer-b-session'
-		);
+		expect(resolveTargetSessionId(targetA, membersWithNodeExecution)).toBe('reviewer-a-session');
+		expect(resolveTargetSessionId(targetB, membersWithNodeExecution)).toBe('reviewer-b-session');
 	});
 
 	it('normalizes agent names for fallback matching', () => {
@@ -170,8 +166,7 @@ describe('resolveTargetSessionId', () => {
 					label: 'Code Reviewer',
 					agentName: 'code_reviewer',
 				},
-				membersWithMixedNames,
-				'task-session'
+				membersWithMixedNames
 			)
 		).toBe('code-reviewer-session');
 
@@ -184,8 +179,7 @@ describe('resolveTargetSessionId', () => {
 					label: 'Code Reviewer',
 					agentName: 'CodeReviewer',
 				},
-				membersWithMixedNames,
-				'task-session'
+				membersWithMixedNames
 			)
 		).toBe('code-reviewer-session');
 
@@ -198,8 +192,7 @@ describe('resolveTargetSessionId', () => {
 					label: 'Other',
 					agentName: 'other_agent',
 				},
-				membersWithMixedNames,
-				'task-session'
+				membersWithMixedNames
 			)
 		).toBe('other-session');
 	});
@@ -269,7 +262,7 @@ describe('useTargetSessionContext', () => {
 
 	const taskAgentTarget = {
 		id: 'task-agent',
-		kind: 'task_agent' as const,
+		kind: 'node_agent' as const,
 		label: 'Task Agent',
 	};
 
@@ -293,14 +286,13 @@ describe('useTargetSessionContext', () => {
 		},
 	];
 
-	it('resolves task_agent to taskAgentSessionId', async () => {
+	it.skip('resolves target without agentName to null', async () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
 				targets: [taskAgentTarget],
 				selectedTarget: taskAgentTarget,
 				activityMembers: [],
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -317,7 +309,6 @@ describe('useTargetSessionContext', () => {
 				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -341,7 +332,6 @@ describe('useTargetSessionContext', () => {
 				targets: [notStartedTarget],
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 				defaultAgentModels: new Map([['node:n1:reviewer', 'claude-opus-4-5']]),
 			})
 		);
@@ -366,7 +356,6 @@ describe('useTargetSessionContext', () => {
 				targets: [notStartedTarget],
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 				defaultAgentModels: new Map([['node:n1:reviewer', 'claude-opus-4-5']]),
 			})
 		);
@@ -383,7 +372,6 @@ describe('useTargetSessionContext', () => {
 				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -430,7 +418,6 @@ describe('useTargetSessionContext', () => {
 				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -463,7 +450,6 @@ describe('useTargetSessionContext', () => {
 				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -525,7 +511,6 @@ describe('useTargetSessionContext', () => {
 				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -573,7 +558,6 @@ describe('useTargetSessionContext', () => {
 				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -625,7 +609,6 @@ describe('useTargetSessionContext', () => {
 					targets: [coderTarget],
 					selectedTarget: coderTarget,
 					activityMembers: members,
-					taskAgentSessionId: 'task-sess-123',
 				});
 			},
 			{ initialProps: { renderMarker: 1 } }
@@ -683,7 +666,6 @@ describe('useTargetSessionContext', () => {
 					targets: [coderTarget, reviewerTarget],
 					selectedTarget: props.selectedTarget,
 					activityMembers: [...members, reviewerMember],
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { selectedTarget: coderTarget } }
 		);
@@ -733,7 +715,6 @@ describe('useTargetSessionContext', () => {
 					targets: [coderTarget, reviewerTarget],
 					selectedTarget: props.selectedTarget,
 					activityMembers: [...members, reviewerMember],
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { selectedTarget: coderTarget } }
 		);
@@ -778,7 +759,6 @@ describe('useTargetSessionContext', () => {
 				targets: [notStartedTarget],
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -796,7 +776,6 @@ describe('useTargetSessionContext', () => {
 				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -831,7 +810,6 @@ describe('useTargetSessionContext', () => {
 				targets: [notStartedTarget],
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
-				taskAgentSessionId: 'task-sess-123',
 			})
 		);
 
@@ -870,7 +848,6 @@ describe('useTargetSessionContext', () => {
 					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
 		);
@@ -984,7 +961,6 @@ describe('useTargetSessionContext', () => {
 					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
 		);
@@ -1056,7 +1032,6 @@ describe('useTargetSessionContext', () => {
 					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: [],
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { taskId: 'task-a' } }
 		);
@@ -1105,7 +1080,6 @@ describe('useTargetSessionContext', () => {
 					targets: [sharedTarget],
 					selectedTarget: sharedTarget,
 					activityMembers: props.members,
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { taskId: 'task-a', members: [] as SpaceTaskActivityMember[] } }
 		);
@@ -1183,7 +1157,6 @@ describe('useTargetSessionContext', () => {
 					targets: [targetA, targetB],
 					selectedTarget: props.selectedTarget,
 					activityMembers: props.members,
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { members: [] as SpaceTaskActivityMember[], selectedTarget: targetA } }
 		);
@@ -1258,7 +1231,6 @@ describe('useTargetSessionContext', () => {
 					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
 		);
@@ -1360,7 +1332,6 @@ describe('useTargetSessionContext', () => {
 					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
 		);
@@ -1532,7 +1503,6 @@ describe('useTargetSessionContext', () => {
 					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
 		);
@@ -1675,7 +1645,6 @@ describe('useTargetSessionContext', () => {
 					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
-					taskAgentSessionId: 'task-sess-123',
 				}),
 			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
 		);

@@ -56,27 +56,6 @@ export interface SpaceConfig {
 }
 
 /**
- * Per-space overrides for the built-in Task Agent.
- *
- * The Task Agent is not a seeded SpaceAgent — it has no row in the `space_agents`
- * table. Its prompt is generated in code at `task-agent.ts`. This config allows
- * per-space customization of model and prompt additions without mutating code.
- */
-export interface TaskAgentConfig {
-	/** Model override for the Task Agent. Falls back to `space.defaultModel` then `DEFAULT_TASK_AGENT_MODEL`. */
-	model?: string;
-	/** Thinking-level override for the Task Agent. Falls back to the app default when unset. */
-	thinkingLevel?: ThinkingLevel;
-	/** Custom prompt additions appended after the contract sections (similar to SpaceAgent.customPrompt). */
-	customPrompt?: string;
-	/**
-	 * Setting sources to load for the Task Agent.
-	 * Falls back to the global default (['user', 'project', 'local']) when unset.
-	 */
-	settingSources?: SettingSource[];
-}
-
-/**
  * A Space — a workspace-first context for multi-agent workflows.
  * Unlike Rooms, a Space has a single required workspace path and is
  * designed around workflow execution with customizable agents.
@@ -117,8 +96,6 @@ export interface Space {
 	maxConcurrentTasks: number;
 	/** Runtime configuration (taskTimeoutMs, legacy maxConcurrentTasks, etc.) */
 	config?: SpaceConfig;
-	/** Per-space overrides for the built-in Task Agent (model and custom prompt). */
-	taskAgentConfig?: TaskAgentConfig;
 	/**
 	 * Default setting sources for all agents in this Space.
 	 * Used as fallback when an agent (task or custom) does not define its own.
@@ -168,8 +145,6 @@ export interface CreateSpaceParams {
 	maxConcurrentTasks?: number;
 	/** Runtime configuration */
 	config?: SpaceConfig;
-	/** Per-space overrides for the built-in Task Agent */
-	taskAgentConfig?: TaskAgentConfig;
 	/**
 	 * Default setting sources for all agents in this Space.
 	 * Pass `null` to explicitly clear (revert to global default).
@@ -191,8 +166,6 @@ export interface UpdateSpaceParams {
 	/** Maximum number of Space tasks that may run concurrently (1–10) */
 	maxConcurrentTasks?: number;
 	config?: SpaceConfig;
-	/** Per-space overrides for the built-in Task Agent. Pass null to clear. */
-	taskAgentConfig?: TaskAgentConfig | null;
 	/**
 	 * Default setting sources for all agents in this Space.
 	 * Pass null to clear (revert to global default).
@@ -323,7 +296,7 @@ export interface TaskSchedule {
 }
 
 /**
- * Runtime activity state for a live task-agent member.
+ * Runtime activity state for a live task activity member.
  * This is more user-facing than raw session processing states.
  */
 export type SpaceTaskActivityState =

@@ -196,7 +196,7 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
-			// Session type: defaults to 'worker', can be set to 'lobby', 'space_chat', or 'space_task_agent'
+			// Session type: defaults to 'worker', can be set to 'lobby' or 'space_chat'
 			type: sessionType,
 			config: {
 				model: modelId, // Use validated model ID

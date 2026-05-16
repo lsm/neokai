@@ -44,11 +44,6 @@ export interface AgentMessageRouterConfig {
 	 */
 	nodeGroups?: Record<string, string[]>;
 	/**
-	 * Optional injector for routing messages to the Task Agent helper session.
-	 * Used when a node agent explicitly targets `task-agent`.
-	 */
-	taskAgentRouter?: (message: string) => Promise<{ sessionId: string }>;
-	/**
 	 * Optional injector for routing messages to the Space Agent chat session.
 	 * Used when a node agent explicitly targets `space-agent`.
 	 */
@@ -178,7 +173,6 @@ export class AgentMessageRouter {
 			messageInjector,
 			channelRouter,
 			nodeGroups,
-			taskAgentRouter,
 			spaceAgentInjector,
 			pendingMessageRepo,
 			spaceId,
@@ -205,15 +199,10 @@ export class AgentMessageRouter {
 		const fromNodeName = resolveNodeName(fromAgentName);
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
-		const wantsTaskAgent = target !== '*' && requestedTargets.includes('task-agent');
 		const wantsSpaceAgent = target !== '*' && requestedTargets.includes('space-agent');
 
 		// Channel topology required except for built-in inter-level targets.
-		if (
-			resolver.isEmpty() &&
-			!(wantsTaskAgent && taskAgentRouter) &&
-			!(wantsSpaceAgent && spaceAgentInjector && spaceId)
-		) {
+		if (resolver.isEmpty() && !(wantsSpaceAgent && spaceAgentInjector && spaceId)) {
 			return {
 				success: false,
 				delivered: [],
@@ -284,8 +273,6 @@ export class AgentMessageRouter {
 			// Multicast: explicit list of agent names. Built-in names are reserved and
 			// are handled unconditionally by the delivery branch below.
 			targetAgentNames = target;
-		} else if (target === 'task-agent' && taskAgentRouter) {
-			targetAgentNames = ['task-agent'];
 		} else if (target === 'space-agent' && spaceAgentInjector && spaceId) {
 			targetAgentNames = ['space-agent'];
 		} else {
@@ -326,7 +313,6 @@ export class AgentMessageRouter {
 					const allTargets = [
 						...new Set([...knownAgentNames, ...nodeNames, ...allDeclaredAgentNames]),
 					].sort();
-					if (taskAgentRouter) allTargets.push('task-agent');
 					if (spaceAgentInjector && spaceId) allTargets.push('space-agent');
 					return {
 						success: false,
@@ -343,9 +329,7 @@ export class AgentMessageRouter {
 		}
 
 		// --- Authorization check (translate slot names → node names for canSend) ---
-		const topologyTargets = targetAgentNames.filter(
-			(r) => r !== 'task-agent' && r !== 'space-agent'
-		);
+		const topologyTargets = targetAgentNames.filter((r) => r !== 'space-agent');
 		const unauthorized = topologyTargets.filter(
 			(r) => !resolver.canSend(fromNodeName, resolveNodeName(r))
 		);
@@ -369,7 +353,7 @@ export class AgentMessageRouter {
 		const activatedTargets = new Set<string>();
 		if (channelRouter) {
 			for (const agentName of targetAgentNames) {
-				if (agentName === 'task-agent' || agentName === 'space-agent') continue;
+				if (agentName === 'space-agent') continue;
 				try {
 					const routed = await channelRouter.deliverMessage(
 						workflowRunId,
@@ -414,7 +398,7 @@ export class AgentMessageRouter {
 		if (activateTargetSession) {
 			const refreshed = new Map(peers.map((peer) => [`${peer.agentName}:${peer.sessionId}`, peer]));
 			for (const agentName of targetAgentNames) {
-				if (agentName === 'task-agent' || agentName === 'space-agent') continue;
+				if (agentName === 'space-agent') continue;
 				if (peers.some((peer) => peer.agentName === agentName)) continue;
 				try {
 					const activatedSessions = await activateTargetSession(agentName);
@@ -444,30 +428,6 @@ export class AgentMessageRouter {
 		const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
 
 		for (const agentName of targetAgentNames) {
-			if (agentName === 'task-agent') {
-				if (!taskAgentRouter) {
-					notFound.push(agentName);
-					continue;
-				}
-				const envelopedMessage = formatAgentMessage({
-					fromLevel: 'node-agent',
-					fromAgentName,
-					toLevel: 'task-agent',
-					body: `${message}${dataAppendix}`,
-					taskId,
-					taskNumber,
-					nodeId: fromAgentName,
-				});
-				try {
-					const routed = await taskAgentRouter(envelopedMessage);
-					delivered.push({ agentName, sessionId: routed.sessionId });
-				} catch (err) {
-					const errMsg = err instanceof Error ? err.message : String(err);
-					failed.push({ agentName, sessionId: 'task-agent', error: errMsg });
-				}
-				continue;
-			}
-
 			if (agentName === 'space-agent') {
 				if (!spaceAgentInjector || !spaceId) {
 					notFound.push(agentName);

@@ -14,10 +14,7 @@
  *
  *   1. **No route declared** → runtime transitions `approved → done` directly
  *      and emits `task.status-transition: approved → done source=no-post-approval`.
- *   2. **`targetAgent === 'task-agent'`** → explicit escalation route: inject a
- *      `[POST_APPROVAL_INSTRUCTIONS]` user turn into the existing Task Agent
- *      session. No new session spawn, no `post_approval_session_id` stamped.
- *   3. **Any other `targetAgent`** (a *space task node agent* — see terminology
+ *   2. **Any `targetAgent`** (a *space task node agent* — see terminology
  *      below) → spawn a fresh sub-session for that agent with the interpolated
  *      kickoff message, and stamp `post_approval_session_id` +
  *      `post_approval_started_at` on the task.
@@ -30,18 +27,14 @@
  * this is the `'node_agent'` kind in
  * `packages/shared/src/types/space.ts` (`SpaceMemberSession.kind`). See
  * `PostApprovalRoute.targetAgent` in the same file: the validator in
- * `post-approval-validator.ts` restricts valid targets to either the literal
- * `'task-agent'` or the `name` of a declared `WorkflowNodeAgent`.
+ * `post-approval-validator.ts` restricts valid targets to the `name` of a declared `WorkflowNodeAgent`.
  *
  * ## Double-fire guard (§3.4)
  *
  * The router is idempotent against double-invocation for the node-agent-spawn
  * case: if a task already has `postApprovalSessionId` set AND the referenced
  * session is alive (not terminal), the router returns a no-op result with
- * `mode: 'already-routed'`. For the inline `'task-agent'` and no-route cases
- * the dispatch is cheap (message inject / status update) so we re-run without
- * guarding; double-delivery of `[POST_APPROVAL_INSTRUCTIONS]` would be visible
- * to the operator as conversation noise, not a failure.
+ * `mode: 'already-routed'`.
  *
  *  * ## Feature flag (kill switch only)
  *
@@ -65,9 +58,8 @@ import {
 	interpolatePostApprovalTemplate,
 	type PostApprovalTemplateContext,
 } from '../workflows/post-approval-template';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import { Logger } from '../../logger';
-import { RUNTIME_ESCALATION_REASONS, type RuntimeEscalationReason } from './escalation-reasons';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 
 const log = new Logger('post-approval-router');
 
@@ -104,27 +96,6 @@ export function isPostApprovalRoutingEnabled(
 // ---------------------------------------------------------------------------
 
 /**
- * Abstracts the Task Agent session as far as the router is concerned. The
- * router only needs to inject two kinds of messages (awareness + post-approval
- * instructions) — no other Task Agent surface is touched.
- */
-export interface TaskAgentInjector {
-	/**
-	 * Inject a user-turn message into the Task Agent session for this task.
-	 *
-	 *   - Returns `{ injected: true, sessionId }` when the Task Agent was live
-	 *     and the message was enqueued.
-	 *   - Returns `{ injected: false }` when no Task Agent session exists for
-	 *     the task (e.g. the task was approved before any workflow ran).
-	 *     Callers log a warning but continue — awareness events are best-effort.
-	 */
-	injectIntoTaskAgent(
-		taskId: string,
-		message: string
-	): Promise<{ injected: boolean; sessionId?: string }>;
-}
-
-/**
  * Delegate for spawning the post-approval sub-session on the
  * space-task-node-agent path. Production wires this to
  * `TaskAgentManager.spawnPostApprovalSubSession`; tests pass a stub.
@@ -158,7 +129,6 @@ export interface SessionLivenessProbe {
 
 export interface PostApprovalRouterDeps {
 	taskRepo: Pick<SpaceTaskRepository, 'updateTask' | 'getTask'>;
-	taskAgent: TaskAgentInjector;
 	spawner: PostApprovalSubSessionSpawner;
 	livenessProbe?: SessionLivenessProbe;
 }
@@ -191,8 +161,6 @@ export interface PostApprovalRouteContext extends PostApprovalTemplateContext {
  *
  *   - `mode: 'no-route'`        — no `postApproval` declared; task transitioned
  *                                 directly `approved → done`.
- *   - `mode: 'inline'`          — `targetAgent === 'task-agent'`; instructions
- *                                 were injected into the Task Agent session.
  *   - `mode: 'spawn'`           — a node-agent sub-session was spawned; its
  *                                 ID was stamped on the task.
  *   - `mode: 'already-routed'`  — idempotency guard: a prior spawn's session
@@ -203,12 +171,6 @@ export interface PostApprovalRouteContext extends PostApprovalTemplateContext {
  */
 export type PostApprovalRouteResult =
 	| { mode: 'no-route'; taskStatus: 'done' }
-	| {
-			mode: 'inline';
-			taskAgentSessionId?: string;
-			missingKeys: string[];
-			escalationReason: RuntimeEscalationReason;
-	  }
 	| {
 			mode: 'spawn';
 			postApprovalSessionId: string;
@@ -231,20 +193,6 @@ const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
 export function appendPostApprovalCompletionInstructions(interpolatedInstructions: string): string {
 	const trimmed = interpolatedInstructions.trim();
 	return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`;
-}
-
-/**
- * Build the `[POST_APPROVAL_INSTRUCTIONS]` follow-up event. Only sent when
- * `targetAgent === 'task-agent'`. See §2.3.
- */
-export function buildPostApprovalInstructionsEvent(args: {
-	task: SpaceTask;
-	interpolatedInstructions: string;
-}): string {
-	return (
-		`[POST_APPROVAL_INSTRUCTIONS] Task ${args.task.id} post-approval work begins now.\n\n` +
-		appendPostApprovalCompletionInstructions(args.interpolatedInstructions)
-	);
 }
 
 // ---------------------------------------------------------------------------
@@ -305,46 +253,17 @@ export class PostApprovalRouter {
 
 		const { targetAgent, instructions } = route;
 
-		// -------------------------------------------------------------------
-		// 2. Inline route — deliver instructions to the Task Agent.
-		// -------------------------------------------------------------------
+		// Legacy task-agent target: the built-in task-agent session was removed.
+		// Persisted workflows may still reference targetAgent: "task-agent";
+		// skip gracefully rather than attempting a spawn that will fail.
 		if (targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) {
-			const { text, missingKeys } = interpolatePostApprovalTemplate(instructions ?? '', context);
-			if (!text.trim()) {
-				const reason = `task ${task.id}: inline post-approval has empty instructions template`;
-				log.warn(`PostApprovalRouter.route: ${reason}`);
-				return { mode: 'skipped', reason };
-			}
-			const body = buildPostApprovalInstructionsEvent({
-				task,
-				interpolatedInstructions: text,
-			});
-			const { injected, sessionId } = await this.deps.taskAgent.injectIntoTaskAgent(task.id, body);
-			if (!injected) {
-				log.warn(
-					`PostApprovalRouter.route: no Task Agent session for task ${task.id} — [POST_APPROVAL_INSTRUCTIONS] not delivered`
-				);
-			}
-			if (missingKeys.length > 0) {
-				log.warn(
-					`PostApprovalRouter.route: task ${task.id} instructions referenced unknown keys: ${missingKeys.join(', ')}`
-				);
-			}
-			log.info(
-				`post-approval.route: spaceId=${task.spaceId} taskId=${task.id} targetAgent=${targetAgent} mode=inline escalationReason=${RUNTIME_ESCALATION_REASONS.HUMAN_APPROVAL} autonomyLevel=${context.autonomyLevel ?? 'unknown'}`
-			);
-			return {
-				mode: 'inline',
-				taskAgentSessionId: sessionId,
-				missingKeys,
-				escalationReason: RUNTIME_ESCALATION_REASONS.HUMAN_APPROVAL,
-			};
+			const reason = `task ${task.id}: legacy task-agent post-approval target is no longer supported; skipping`;
+			log.warn(`PostApprovalRouter.route: ${reason}`);
+			return { mode: 'skipped', reason };
 		}
-
 		// -------------------------------------------------------------------
-		// 3. Node-agent spawn route.
+		// 2. Node-agent spawn route.
 		// -------------------------------------------------------------------
-
 		// Double-fire guard (§3.4): skip when an existing session is alive.
 		if (task.postApprovalSessionId) {
 			const alive = this.deps.livenessProbe

@@ -434,7 +434,7 @@ describe('SpaceWorkflowManager', () => {
 				name: 'WF',
 				nodes: [{ id: 'node-1', name: 'Coding', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
 				completionAutonomyLevel: 3,
-				postApproval: { targetAgent: 'task-agent', instructions: 'hi' },
+				postApproval: { targetAgent: 'coder', instructions: 'hi' },
 			});
 			expect(created.postApproval).toBeDefined();
 

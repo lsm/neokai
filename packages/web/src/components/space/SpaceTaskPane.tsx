@@ -142,9 +142,6 @@ function TaskMetaBadge({
 
 function formatTaskThreadError(err: unknown): string {
 	const message = err instanceof Error ? err.message : String(err);
-	if (message.includes('No handler for method: space.task.ensureAgentSession')) {
-		return 'Task thread startup is unavailable on this daemon. Restart the app server to load the latest RPC handlers.';
-	}
 	if (message.includes('Task Agent session not started')) {
 		return 'Task thread is still starting. Try sending again in a moment.';
 	}
@@ -171,7 +168,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		? (spaceStore.taskActivity.value.get(taskId) ?? [])
 		: [];
 
-	const [threadSessionId, setThreadSessionId] = useState<string | null>(null);
 	const [ensuringThread, setEnsuringThread] = useState(false);
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
@@ -231,14 +227,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		};
 	}, [taskId]);
 
-	useEffect(() => {
-		if (!task) {
-			setThreadSessionId(null);
-			return;
-		}
-		setThreadSessionId(task.taskAgentSessionId ?? null);
-	}, [task?.id, task?.taskAgentSessionId]);
-
 	// Resolve runId/workflowId here (before the early returns) so the gate-status
 	// hook is always called — React's Rules of Hooks require a stable call order.
 	const _runId = task?.workflowRunId ?? null;
@@ -266,7 +254,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const runtimeSpaceId = spaceId ?? task.spaceId;
 	const navigationSpaceId = spaceId ?? currentSpaceIdSignal.value ?? task.spaceId;
-	const agentSessionId = task.taskAgentSessionId ?? threadSessionId;
+	// Resolve the primary agent session from activity members (node-agent sessions).
+	// Previously derived from threadSessionId (task-agent session), which no longer exists.
+	const agentSessionId =
+		activityMembers.find((m) => m.kind === 'node_agent' && m.sessionId)?.sessionId ?? null;
 
 	// Resolve workflowId from the active run for canvas mode
 	const workflowRun = task.workflowRunId
@@ -301,7 +292,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const workflow = fullWorkflow;
 	const spaceAgents = spaceStore.agents.value;
 	const nodeExecutions = spaceStore.nodeExecutions.value;
-	const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent') ?? null;
 	const composerTargets: TaskComposerTarget[] = useMemo(() => {
 		const nodeTargets =
 			workflow?.nodes.flatMap((node) =>
@@ -336,15 +326,30 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				})
 			) ?? [];
 
-		const taskAgentTarget: TaskComposerTarget = {
-			id: 'task-agent',
-			kind: 'task_agent',
-			label: 'Task Agent',
-			state: taskAgentMember ? ACTIVITY_STATE_LABELS[taskAgentMember.state] : undefined,
-		};
+		// Fallback: when the workflow definition is unavailable (async fetch race,
+		// deleted/renamed workflow, stale run metadata), derive targets from live
+		// activity members so the composer still works against running agents.
+		const fallbackTargets: TaskComposerTarget[] = [];
+		if (nodeTargets.length === 0 && activityMembers.length > 0) {
+			const seen = new Set<string>();
+			for (const m of activityMembers) {
+				if (m.kind !== 'node_agent' || !m.role) continue;
+				const name = normalizeTargetName(m.role);
+				if (seen.has(name)) continue;
+				seen.add(name);
+				fallbackTargets.push({
+					id: `activity:${m.sessionId ?? m.role}`,
+					kind: 'node_agent',
+					label: m.label,
+					agentName: m.role,
+					nodeExecutionId: m.nodeExecution?.nodeExecutionId,
+					state: ACTIVITY_STATE_LABELS[m.state],
+				});
+			}
+		}
 
-		return nodeTargets.length > 0 ? [...nodeTargets, taskAgentTarget] : [taskAgentTarget];
-	}, [workflow, activityMembers, task.workflowRunId, taskAgentMember, nodeExecutions, spaceAgents]);
+		return [...nodeTargets, ...fallbackTargets];
+	}, [workflow, activityMembers, task.workflowRunId, nodeExecutions, spaceAgents]);
 
 	// Extract per-agent default models from the workflow definition so the
 	// composer can show the workflow-defined model as the default for agents
@@ -431,7 +436,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		return () => resizeObserver.disconnect();
 	}, [showInlineComposer, taskComposerElement, threadSendError]);
 
-	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
+	const canSendThreadMessage =
+		!isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
 	const canShowArtifactsTab = !!task.workflowRunId;
 	const activitySummary = STATUS_LABELS[task.status];
@@ -562,13 +568,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			return;
 		}
 
-		// Fall back to the task agent session (coordinator/leader)
-		const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent');
-		if (taskAgentMember) {
-			pushOverlayHistory(taskAgentMember.sessionId, taskAgentMember.label);
-			return;
-		}
-
 		// Last resort: use the task’s own agentSessionId
 		if (agentSessionId) {
 			pushOverlayHistory(agentSessionId, agentActionLabel);
@@ -582,28 +581,25 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	): Promise<boolean> => {
 		if (!nextMessage) return false;
 		if (!runtimeSpaceId || !task) return false;
+		// Require an explicit node_agent target — messages without one are rejected
+		// by the daemon ("Target agent is required"). Guard here to avoid a round-trip.
+		if (target?.kind !== 'node_agent' || !target.agentName) {
+			setThreadSendError('Select a target agent before sending.');
+			return false;
+		}
 
 		try {
 			setSendingThread(true);
 			setThreadSendError(null);
 
-			if (target?.kind !== 'node_agent' && !agentSessionId) {
-				setEnsuringThread(true);
-				const ensured = await spaceStore.ensureTaskAgentSession(task.id);
-				setThreadSessionId(ensured.taskAgentSessionId ?? null);
-				setEnsuringThread(false);
-			}
-
 			const result = await spaceStore.sendTaskMessage(
 				task.id,
 				nextMessage,
-				target?.kind === 'node_agent' && target.agentName
-					? {
-							kind: 'node_agent',
-							agentName: target.agentName,
-							...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
-						}
-					: { kind: 'task_agent' },
+				{
+					kind: 'node_agent',
+					agentName: target.agentName,
+					...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
+				},
 				images
 			);
 
@@ -1058,11 +1054,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 						{showInlineComposer && (
 							<TaskSessionChatComposer
-								sessionId={agentSessionId ?? ''}
 								mentionCandidates={mentionCandidates}
 								targets={composerTargets}
 								selectedTargetId={selectedTarget?.id ?? null}
-								hasTaskAgentSession={!!agentSessionId}
 								canSend={canSendThreadMessage}
 								isSending={sendingThread}
 								autoScroll={autoScrollEnabled}

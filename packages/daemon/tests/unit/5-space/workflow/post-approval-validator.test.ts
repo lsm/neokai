@@ -1,8 +1,7 @@
 /**
  * Unit tests for `post-approval-validator.ts`.
  *
- * PR 1/5 of the task-agent-as-post-approval-executor refactor. See
- * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
+ * See `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
  * §1.5, §4.6.
  */
 
@@ -26,7 +25,7 @@ const CODING_NODES: WorkflowNode[] = [
 ];
 
 describe('collectEligiblePostApprovalTargets', () => {
-	test('always lists the Task Agent first', () => {
+	test('returns empty array when no nodes provided', () => {
 		expect(collectEligiblePostApprovalTargets([])).toEqual([POST_APPROVAL_TASK_AGENT_TARGET]);
 	});
 
@@ -51,16 +50,6 @@ describe('validatePostApproval', () => {
 		expect(validatePostApproval({ nodes: CODING_NODES })).toEqual({ ok: true });
 	});
 
-	test('targetAgent === "task-agent" is valid', () => {
-		const route: PostApprovalRoute = {
-			targetAgent: 'task-agent',
-			instructions: 'merge {{pr_url}}',
-		};
-		expect(validatePostApproval({ postApproval: route, nodes: CODING_NODES })).toEqual({
-			ok: true,
-		});
-	});
-
 	test('declared node-agent name is valid', () => {
 		const route: PostApprovalRoute = {
 			targetAgent: 'reviewer',
@@ -69,6 +58,16 @@ describe('validatePostApproval', () => {
 		expect(validatePostApproval({ postApproval: route, nodes: CODING_NODES })).toEqual({
 			ok: true,
 		});
+	});
+
+	test('"task-agent" is valid for backward compatibility', () => {
+		const route: PostApprovalRoute = {
+			targetAgent: 'task-agent',
+			instructions: 'merge {{pr_url}}',
+		};
+		const result = validatePostApproval({ postApproval: route, nodes: CODING_NODES });
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
 	});
 
 	test('unknown target is invalid; error lists every eligible target', () => {
