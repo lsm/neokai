@@ -177,12 +177,16 @@ const PROVIDER_FROM_FAMILY: Record<string, string> = {
  *
  * Rules mirror the daemon's `inferProviderForModel` (registry.ts) so the
  * frontend fallback never disagrees with backend routing:
- *   - colon-tagged IDs are Ollama (or Ollama Cloud when `:cloud` suffix or
- *     `:NNNb` size > 99B), even for `kimi-*`/`moonshot-*`/`gpt-oss:*`
- *     prefixes that otherwise map to other providers
  *   - canonical `claude-*` always stays anthropic, including slash-suffixed
  *     variants like `claude-sonnet-4.6/preview`
- *   - `openai/gpt-*` and other `provider/model` refs route to openrouter
+ *   - Ollama Cloud claims any `:cloud` suffix (catches `openrouter`-style
+ *     refs too, e.g. `foo:cloud`) — mirrors daemon precedence
+ *   - `qwen*:NNNb` (large size) → ollama-cloud, other `qwen*:` → ollama
+ *   - `gpt-oss:NNNb` → ollama-cloud, other `gpt-oss:` → ollama or ollama-cloud
+ *     depending on `-cloud` suffix
+ *   - slash refs (`openai/gpt-5.4`, `google/gemma-4-31b:free`) → openrouter
+ *   - colon-tagged variants of `kimi-*`/`moonshot-*` (e.g. `kimi-k2:latest`)
+ *     fall through to ollama; bare prefixes (`kimi-k2`) → kimi
  */
 export function inferProviderFromModelId(modelId: string): string | undefined {
 	const id = modelId.toLowerCase();
@@ -190,22 +194,28 @@ export function inferProviderFromModelId(modelId: string): string | undefined {
 	// Anthropic claims canonical claude-* IDs — including slash-suffixed variants
 	if (id.startsWith('claude-')) return 'anthropic';
 
-	// Colon-tagged IDs are Ollama-family. Decide cloud vs local first so
-	// `gpt-oss:120b-cloud`, `qwen3:480b`, etc. route correctly.
-	if (id.includes(':')) {
-		if (id === 'ollama-cloud' || id.endsWith(':cloud')) return 'ollama-cloud';
-		if (/^[\w.-]+:[1-9]\d{2,}b$/i.test(id)) return 'ollama-cloud';
-		if (id.startsWith('gpt-oss:')) return id.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
-		return 'ollama';
-	}
+	// Ollama-Cloud explicit suffix wins even on slash refs (mirrors backend order)
+	if (id === 'ollama-cloud' || id.endsWith(':cloud')) return 'ollama-cloud';
+
+	// Specific Ollama families with colon-size routing
+	if (/^qwen[\w.-]*:[1-9]\d{2,}b$/i.test(id)) return 'ollama-cloud';
+	if (/^qwen[\w.-]*:/i.test(id)) return 'ollama';
+	if (/^gpt-oss:[1-9]\d{2,}b$/i.test(id)) return 'ollama-cloud';
+	if (id.startsWith('gpt-oss:')) return id.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
+
+	// Slash refs (e.g. `openai/gpt-5.4`, `google/gemma-4-31b:free`) go to OpenRouter.
+	// Must precede the generic colon→ollama fallback so OpenRouter IDs that
+	// happen to carry tier suffixes like `:free` are not misrouted to Ollama.
+	if (id === 'openrouter/auto' || id.includes('/')) return 'openrouter';
+
+	// Remaining colon-tagged IDs are local Ollama tags (e.g. `kimi-k2:latest`,
+	// `moonshot-v1:latest`). The colon-exclusion mirrors daemon kimi routing.
+	if (id.includes(':')) return 'ollama';
 
 	if (id.startsWith('glm-') || id === 'glm') return 'glm';
 	if (id.startsWith('moonshot-') || id.startsWith('kimi-') || id === 'kimi') return 'kimi';
-	if (id.startsWith('minimax-')) return 'minimax';
+	if (id.startsWith('minimax-') || id === 'minimax') return 'minimax';
 	if (id === 'ollama') return 'ollama';
-	if (id === 'openrouter/auto') return 'openrouter';
-	// Any other `provider/model` slash ref (e.g. `openai/gpt-5.4`) is OpenRouter
-	if (id.includes('/')) return 'openrouter';
 	if (id.startsWith('gpt-')) return 'anthropic-codex';
 	return undefined;
 }

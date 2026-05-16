@@ -1144,6 +1144,19 @@ describe('mapRawModelsToModelInfos', () => {
 		expect(result[0].provider).toBe('anthropic');
 	});
 
+	// Regression: OpenRouter IDs with tier suffixes carry both '/' and ':'
+	// (e.g. `google/gemma-4-31b:free`). Slash-routing must precede the
+	// generic colon→ollama fallback so these stay under OpenRouter.
+	it('routes slash refs with colon tier suffix to openrouter, not ollama', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'google/gemma-4-31b:free', display_name: 'Gemma 4 31B', description: '' },
+			{ id: 'meta-llama/llama-3.1-70b:free', display_name: 'Llama 3.1 70B', description: '' },
+		]);
+		const byId = Object.fromEntries(result.map((m) => [m.id, m.provider]));
+		expect(byId['google/gemma-4-31b:free']).toBe('openrouter');
+		expect(byId['meta-llama/llama-3.1-70b:free']).toBe('openrouter');
+	});
+
 	it('preserves GPT-5.5 context window metadata from models.list', () => {
 		const result = mapRawModelsToModelInfos([
 			{
