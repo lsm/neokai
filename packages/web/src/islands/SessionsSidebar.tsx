@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { Session, WorkspaceHistoryEntry, WorktreeCommitStatus } from '@neokai/shared';
 import { navigateToSession, navigateToSessions } from '../lib/router.ts';
-import { sessions, hasArchivedSessions, globalSettings } from '../lib/state.ts';
+import { sessions } from '../lib/state.ts';
 import {
-	updateGlobalSettings,
 	getWorkspaceHistory,
 	addWorkspaceToHistory,
 	removeWorkspaceFromHistory,
@@ -107,7 +106,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 
 	// Only show user-created sessions (not internal orchestration agents).
 	const sessionsList = sessions.value.filter(isUserSession);
-	const showArchived = globalSettings.value?.showArchived ?? false;
 	const { projects, ungrouped } = buildView(sessionsList, history);
 	const hasContent = sessionsList.length > 0 || projects.length > 0;
 
@@ -124,14 +122,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 			setCollapsedProjects(next);
 			return next;
 		});
-	};
-
-	const handleToggleShowArchived = async () => {
-		try {
-			await updateGlobalSettings({ showArchived: !showArchived });
-		} catch {
-			toast.error('Failed to toggle archived sessions visibility');
-		}
 	};
 
 	const handleAddProject = async () => {
@@ -309,32 +299,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 					</>
 				)}
 			</div>
-
-			{/* Archived sessions toggle — only when archived sessions exist */}
-			{hasArchivedSessions.value && (
-				<div class="p-2">
-					<button
-						type="button"
-						onClick={handleToggleShowArchived}
-						class="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-300 hover:bg-white/5 rounded-lg transition-colors"
-					>
-						<svg
-							class={`w-3 h-3 transition-transform ${showArchived ? 'rotate-90' : ''}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M9 5l7 7-7 7"
-							/>
-						</svg>
-						<span>{showArchived ? 'Hide archived' : 'Show archived'}</span>
-					</button>
-				</div>
-			)}
 
 			{archiveConfirm && (
 				<ArchiveConfirmDialog
