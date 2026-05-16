@@ -13,6 +13,8 @@ interface SessionProjectGroupProps {
 	/** Toggle the collapsed state. */
 	onToggle: () => void;
 	onSessionClick: (sessionId: string) => void;
+	/** Archive a session in this project. */
+	onArchive: (sessionId: string) => void | Promise<void>;
 	/** When provided, shows a remove affordance (only passed for empty projects). */
 	onRemove?: () => void;
 }
@@ -29,6 +31,7 @@ export function SessionProjectGroup({
 	collapsed,
 	onToggle,
 	onSessionClick,
+	onArchive,
 	onRemove,
 }: SessionProjectGroupProps) {
 	const isEmpty = sessions.length === 0;
@@ -100,7 +103,12 @@ export function SessionProjectGroup({
 						<div class="px-2.5 py-1.5 text-xs text-gray-600">No chats</div>
 					) : (
 						sessions.map((session) => (
-							<SessionListItem key={session.id} session={session} onSessionClick={onSessionClick} />
+							<SessionListItem
+								key={session.id}
+								session={session}
+								onSessionClick={onSessionClick}
+								onArchive={onArchive}
+							/>
 						))
 					)}
 				</div>

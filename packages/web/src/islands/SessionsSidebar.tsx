@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Session, WorkspaceHistoryEntry } from '@neokai/shared';
+import type { Session, WorkspaceHistoryEntry, WorktreeCommitStatus } from '@neokai/shared';
 import { navigateToSession, navigateToSessions } from '../lib/router.ts';
 import { sessions, hasArchivedSessions, globalSettings } from '../lib/state.ts';
 import {
@@ -7,6 +7,7 @@ import {
 	getWorkspaceHistory,
 	addWorkspaceToHistory,
 	removeWorkspaceFromHistory,
+	archiveSession,
 } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
@@ -15,6 +16,7 @@ import { getCollapsedProjects, setCollapsedProjects } from '../lib/sidebar-prefs
 import { projectRootOf, projectName } from '../lib/projects.ts';
 import SessionListItem from '../components/SessionListItem.tsx';
 import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
+import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 
 interface SessionsSidebarProps {
 	/** Called when a session is selected (for mobile drawer close). */
@@ -87,6 +89,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 	const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
 	// Project paths that are collapsed; empty means every project is expanded.
 	const [collapsed, setCollapsed] = useState<Set<string>>(() => getCollapsedProjects());
+	// Session pending archive-with-commit-loss confirmation.
+	const [archiveConfirm, setArchiveConfirm] = useState<{
+		sessionId: string;
+		commitStatus: WorktreeCommitStatus;
+	} | null>(null);
+	const [archiveBusy, setArchiveBusy] = useState(false);
 
 	// Load workspace history once so explicitly-added (empty) projects show.
 	useEffect(() => {
@@ -148,6 +156,38 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 			setHistory((prev) => prev.filter((e) => e.path !== path));
 		} catch {
 			toast.error('Failed to remove project');
+		}
+	};
+
+	// Archive a session. Worktree sessions with unmerged commits get a confirm
+	// dialog listing what would be lost; everything else archives immediately.
+	// The session list refreshes reactively from the session-state channel.
+	const handleArchive = async (sessionId: string) => {
+		try {
+			const result = await archiveSession(sessionId, false);
+			if (result.requiresConfirmation && result.commitStatus) {
+				setArchiveConfirm({ sessionId, commitStatus: result.commitStatus });
+			} else if (result.success) {
+				toast.success('Chat archived');
+			}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to archive chat');
+		}
+	};
+
+	const handleConfirmArchive = async () => {
+		if (!archiveConfirm) return;
+		setArchiveBusy(true);
+		try {
+			const result = await archiveSession(archiveConfirm.sessionId, true);
+			if (result.success) {
+				toast.success('Chat archived');
+				setArchiveConfirm(null);
+			}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to archive chat');
+		} finally {
+			setArchiveBusy(false);
 		}
 	};
 
@@ -239,6 +279,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 										collapsed={collapsed.has(project.path)}
 										onToggle={() => toggleProject(project.path)}
 										onSessionClick={handleSessionClick}
+										onArchive={handleArchive}
 										onRemove={
 											project.sessions.length === 0
 												? () => handleRemoveProject(project.path)
@@ -259,6 +300,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 											key={session.id}
 											session={session}
 											onSessionClick={handleSessionClick}
+											onArchive={handleArchive}
 										/>
 									))}
 								</div>
@@ -292,6 +334,15 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 						<span>{showArchived ? 'Hide archived' : 'Show archived'}</span>
 					</button>
 				</div>
+			)}
+
+			{archiveConfirm && (
+				<ArchiveConfirmDialog
+					commitStatus={archiveConfirm.commitStatus}
+					archiving={archiveBusy}
+					onConfirm={handleConfirmArchive}
+					onCancel={() => setArchiveConfirm(null)}
+				/>
 			)}
 		</div>
 	);
