@@ -233,6 +233,8 @@ type DeliveryRecord = {
 	state: DeliveryState;
 	attemptCount: number;
 	maxAttempts: number;
+	/** Enqueue timestamp; used for deterministic FIFO drain order across restarts/migration. */
+	createdAt: number;
 	expiresAt?: number;
 	lastError?: string;
 	deliveredSessionId?: string;
@@ -241,6 +243,24 @@ type DeliveryRecord = {
 ```
 
 `pending_agent_messages` migration:
+
+**MessageRecord mapping** — each legacy row maps to one `MessageRecord`:
+
+- `messageId`: generate deterministic ID from legacy row ID (e.g. `msg_legacy_<id>`).
+- `spaceId`: copy from legacy row's workflow/task Space context.
+- `senderActorId`: derive from `sourceAgentName` as worker actor — format
+  `@worker:<run>/<node>/<sourceAgentName>` if `targetKind = 'node_agent'`, or Coordinator for
+  `targetKind = 'space_agent'` sources.
+- `targets`: `[targetAgentName]` (or `['@coordinator']` for `space_agent` rows).
+- `body`: copy from legacy `message` field.
+- `kind`: `'message'`.
+- `workflowRunId`: copy from legacy row.
+- `taskId`: copy from legacy row if present.
+- `data`: copy from legacy `data` field if present (gate payloads).
+- `idempotencyKey`: copy from legacy row.
+- `createdAt`: copy from legacy row's creation timestamp.
+
+**DeliveryRecord mapping** — each legacy row maps to one or more deliveries:
 
 - legacy `pending` → `queued`
 - legacy `delivered` → `delivered`
@@ -270,7 +290,9 @@ Keep resolver deterministic:
 5. Resolve `@session:<id>` to session actor if session is user-facing/ad-hoc. Inactive sessions can
    create queued delivery if activation/retry policy exists.
 6. Resolve `@worker:<node>` using `workflowRunId` plus current `agentName` context, or only if that
-   node has one routable agent slot.
+   node has one routable agent slot. Inactive workers create queued delivery. Resolution must enforce
+   channel topology permissions before delivery — direct worker addressing does not bypass declared
+   workflow channel policy.
 7. Resolve `@worker:<node>/<agent>` using `workflowRunId` from context. If `workflowRunId` is missing
    (non-workflow caller such as Coordinator or session actor), require explicit run-qualified target
    `@worker:<run>/<node>/<agent>` instead. Inactive workers create queued delivery. Resolution must
@@ -380,7 +402,8 @@ Preserve current post-task-agent behavior:
   contract. No implicit task-only fallback routing; calls without a target node or actor fail fast.
 - `node_id` maps to worker target: if `node_id` is a UUID, look up the workflow node execution by that
   UUID to find `(workflowRunId, nodeId, agentName)`, then format `@worker:<run>/<node>/<agent>`. If
-  `node_id` is a node name string, resolve using workflow topology as in the legacy target table.
+  `node_id` is not a UUID, resolve by agent name using workflow topology as in the legacy target table
+  (matching current `resolveNodeExecution` helper: UUID first, then agentName case-insensitive).
 - Wrapper input accepts an optional `target` field for explicit actor/role/session targets
   (`@coordinator`, `@role:task-manager`, `@session:<id>`). When `target` is set, it takes precedence
   over `node_id` and is mapped directly to generic `send_message.target`.
