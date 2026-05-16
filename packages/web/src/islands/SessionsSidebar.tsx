@@ -1,19 +1,19 @@
-import { useState, useEffect } from 'preact/hooks';
-import { navigateToSession } from '../lib/router.ts';
-import {
-	sessions,
-	hasArchivedSessions,
-	globalSettings,
-	connectionState,
-	authStatus,
-} from '../lib/state.ts';
-import { updateGlobalSettings, createSession } from '../lib/api-helpers.ts';
-import { toast } from '../lib/toast.ts';
-import { isUserSession } from '../lib/session-utils.ts';
-import { ConnectionNotReadyError } from '../lib/errors.ts';
+import type { Session } from '@neokai/shared';
+import { useState } from 'preact/hooks';
 import SessionListItem from '../components/SessionListItem.tsx';
-
-const SESSIONS_PER_PAGE = 20;
+import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
+import { createSession, updateGlobalSettings } from '../lib/api-helpers.ts';
+import { ConnectionNotReadyError } from '../lib/errors.ts';
+import { navigateToSession } from '../lib/router.ts';
+import { isUserSession } from '../lib/session-utils.ts';
+import {
+	authStatus,
+	connectionState,
+	globalSettings,
+	hasArchivedSessions,
+	sessions,
+} from '../lib/state.ts';
+import { toast } from '../lib/toast.ts';
 
 interface SessionsSidebarProps {
 	/** Called when a session is selected (for mobile drawer close). */
@@ -22,37 +22,91 @@ interface SessionsSidebarProps {
 	onClose?: () => void;
 }
 
+/** The project root a session belongs to: the main repo for worktree sessions. */
+function projectRootOf(session: Session): string | null {
+	return session.worktree?.mainRepoPath ?? session.workspacePath ?? null;
+}
+
+/** Folder basename of an absolute path, used as the project display name. */
+function basename(path: string): string {
+	const trimmed = path.replace(/\/+$/, '');
+	const idx = trimmed.lastIndexOf('/');
+	return (idx >= 0 ? trimmed.slice(idx + 1) : trimmed) || trimmed;
+}
+
+function lastActive(session: Session): number {
+	const time = new Date(session.lastActiveAt).getTime();
+	return Number.isNaN(time) ? 0 : time;
+}
+
+interface ProjectGroup {
+	path: string;
+	name: string;
+	sessions: Session[];
+}
+
+/** Group sessions by project root; sessions without a workspace stay ungrouped. */
+function groupSessions(sessionsList: Session[]): {
+	projects: ProjectGroup[];
+	ungrouped: Session[];
+} {
+	const byRoot = new Map<string, Session[]>();
+	const ungrouped: Session[] = [];
+
+	for (const session of sessionsList) {
+		const root = projectRootOf(session);
+		if (root) {
+			const existing = byRoot.get(root);
+			if (existing) existing.push(session);
+			else byRoot.set(root, [session]);
+		} else {
+			ungrouped.push(session);
+		}
+	}
+
+	const projects: ProjectGroup[] = [...byRoot.entries()]
+		.map(([path, grouped]) => ({
+			path,
+			name: basename(path),
+			sessions: grouped.slice().sort((a, b) => lastActive(b) - lastActive(a)),
+		}))
+		.sort((a, b) => lastActive(b.sessions[0]) - lastActive(a.sessions[0]));
+
+	ungrouped.sort((a, b) => lastActive(b) - lastActive(a));
+
+	return { projects, ungrouped };
+}
+
 /**
- * Codex-style chats sidebar: a borderless "New chat" row on top, followed by a
- * scrollable flat list of sessions. Projects grouping is layered on in a later step.
+ * Codex-style chats sidebar: a borderless "New chat" row on top, then sessions
+ * grouped into collapsible Projects plus a flat Chats section for sessions that
+ * have no workspace yet.
  */
 export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarProps) {
-	const [visibleCount, setVisibleCount] = useState(SESSIONS_PER_PAGE);
 	const [creating, setCreating] = useState(false);
+	// Project paths that are collapsed; empty means every project is expanded.
+	const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
 
 	// Only show user-created sessions (not internal orchestration agents).
 	const sessionsList = sessions.value.filter(isUserSession);
 	const showArchived = globalSettings.value?.showArchived ?? false;
-
-	const visibleSessions = sessionsList.slice(0, visibleCount);
-	const hasMore = sessionsList.length > visibleCount;
-	const remaining = sessionsList.length - visibleCount;
+	const { projects, ungrouped } = groupSessions(sessionsList);
 
 	const canCreate =
 		connectionState.value === 'connected' && (authStatus.value?.isAuthenticated ?? false);
-
-	// Reset pagination when the archive filter changes.
-	useEffect(() => {
-		setVisibleCount(SESSIONS_PER_PAGE);
-	}, [showArchived]);
 
 	const handleSessionClick = (sessionId: string) => {
 		navigateToSession(sessionId);
 		onSessionSelect?.();
 	};
 
-	const handleLoadMore = () => {
-		setVisibleCount((prev) => prev + SESSIONS_PER_PAGE);
+	const toggleProject = (path: string) => {
+		setCollapsed((prev) => {
+			const next = new Set(prev);
+			if (next.has(path)) next.delete(path);
+			else next.add(path);
+			return next;
+		});
 	};
 
 	const handleToggleShowArchived = async () => {
@@ -129,7 +183,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 				</button>
 			</div>
 
-			{/* Session list */}
+			{/* Grouped session list */}
 			<div class="flex-1 overflow-y-auto px-2 pb-2">
 				{sessionsList.length === 0 ? (
 					<div class="px-2 py-10 text-center">
@@ -137,24 +191,40 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 						<p class="text-xs text-gray-600 mt-1">Start a new chat to begin.</p>
 					</div>
 				) : (
-					<div class="flex flex-col gap-0.5">
-						{visibleSessions.map((session) => (
-							<SessionListItem
-								key={session.id}
-								session={session}
-								onSessionClick={handleSessionClick}
-							/>
-						))}
-						{hasMore && (
-							<button
-								type="button"
-								onClick={handleLoadMore}
-								class="w-full mt-1 px-2.5 py-1.5 text-xs text-left text-gray-500 hover:text-gray-300 hover:bg-dark-850 rounded-lg transition-colors"
-							>
-								Show {remaining} more
-							</button>
+					<>
+						{projects.length > 0 && (
+							<>
+								<div class="px-2.5 pt-2 pb-1 text-xs font-medium text-gray-500">Projects</div>
+								<div class="flex flex-col gap-0.5">
+									{projects.map((project) => (
+										<SessionProjectGroup
+											key={project.path}
+											name={project.name}
+											path={project.path}
+											sessions={project.sessions}
+											collapsed={collapsed.has(project.path)}
+											onToggle={() => toggleProject(project.path)}
+											onSessionClick={handleSessionClick}
+										/>
+									))}
+								</div>
+							</>
 						)}
-					</div>
+						{ungrouped.length > 0 && (
+							<>
+								<div class="px-2.5 pt-3 pb-1 text-xs font-medium text-gray-500">Chats</div>
+								<div class="flex flex-col gap-0.5">
+									{ungrouped.map((session) => (
+										<SessionListItem
+											key={session.id}
+											session={session}
+											onSessionClick={handleSessionClick}
+										/>
+									))}
+								</div>
+							</>
+						)}
+					</>
 				)}
 			</div>
 
