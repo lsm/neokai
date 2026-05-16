@@ -110,12 +110,6 @@ export function isRunningUnderBun(): boolean {
 /** Cached resolved real filesystem path. Empty string = resolution failed (negative cache). */
 let cachedCliPath: string | undefined;
 
-/** Timestamp when negative cache was set. Cleared when TTL expires. */
-let negativeCacheSetAt: number | undefined;
-
-/** Negative cache TTL in ms — after this, resolution retries on next call. */
-const NEGATIVE_CACHE_TTL_MS = 60_000;
-
 /**
  * Get the SDK version from the daemon's package.json.
  * Used to version the cache key and to know which package to download.
@@ -724,7 +718,6 @@ function formatFileSize(bytes: number): string {
  */
 export function _resetForTesting(): void {
 	cachedCliPath = undefined;
-	negativeCacheSetAt = undefined;
 	warmupInProgress = false;
 }
 
@@ -742,17 +735,8 @@ export function _resetForTesting(): void {
  * @returns Real filesystem path to the CLI, or undefined if not found
  */
 export function resolveSDKCliPath(): string | undefined {
-	// Negative cache with TTL — expire after NEGATIVE_CACHE_TTL_MS so transient
-	// failures (network blips) self-heal without daemon restart.
-	if (cachedCliPath === '') {
-		if (negativeCacheSetAt && Date.now() - negativeCacheSetAt > NEGATIVE_CACHE_TTL_MS) {
-			logWarn('[sdk-cli-resolver] Negative cache expired — retrying resolution');
-			cachedCliPath = undefined;
-			negativeCacheSetAt = undefined;
-		} else {
-			return undefined;
-		}
-	}
+	// Empty string = negative cache (resolution previously failed)
+	if (cachedCliPath === '') return undefined;
 	if (cachedCliPath !== undefined) return cachedCliPath;
 
 	// If startup warmup is running, defer resolution — warmup will set cachedCliPath.
@@ -780,9 +764,8 @@ export function resolveSDKCliPath(): string | undefined {
 		return cachedCliPath;
 	}
 
-	// Cache failure to avoid repeated download timeouts (expires after NEGATIVE_CACHE_TTL_MS)
+	// Cache failure to avoid repeated download timeouts
 	cachedCliPath = '';
-	negativeCacheSetAt = Date.now();
 	logWarn('[sdk-cli-resolver] All resolution strategies failed — caching negative result');
 	return undefined;
 }

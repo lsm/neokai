@@ -22,10 +22,10 @@ NeoKai now resolves/downloads the SDK binary at daemon startup via `warmupSDKCli
 
 ### Behavior
 
-- Warmup runs during daemon startup, after config/auth init, before WebSocket server binds.
+- Warmup runs after the HTTP/WS server binds, deferred via `setTimeout` to the next event loop tick.
 - Non-fatal: daemon continues if download fails.
-- `resolveSDKCliPath()` still retries on first query if warmup failed.
-- No negative cache from warmup — query path can still succeed later.
+- `resolveSDKCliPath()` retries on first query if warmup failed.
+- Warmup doesn't set negative cache — query path can still succeed later.
 - Mutex prevents race between warmup and first query.
 
 ### Logging
@@ -47,12 +47,20 @@ Or on first download:
 
 ## Container/Docker Guidance
 
-For containerized deployments, pre-populate the cache to avoid download on every start:
+Mount a persistent volume at `~/.neokai/sdk/` to cache the binary across container restarts:
 
 ```dockerfile
 # In Dockerfile, after npm install -g neokai:
-RUN mkdir -p ~/.neokai/sdk && \
-    neokai --warmup-sdk || true
+# The SDK binary is downloaded on first daemon startup and cached.
+# To avoid download on every container start, mount a volume:
+VOLUME /root/.neokai/sdk
 ```
 
-Or mount a persistent volume at `~/.neokai/sdk/` to cache the binary across container restarts.
+Alternatively, pre-populate the cache in the image by running the daemon once:
+
+```dockerfile
+# Start daemon briefly to trigger SDK binary download, then stop it
+RUN timeout 120 kai --port 9999 || true
+```
+
+The binary will be cached at `~/.neokai/sdk/claude-<version>-<platform>/claude` for subsequent starts.
