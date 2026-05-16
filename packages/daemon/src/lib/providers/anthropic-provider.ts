@@ -23,6 +23,26 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
 const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'sonnet[1m]']);
 
 /**
+ * Detect whether an SDK-reported model value belongs to Anthropic.
+ *
+ * The Claude Agent SDK queries whatever endpoint `ANTHROPIC_BASE_URL` points
+ * at. When that variable is overridden — either by the user (e.g. routing
+ * Anthropic traffic to a compatible provider like GLM) or by a previous
+ * provider session that mutated `process.env` — the SDK may return non-Claude
+ * model IDs (e.g. `glm-5`). Without this guard, those foreign IDs would be
+ * tagged with `provider: 'anthropic'` in `convertSdkModels` and surface in the
+ * UI under the Anthropic group, even though they belong to another provider.
+ *
+ * Accept only:
+ *   - canonical SDK short IDs (`sonnet`, `opus`, `haiku`, `default`, `sonnet[1m]`)
+ *   - full Claude IDs (`claude-*`)
+ */
+function isAnthropicSdkModelId(modelId: string): boolean {
+	if (CANONICAL_SDK_IDS.has(modelId)) return true;
+	return modelId.toLowerCase().startsWith('claude-');
+}
+
+/**
  * Detect if a model ID is a full version-specific ID (e.g., claude-sonnet-4-5-20250929)
  * vs a canonical short ID (e.g., sonnet, opus, haiku)
  */
@@ -213,6 +233,14 @@ export class AnthropicProvider implements Provider {
 	convertSdkModels(
 		sdkModels: Array<{ value: string; displayName: string; description: string }>
 	): ModelInfo[] {
+		// Defensive filter: drop any SDK model IDs that do not belong to Anthropic.
+		// The SDK targets whatever ANTHROPIC_BASE_URL points at, so a stale env
+		// override (e.g. left over from a GLM session) can cause foreign model
+		// IDs to appear here. Tagging them as `provider: 'anthropic'` would make
+		// GLM/other-provider models show up under the Anthropic group in the UI.
+		// See: https://… (root cause for task: "GLM models shown under Anthropic")
+		sdkModels = sdkModels.filter((m) => isAnthropicSdkModelId(m.value));
+
 		// Track which model families we've seen with canonical IDs
 		const canonicalIdsByFamily = new Map<string, string>();
 

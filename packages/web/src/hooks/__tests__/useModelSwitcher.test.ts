@@ -1087,6 +1087,29 @@ describe('mapRawModelsToModelInfos', () => {
 		expect(result[0].provider).toBe('anthropic');
 	});
 
+	// Regression: when the backend omits the provider field on a non-Anthropic
+	// model ID (e.g. due to a stale cache or env-leak that confuses the
+	// AnthropicProvider), the FE must NOT lump it under 'anthropic'. Infer the
+	// provider from the model ID instead.
+	it('infers glm provider when backend omits the provider field for glm-* ids', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'glm-5', display_name: 'GLM-5', description: '' },
+			{ id: 'glm-5-turbo', display_name: 'GLM-5-Turbo', description: '' },
+		]);
+		expect(result[0].provider).toBe('glm');
+		expect(result[1].provider).toBe('glm');
+	});
+
+	it('infers kimi/minimax providers when backend omits the provider field', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'kimi-k2', display_name: 'Kimi', description: '' },
+			{ id: 'minimax-m2', display_name: 'MiniMax', description: '' },
+		]);
+		const byId = Object.fromEntries(result.map((m) => [m.id, m.provider]));
+		expect(byId['kimi-k2']).toBe('kimi');
+		expect(byId['minimax-m2']).toBe('minimax');
+	});
+
 	it('preserves GPT-5.5 context window metadata from models.list', () => {
 		const result = mapRawModelsToModelInfos([
 			{

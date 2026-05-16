@@ -395,7 +395,7 @@ describe('Model Service', () => {
 		it('should get models from query object when available', async () => {
 			const mockQuery = {
 				supportedModels: mock(async () => [
-					{ value: 'test-model', displayName: 'Test Model', description: 'Test Model · Test' },
+					{ value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet · Test' },
 				]),
 			};
 
@@ -403,14 +403,14 @@ describe('Model Service', () => {
 
 			// Should convert to ModelInfo format
 			expect(models.length).toBe(1);
-			expect(models[0].id).toBe('test-model');
+			expect(models[0].id).toBe('sonnet');
 			expect(models[0].provider).toBe('anthropic');
 		});
 
 		it('should cache models from query', async () => {
 			const mockQuery = {
 				supportedModels: mock(async () => [
-					{ value: 'cached', displayName: 'Cached', description: 'Cached · Test' },
+					{ value: 'haiku', displayName: 'Haiku', description: 'Haiku · Test' },
 				]),
 			};
 

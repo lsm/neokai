@@ -125,12 +125,18 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			family = 'openrouter';
 		}
 		const contextWindow = m.contextWindow ?? m.context_window;
+		// Provider precedence: backend-supplied provider wins. If missing, infer
+		// from family/id rather than blanket-defaulting to 'anthropic', which
+		// would lump GLM/Kimi/etc. models under the Anthropic group whenever the
+		// backend (or a buggy intermediate) drops the provider field.
+		const inferredProvider =
+			m.provider || PROVIDER_FROM_FAMILY[family] || inferProviderFromModelId(mid) || 'anthropic';
 		return {
 			id: m.id,
 			name: m.display_name,
 			alias: m.alias || m.id,
 			family,
-			provider: m.provider || 'anthropic',
+			provider: inferredProvider,
 			contextWindow: typeof contextWindow === 'number' && contextWindow > 0 ? contextWindow : 0,
 			description: m.description || '',
 			releaseDate: '',
@@ -148,6 +154,34 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 	});
 
 	return modelInfos;
+}
+
+/** Map model family → owning provider for FE fallback inference. */
+const PROVIDER_FROM_FAMILY: Record<string, string> = {
+	glm: 'glm',
+	kimi: 'kimi',
+	minimax: 'minimax',
+	gpt: 'anthropic-codex',
+	openrouter: 'openrouter',
+};
+
+/**
+ * Infer the owning provider purely from a model ID string.
+ *
+ * Used only as a defensive fallback when the backend payload omits a provider
+ * tag. The backend is the source of truth — this exists so a missing or
+ * stale provider field never makes a non-Anthropic model appear under the
+ * Anthropic group in the picker.
+ */
+export function inferProviderFromModelId(modelId: string): string | undefined {
+	const id = modelId.toLowerCase();
+	if (id.startsWith('glm-') || id === 'glm') return 'glm';
+	if (id.startsWith('moonshot-') || id.startsWith('kimi-') || id === 'kimi') return 'kimi';
+	if (id.startsWith('minimax-')) return 'minimax';
+	if (id === 'openrouter/auto') return 'openrouter';
+	if (id.startsWith('gpt-')) return 'anthropic-codex';
+	if (id.includes('/') && !id.startsWith('claude-')) return 'openrouter';
+	return undefined;
 }
 
 /**
