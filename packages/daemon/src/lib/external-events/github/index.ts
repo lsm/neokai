@@ -1,7 +1,4 @@
-export {
-	GitHubEventExtension,
-	StaticExternalEventExtensionConfigStore,
-} from './github-event-extension';
+export { GitHubEventExtension } from './github-event-extension';
 export {
 	normalizeGitHubWebhook,
 	normalizeGitHubPollingRow,

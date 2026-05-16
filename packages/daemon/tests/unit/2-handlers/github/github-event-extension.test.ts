@@ -7,13 +7,16 @@ import {
 	ExternalEventStore,
 	type ExternalEvent,
 } from '../../../../src/lib/external-events';
+import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
 import {
-	GitHubEventExtension,
-	StaticExternalEventExtensionConfigStore,
 	mapEventType,
 	normalizeGitHubWebhook,
 	toExternalEvent,
-} from '../../../../src/lib/external-events/github';
+} from '../../../../src/lib/external-events/github/github-normalizer';
+import type {
+	ExternalEventExtensionConfigStore,
+	SpaceExternalEventSourceConfig,
+} from '../../../../src/lib/external-events/types';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 
 async function createSignature(payload: string, secret: string): Promise<string> {
@@ -37,6 +40,47 @@ function setupDb(): BunDatabase {
 	createTables(db);
 	runMigrations(db, () => {});
 	return db;
+}
+
+class StaticExternalEventExtensionConfigStore implements ExternalEventExtensionConfigStore {
+	constructor(
+		private readonly options: { globallyEnabled?: boolean; webhooks?: boolean; polling?: boolean }
+	) {}
+
+	async getGlobalConfig(source: string) {
+		return {
+			source,
+			globallyEnabled: this.options.globallyEnabled ?? true,
+			capabilities: {
+				webhooks: this.options.webhooks ?? true,
+				polling: this.options.polling ?? true,
+				rpcConfig: true,
+			},
+			settings: {},
+		};
+	}
+
+	async getSpaceConfig(
+		spaceId: string,
+		source: string
+	): Promise<SpaceExternalEventSourceConfig | null> {
+		return { spaceId, source, enabled: true, settings: {} };
+	}
+
+	async listEnabledSpaces(_source: string): Promise<SpaceExternalEventSourceConfig[]> {
+		return [];
+	}
+
+	async setGlobalConfig(
+		_source: string,
+		_config: Awaited<ReturnType<ExternalEventExtensionConfigStore['getGlobalConfig']>>
+	): Promise<void> {}
+
+	async setSpaceConfig(
+		_spaceId: string,
+		_source: string,
+		_config: SpaceExternalEventSourceConfig
+	): Promise<void> {}
 }
 
 const baseRepo = {
@@ -332,18 +376,16 @@ describe('GitHubEventExtension', () => {
 			pollingEnabled: true,
 		});
 
-		const result = (await clientHub.request('space.github.pollOnce', { spaceId: 'space-1' })) as {
-			count: number;
-		};
-
-		expect(result.count).toBe(0);
+		await expect(
+			clientHub.request('space.github.pollOnce', { spaceId: 'space-1' })
+		).rejects.toThrow('GitHub polling capability is disabled');
 		expect(publishCount).toBe(0);
 		await extension.stop();
 	});
 
 	test('stop waits for an active polling cycle before returning', async () => {
 		const db = setupDb();
-		const extension = new GitHubEventExtension(db, { pollIntervalMs: 1 });
+		const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 1 });
 		let releaseFetch!: () => void;
 		let fetchStarted!: Promise<void>;
 		let resolveFetchStarted!: () => void;

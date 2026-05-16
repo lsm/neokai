@@ -32,7 +32,7 @@ export class ExternalEventExtensionConfigStore
 	async getGlobalConfig(source: string): Promise<ExternalEventExtensionConfig> {
 		validateSourceId(source);
 		const row = this.db
-			.prepare(`SELECT * FROM external_event_source_configs WHERE source = ?`)
+			.prepare(`SELECT * FROM external_event_extension_configs WHERE source = ?`)
 			.get(source) as GlobalConfigRow | undefined;
 
 		if (!row) {
@@ -78,7 +78,7 @@ export class ExternalEventExtensionConfigStore
 		const now = Date.now();
 		this.db
 			.prepare(
-				`INSERT INTO external_event_source_configs (
+				`INSERT INTO external_event_extension_configs (
 					source, globally_enabled, capabilities_json, secrets_ref,
 					settings_json, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -94,7 +94,7 @@ export class ExternalEventExtensionConfigStore
 				config.globallyEnabled ? 1 : 0,
 				JSON.stringify(config.capabilities),
 				config.secretsRef ?? null,
-				config.settings === undefined ? null : JSON.stringify(config.settings),
+				JSON.stringify(config.settings ?? {}),
 				now,
 				now
 			);
@@ -125,7 +125,7 @@ export class ExternalEventExtensionConfigStore
 
 export function ensureExternalEventExtensionConfigTables(db: BunDatabase): void {
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS external_event_source_configs (
+		CREATE TABLE IF NOT EXISTS external_event_extension_configs (
 			source TEXT PRIMARY KEY,
 			globally_enabled INTEGER NOT NULL DEFAULT 0,
 			capabilities_json TEXT NOT NULL,
