@@ -236,7 +236,6 @@ export class MessagePersistence {
 			// Note: `origin` is intentionally NOT included in the live-push event payload.
 			// `origin` is a DB-level annotation only — the SDK message blob never carries it.
 			// The frontend reads `origin` from the DB (via getSDKMessages) after page load or
-			// on full re-fetch. This means "via Neo" indicators may not appear on first render
 			// of an injected message; they appear after the client re-fetches the message list.
 			if (isManualMode) {
 				try {

@@ -53,13 +53,12 @@ export interface CreateSessionParams {
 	lobbyId?: string; // Optional lobby ID to assign session to
 	/** Optional Space ID for space_chat sessions (space:chat:${spaceId}) */
 	spaceId?: string;
-	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
+	createdBy?: 'human'; // Creator type (defaults to 'human')
 	// Session types:
 	// - 'worker': Standard coding session with Claude Code system prompt
 	// - 'lobby': Instance-level agent session
 	// - 'space_chat': Per-space coordinator session (space:chat:${spaceId})
-	// - 'neo': Neo global agent session
-	sessionType?: 'worker' | 'lobby' | 'space_chat' | 'neo';
+	sessionType?: 'worker' | 'lobby' | 'space_chat';
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;
@@ -103,8 +102,8 @@ export class SessionLifecycle {
 
 		// Guard: when no workspace path is available (daemon started without --workspace and
 		// session provides no explicit workspacePath), skip git-support detection and worktree
-		// creation. This protects sessions that intentionally omit workspacePath
-		// (e.g., neo) from causing detectGitSupport(undefined) to crash.
+		// creation. This protects unbound sessions from causing
+		// detectGitSupport(undefined) to crash.
 		let gitSupport: Awaited<ReturnType<typeof this.worktreeManager.detectGitSupport>> | undefined;
 		let isGitRepo = false;
 		if (baseWorkspacePath !== undefined) {
@@ -197,7 +196,7 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
-			// Session type: defaults to 'worker', can be set to 'lobby', 'space_chat', or 'neo'
+			// Session type: defaults to 'worker', can be set to 'lobby' or 'space_chat'
 			type: sessionType,
 			config: {
 				model: modelId, // Use validated model ID
@@ -553,7 +552,7 @@ export class SessionLifecycle {
 	// (which cascades to `sdk_messages`). Every other lifecycle event —
 	// task done, task cancelled, workflow end-node short-circuit, spawn
 	// rollback, duplicate-task reconciliation, `space.stop`, daemon
-	// shutdown/restart, Neo recovery — must preserve all persisted artifacts
+	// shutdown/restart, session recovery — must preserve all persisted artifacts
 	// and only interrupt the in-memory SDK subprocess (see
 	// `SessionManager.interruptInMemorySession` and `TaskAgentManager.cleanup`).
 	//

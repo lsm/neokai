@@ -68,7 +68,7 @@ describe('SDKMessageRepository', () => {
 				sdk_message TEXT NOT NULL,
 				timestamp TEXT NOT NULL,
 				send_status TEXT,
-				origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
+				origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
 				is_renderable INTEGER NOT NULL DEFAULT 1,
 				is_terminal INTEGER NOT NULL DEFAULT 0,
 				parent_tool_use_id TEXT,
@@ -796,16 +796,6 @@ describe('SDKMessageRepository', () => {
 	});
 
 	describe('origin field persistence and retrieval', () => {
-		it('should save and retrieve origin=neo on saveSDKMessage', () => {
-			const message = createAssistantMessage('Neo response');
-
-			repository.saveSDKMessage('session-1', message, 'neo');
-
-			const { messages } = repository.getSDKMessages('session-1');
-			expect(messages.length).toBe(1);
-			expect((messages[0] as { origin?: string }).origin).toBe('neo');
-		});
-
 		it('should save and retrieve origin=system on saveSDKMessage', () => {
 			const message = createAssistantMessage('System message');
 
@@ -826,32 +816,18 @@ describe('SDKMessageRepository', () => {
 			expect((messages[0] as { origin?: string }).origin).toBeUndefined();
 		});
 
-		it('should save and retrieve origin=neo on saveUserMessage', () => {
-			const message = createUserMessage('Neo-injected user message');
-
-			repository.saveUserMessage('session-1', message, 'consumed', 'neo');
-
-			const { messages } = repository.getSDKMessages('session-1');
-			expect(messages.length).toBe(1);
-			expect((messages[0] as { origin?: string }).origin).toBe('neo');
-		});
-
 		it('should persist origin independently for each message', async () => {
 			repository.saveUserMessage('session-1', createUserMessage('Human msg'), 'consumed');
-			await new Promise((r) => setTimeout(r, 5));
-			repository.saveUserMessage('session-1', createUserMessage('Neo msg'), 'consumed', 'neo');
 			await new Promise((r) => setTimeout(r, 5));
 			repository.saveSDKMessage('session-1', createAssistantMessage('System msg'), 'system');
 
 			const { messages } = repository.getSDKMessages('session-1');
-			expect(messages.length).toBe(3);
+			expect(messages.length).toBe(2);
 
 			// Human message — no origin field
 			expect((messages[0] as { origin?: string }).origin).toBeUndefined();
-			// Neo message — origin='neo'
-			expect((messages[1] as { origin?: string }).origin).toBe('neo');
 			// System message — origin='system'
-			expect((messages[2] as { origin?: string }).origin).toBe('system');
+			expect((messages[1] as { origin?: string }).origin).toBe('system');
 		});
 
 		it('should reject invalid origin values at the DB constraint level', () => {

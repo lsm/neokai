@@ -88,14 +88,8 @@ import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers'
 import { setupSpaceMcpHandlers } from './space-mcp-handlers';
 import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
-import { setupNeoHandlers } from './neo-handlers';
-import type { NeoAgentManager } from '../neo/neo-agent-manager';
 import { setupWorkspaceHandlers } from './workspace-handlers';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
-import { NeoActivityLogger } from '../neo/activity-logger';
-import { PendingActionStore } from '../neo/security-tier';
-import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
-import type { NeoActionToolsConfig, NeoWorkflowRun } from '../neo/tools/neo-action-tools';
 import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
 import { SpaceRepository } from '../../storage/repositories/space-repository';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers';
@@ -135,8 +129,6 @@ export interface RPCHandlerDependencies {
 	appMcpManager: AppMcpLifecycleManager;
 	/** Application-level Skills manager */
 	skillsManager: SkillsManager;
-	/** Neo agent manager — singleton global AI assistant */
-	neoAgentManager: NeoAgentManager;
 	/**
 	 * MCP `.mcp.json` import service — scans project + user-level files and
 	 * upserts `source='imported'` rows. Injected here so workspace and
@@ -243,19 +235,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const workspaceHistoryRepo = new WorkspaceHistoryRepository(deps.db.getDatabase());
 	setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo, deps.mcpImportService);
 
-	// Neo global agent RPC handlers
-	// The PendingActionStore is created here (application lifecycle) so it is
-	// shared across confirmAction / cancelAction calls in the same daemon process.
-	const neoPendingActions = new PendingActionStore();
-	setupNeoHandlers(
-		deps.messageHub,
-		deps.neoAgentManager,
-		deps.sessionManager,
-		deps.settingsManager,
-		deps.db,
-		neoPendingActions
-	);
-
 	// Legacy inbox compatibility shim — the web Inbox UI still calls these RPCs.
 	// Room infrastructure is retired; this delegates directly to TaskRepository.
 	setupLegacyInboxCompatHandlers(deps.messageHub, deps.db, deps.reactiveDb);
@@ -311,29 +290,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		},
 	};
 	const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
-
-	// Wire Neo query tools — must happen before neoAgentManager.provision() is called
-	// in app.ts (setupRPCHandlers runs first). The in-process neo-query server is merged
-	// with registry-sourced servers; in-process wins on name collision.
-	const neoToolsConfig: NeoToolsConfig = {
-		goalRepository: deps.db.getGoalRepo(),
-		taskRepository: deps.db.getTaskRepo(),
-		sessionManager: deps.sessionManager,
-		settingsManager: deps.settingsManager,
-		authManager: deps.authManager,
-		mcpServerRepository: deps.db.appMcpServers,
-		skillsManager: deps.skillsManager,
-		workspaceRoot: undefined,
-		appVersion: '0.1.1', // TODO: centralise into a shared VERSION constant (same value in system-handlers.ts and state-manager.ts)
-		startedAt: Date.now(),
-		spaceManager: deps.spaceManager,
-		spaceAgentManager: deps.spaceAgentManager,
-		spaceWorkflowManager,
-		workflowRunRepository: spaceWorkflowRunRepo,
-		spaceTaskRepository: spaceTaskRepo,
-	};
-	deps.neoAgentManager.setToolsConfig(neoToolsConfig, deps.appMcpManager);
-	deps.neoAgentManager.setDbPath(deps.db.getDatabasePath());
 
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
@@ -566,78 +522,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// needed SpaceRuntimeService. Both are now created; inject via setter.
 	spaceRuntimeService.setTaskAgentManager(taskAgentManager);
 	spaceRuntimeService.start();
-
-	// Wire Neo action tools — must happen before neoAgentManager.provision() in app.ts.
-	// spaceRuntimeService.start() must be called first so getSharedRuntime() is available.
-	const neoActionToolsConfig: NeoActionToolsConfig = {
-		pendingStore: neoPendingActions,
-		workspaceRoot: undefined,
-		getSecurityMode: () => deps.neoAgentManager.getSecurityMode(),
-		workflowRunRepo: spaceWorkflowRunRepo,
-		spaceTaskManagerFactory: {
-			getTaskManager: (spaceId: string) => new SpaceTaskManager(deps.db.getDatabase(), spaceId),
-		},
-		gateDataRepo,
-		onGateChanged: async (runId: string, gateId: string) => {
-			await spaceRuntimeService.notifyGateDataChanged(runId, gateId);
-		},
-		onWorkflowRunUpdated: (spaceId: string, runId: string, run: NeoWorkflowRun) => {
-			deps.internalEventBus
-				.publish('space.workflowRun.updated', {
-					sessionId: 'global',
-					spaceId,
-					runId,
-					// NeoWorkflowRun is a subset of SpaceWorkflowRun — cast for hub emission
-					run: run as unknown as Record<string, unknown>,
-				})
-				.catch((err) => {
-					log.warn('Neo: failed to emit space.workflowRun.updated:', err);
-				});
-		},
-		onGateDataUpdated: (
-			spaceId: string,
-			runId: string,
-			gateId: string,
-			data: Record<string, unknown>
-		) => {
-			deps.internalEventBus
-				.publish('space.gateData.updated', {
-					sessionId: 'global',
-					spaceId,
-					runId,
-					gateId,
-					data,
-				})
-				.catch((err) => {
-					log.warn('Neo: failed to emit space.gateData.updated:', err);
-				});
-		},
-		mcpManager: {
-			createMcpServer: (params) => deps.db.appMcpServers.create(params),
-			updateMcpServer: (id, updates) => deps.db.appMcpServers.update(id, updates),
-			deleteMcpServer: (id) => deps.db.appMcpServers.delete(id),
-			getMcpServer: (id) => deps.db.appMcpServers.get(id),
-			getMcpServerByName: (name) => deps.db.appMcpServers.getByName(name),
-		},
-		skillsManager: deps.skillsManager,
-		settingsManager: deps.settingsManager,
-		sessionManager: {
-			injectMessage: (sessionId: string, message: string) =>
-				deps.sessionManager.injectMessage(sessionId, message),
-			getActiveSessionForTask: (taskId: string) => {
-				// Look up the task agent session ID stored on the SpaceTask record.
-				const task = spaceTaskRepo.getTask(taskId);
-				return task?.taskAgentSessionId ?? null;
-			},
-			deleteSessionResources: (sessionId: string, trigger: string) =>
-				deps.sessionManager.deleteSessionResources(sessionId, trigger as 'ui_session_delete'),
-		},
-	};
-	// Wire Neo activity logger — records every tool invocation for the Activity Feed.
-	const neoActivityLogger = new NeoActivityLogger(deps.db.neoActivityLog);
-	neoActionToolsConfig.activityLogger = neoActivityLogger;
-	deps.neoAgentManager.setActionToolsConfig(neoActionToolsConfig);
-	deps.neoAgentManager.setActivityLogger(neoActivityLogger);
 
 	// Human ↔ Task Agent message routing handlers (require taskAgentManager).
 	// `channelCycleRepo` is passed so `space.task.sendMessage` can reset the

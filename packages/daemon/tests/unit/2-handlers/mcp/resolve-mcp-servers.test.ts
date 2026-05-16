@@ -171,21 +171,21 @@ describe('resolveMcpServers', () => {
 		});
 	});
 
-	describe('context-less sessions (neo / adhoc)', () => {
+	describe('context-less sessions', () => {
 		test('falls back entirely to registry defaults when no space/room', () => {
 			const registry = [server('a', true), server('b', false)];
 			const overrides = [
 				override('space', SPACE_ID, 'a', false),
 				override('room', ROOM_ID, 'b', true),
 			];
-			const result = resolveMcpServers({ id: 'neo:global' }, registry, overrides);
+			const result = resolveMcpServers({ id: 'global' }, registry, overrides);
 			expect(result.map((r) => r.id)).toEqual(['a']);
 		});
 
 		test('session override still applies to context-less sessions', () => {
 			const registry = [server('a', false)];
-			const overrides = [override('session', 'neo:global', 'a', true)];
-			const result = resolveMcpServers({ id: 'neo:global' }, registry, overrides);
+			const overrides = [override('session', 'global', 'a', true)];
+			const result = resolveMcpServers({ id: 'global' }, registry, overrides);
 			expect(result.map((r) => r.id)).toEqual(['a']);
 		});
 	});
@@ -201,8 +201,8 @@ describe('resolveMcpServers', () => {
 		});
 
 		test('omits scopes without an id', () => {
-			const chain = scopeChainForSession({ id: 'neo:global' });
-			expect(chain).toEqual([{ scopeType: 'session', scopeId: 'neo:global' }]);
+			const chain = scopeChainForSession({ id: 'global' });
+			expect(chain).toEqual([{ scopeType: 'session', scopeId: 'global' }]);
 		});
 
 		test('keeps session-only and space-only cases distinct', () => {

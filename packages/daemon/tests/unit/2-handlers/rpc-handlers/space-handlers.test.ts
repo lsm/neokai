@@ -348,7 +348,7 @@ describe('space-handlers', () => {
 			expect(params.spaceId).toBe(mockSpace.id);
 			expect(params.title).toBe(mockSpace.name);
 			expect(params.workspacePath).toBe(mockSpace.workspacePath);
-			expect(params.createdBy).toBe('neo');
+			expect(params.createdBy).toBeUndefined();
 		});
 
 		it('does not create a session when sessionManager is omitted', async () => {

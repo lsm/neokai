@@ -33,11 +33,10 @@ describe('scope-config', () => {
 				'app_mcp_servers',
 				'skills',
 				'inbox_items',
-				'neo_activity_log',
 				'job_queue',
 				'short_id_counters',
 			]);
-			expect(names).toHaveLength(9);
+			expect(names).toHaveLength(8);
 		});
 
 		it('room scope returns the correct set of tables', () => {
@@ -141,7 +140,6 @@ describe('scope-config', () => {
 			expect(getBlacklistedColumns('sessions')).toContain('config');
 			expect(getBlacklistedColumns('app_mcp_servers')).toContain('env');
 			expect(getBlacklistedColumns('space_agents')).toContain('system_prompt');
-			expect(getBlacklistedColumns('neo_activity_log')).toContain('undo_data');
 			expect(getBlacklistedColumns('job_queue')).toContain('payload');
 			expect(getBlacklistedColumns('tasks')).toContain('restrictions');
 		});
@@ -557,7 +555,7 @@ describe('scope-config', () => {
 
 	describe('table name uniqueness', () => {
 		it('sessions intentionally appears in both global and space scope', () => {
-			// `sessions` is in global scope (no filter — Neo agent full access) AND
+			// `sessions` is in global scope (no filter) AND
 			// in space scope (filtered by session ID prefix — space agent access).
 			// This is an intentional design: the two scopes apply different filtering.
 			expect(getAccessibleTableNames('global')).toContain('sessions');

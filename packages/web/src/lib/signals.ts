@@ -81,7 +81,6 @@ export type SettingsSection =
 	| 'app-mcp-servers'
 	| 'skills'
 	| 'models'
-	| 'neo'
 	| 'usage'
 	| 'about';
 export const settingsSectionSignal = signal<SettingsSection>('general');

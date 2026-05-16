@@ -1,6 +1,5 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
-import { useNeoKeyboardShortcut } from './hooks/useNeoKeyboardShortcut.ts';
 import { useViewportSafety } from './hooks/useViewportSafety.ts';
 
 import { NavRail } from './islands/NavRail.tsx';
@@ -50,8 +49,6 @@ import {
 } from './lib/router.ts';
 
 export function App() {
-	// Global Cmd+J / Ctrl+J shortcut to toggle the Neo panel
-	useNeoKeyboardShortcut();
 	// Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
 	useViewportSafety();
 
@@ -214,9 +211,6 @@ export function App() {
 
 			{/* Connection Overlay - blocks UI when disconnected */}
 			<ConnectionOverlay />
-
-			{/* Neo AI Assistant Panel — disabled */}
-			{/* <NeoPanel /> */}
 		</>
 	);
 }

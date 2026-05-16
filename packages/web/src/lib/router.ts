@@ -53,7 +53,6 @@ const SETTINGS_SECTIONS = new Set<SettingsSection>([
 	'app-mcp-servers',
 	'skills',
 	'models',
-	'neo',
 	'usage',
 	'about',
 ]);

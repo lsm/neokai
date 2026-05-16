@@ -516,22 +516,6 @@ export interface RoomOverview {
 }
 
 /**
- * Neo status for a single room
- */
-export interface NeoStatus {
-	roomId: string;
-	activeTaskCount: number;
-}
-
-/**
- * Global status of all room instances
- */
-export interface GlobalStatus {
-	rooms: NeoStatus[];
-	totalActiveTasks: number;
-}
-
-/**
  * Legacy per-room override for a skill's enabled state.
  * Preserved only for old `room_skill_overrides` rows.
  *

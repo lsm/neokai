@@ -623,6 +623,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 130: Add gate_open_state table for persisting gate-open cache across daemon restarts.
 	runMigration130(db);
+
+	// Migration 131: Remove global Neo prototype schema surface.
+	runMigration131(db);
 }
 
 /**
@@ -4996,6 +4999,18 @@ function runMigration65(db: BunDatabase): void {
  *   created_at  - ISO 8601 timestamp (default: current UTC time)
  */
 export function runMigration66(db: BunDatabase): void {
+	// Skip the entire migration if Neo support has already been removed by M131
+	// (or the table was created fresh at the M131 tip without 'neo' in the CHECK).
+	// Re-running the legacy probe-and-rebuild here would rebuild `sessions` with a
+	// stale CHECK that rejects post-M66 types like 'space_chat', crashing startup
+	// on any DB created or upgraded under the M131 schema.
+	if (tableExists(db, 'sessions')) {
+		const sessionsSql = tableCreateSql(db, 'sessions');
+		if (sessionsSql && !sessionsSql.includes("'neo'")) {
+			return;
+		}
+	}
+
 	// --- Part 1: Expand sessions.type CHECK constraint to include 'neo' ---
 	if (tableExists(db, 'sessions')) {
 		try {
@@ -5157,7 +5172,6 @@ function runMigration67(db: BunDatabase): void {
  * This is an app-level metadata column alongside the opaque sdk_message blob.
  * It is NOT part of the SDK message format — room/space agents do not see it.
  * NULL (default) is treated as 'human' by the frontend.
- * 'neo' marks messages injected by the Neo global AI agent.
  * 'system' marks messages injected by the daemon system internally.
  */
 /**
@@ -5194,7 +5208,7 @@ export function runMigration68(db: BunDatabase): void {
 	const hasOrigin = columns.some((col) => col.name === 'origin');
 	if (!hasOrigin) {
 		db.exec(
-			`ALTER TABLE sdk_messages ADD COLUMN origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system'))`
+			`ALTER TABLE sdk_messages ADD COLUMN origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system'))`
 		);
 	}
 }
@@ -8220,7 +8234,7 @@ export function runMigration122(db: BunDatabase): void {
 		// `session_context.taskId`. Both the Task Agent and node-agent sub-sessions
 		// stamp this at creation, so a JOIN on `sessions` covers every Space
 		// session that ever produced messages. Sessions without a task context
-		// (worker sessions outside the Space system, lobby/neo, etc.) get NULL —
+		// (worker sessions outside the Space system, lobby, etc.) get NULL —
 		// the column is nullable on purpose.
 		//
 		// Runs whenever rows with `task_id IS NULL` remain for an allowed session
@@ -8918,6 +8932,174 @@ export function runMigration130(db: BunDatabase): void {
 		)
 	`);
 	db.exec(`CREATE INDEX idx_gate_open_state_run ON gate_open_state(run_id)`);
+}
+
+/**
+ * Migration 131: Remove global Neo prototype schema surface.
+ *
+ * Drops the Neo activity log table, converts any legacy `neo` session rows to
+ * archived workers so existing messages remain reachable, and removes `neo`
+ * from persisted CHECK constraints.
+ */
+export function runMigration131(db: BunDatabase): void {
+	if (tableExists(db, 'neo_activity_log')) {
+		db.exec(`DROP TABLE neo_activity_log`);
+	}
+
+	migrateNeoSessions(db);
+	migrateNeoMessageOrigins(db);
+}
+
+function migrateNeoSessions(db: BunDatabase): void {
+	if (!tableExists(db, 'sessions')) return;
+
+	const createSql = tableCreateSql(db, 'sessions');
+	if (createSql && !createSql.includes("'neo'")) return;
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.exec('BEGIN');
+	try {
+		db.exec(`
+			CREATE TABLE sessions_m131_new (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				workspace_path TEXT,
+				created_at TEXT NOT NULL,
+				last_active_at TEXT NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+				config TEXT NOT NULL,
+				metadata TEXT NOT NULL,
+				is_worktree INTEGER DEFAULT 0,
+				worktree_path TEXT,
+				main_repo_path TEXT,
+				worktree_branch TEXT,
+				git_branch TEXT,
+				sdk_session_id TEXT,
+				sdk_origin_path TEXT,
+				available_commands TEXT,
+				processing_state TEXT,
+				archived_at TEXT,
+				parent_id TEXT,
+				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
+				session_context TEXT
+			)
+		`);
+		db.exec(`
+			INSERT INTO sessions_m131_new (
+				id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+				is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch,
+				sdk_session_id, sdk_origin_path, available_commands, processing_state,
+				archived_at, parent_id, type, session_context
+			)
+			SELECT
+				id, title, workspace_path, created_at, last_active_at,
+				CASE WHEN type = 'neo' THEN 'archived' ELSE status END,
+				config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch,
+				git_branch, sdk_session_id, sdk_origin_path, available_commands, processing_state,
+				CASE WHEN type = 'neo' AND archived_at IS NULL THEN datetime('now') ELSE archived_at END,
+				parent_id,
+				CASE WHEN type = 'neo' THEN 'worker' ELSE type END,
+				session_context
+			FROM sessions
+		`);
+		db.exec(`DROP TABLE sessions`);
+		db.exec(`ALTER TABLE sessions_m131_new RENAME TO sessions`);
+		db.exec('COMMIT');
+	} catch (err) {
+		db.exec('ROLLBACK');
+		throw err;
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+function migrateNeoMessageOrigins(db: BunDatabase): void {
+	if (!tableExists(db, 'sdk_messages')) return;
+
+	const createSql = tableCreateSql(db, 'sdk_messages');
+	if (createSql && !createSql.includes("'neo'")) return;
+
+	const columns = tableColumnNames(db, 'sdk_messages');
+	const optionalColumns = ['is_renderable', 'is_terminal', 'parent_tool_use_id', 'task_id'].filter(
+		(column) => columns.includes(column)
+	);
+	const insertColumns = [
+		'id',
+		'session_id',
+		'message_type',
+		'message_subtype',
+		'sdk_message',
+		'timestamp',
+		'send_status',
+		'origin',
+		...optionalColumns,
+	];
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.exec('BEGIN');
+	try {
+		db.exec(`
+			CREATE TABLE sdk_messages_m131_new (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				message_type TEXT NOT NULL,
+				message_subtype TEXT,
+				sdk_message TEXT NOT NULL,
+				timestamp TEXT NOT NULL,
+				send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
+				origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
+				is_renderable INTEGER NOT NULL DEFAULT 1,
+				is_terminal INTEGER NOT NULL DEFAULT 0,
+				parent_tool_use_id TEXT,
+				task_id TEXT,
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`
+			INSERT INTO sdk_messages_m131_new (${insertColumns.join(', ')})
+			SELECT ${insertColumns
+				.map((column) =>
+					column === 'origin' ? "CASE WHEN origin = 'neo' THEN NULL ELSE origin END" : column
+				)
+				.join(', ')}
+			FROM sdk_messages
+		`);
+		db.exec(`DROP TABLE sdk_messages`);
+		db.exec(`ALTER TABLE sdk_messages_m131_new RENAME TO sdk_messages`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session ON sdk_messages(session_id, timestamp)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id ON sdk_messages(session_id, timestamp DESC, id DESC)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id ON sdk_messages(session_id, parent_tool_use_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type ON sdk_messages(message_type, message_subtype)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id, timestamp)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session ON sdk_messages(task_id, session_id)`
+		);
+		db.exec('COMMIT');
+	} catch (err) {
+		db.exec('ROLLBACK');
+		throw err;
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
 }
 
 /**

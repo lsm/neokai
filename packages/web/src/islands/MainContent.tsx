@@ -51,9 +51,6 @@ const UsageAnalytics = lazy(() =>
 const AboutSection = lazy(() =>
 	import('../components/settings/AboutSection.tsx').then((m) => ({ default: m.AboutSection }))
 );
-const NeoSettings = lazy(() =>
-	import('../components/settings/NeoSettings.tsx').then((m) => ({ default: m.NeoSettings }))
-);
 
 /** Shared Suspense fallback for lazy-loaded route components. */
 const lazyFallback = (
@@ -160,7 +157,6 @@ export default function MainContent() {
 							{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
 							{settingsSection === 'skills' && <SkillsRegistry />}
 							{settingsSection === 'models' && <ModelsSettings />}
-							{settingsSection === 'neo' && <NeoSettings />}
 							{settingsSection === 'usage' && <UsageAnalytics />}
 							{settingsSection === 'about' && <AboutSection />}
 						</Suspense>

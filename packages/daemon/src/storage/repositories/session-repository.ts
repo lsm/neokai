@@ -70,7 +70,7 @@ export class SessionRepository {
 	 */
 	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
 		let sql = `SELECT * FROM sessions
-				WHERE type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
 				AND json_extract(session_context, '$.roomId') IS NULL
 				AND json_extract(session_context, '$.spaceId') IS NULL`;
 		const params: string[] = [];

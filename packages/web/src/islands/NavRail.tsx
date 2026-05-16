@@ -11,7 +11,6 @@ import { borderColors } from '../lib/design-tokens.ts';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { inboxStore } from '../lib/inbox-store.ts';
-import { NeoNavButton } from '../components/neo/NeoNavButton.tsx';
 
 export function NavRail() {
 	const navSection = navSectionSignal.value;
@@ -79,10 +78,8 @@ export function NavRail() {
 				})}
 			</nav>
 
-			{/* Bottom - Neo, Daemon Status & Settings */}
+			{/* Bottom - Daemon Status & Settings */}
 			<div class="mt-auto flex flex-col gap-1">
-				<NeoNavButton />
-
 				<DaemonStatusIndicator />
 
 				<NavIconButton

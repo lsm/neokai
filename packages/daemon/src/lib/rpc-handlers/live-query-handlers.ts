@@ -407,65 +407,6 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
 }
 
 /**
- * Neo messages query — SDK messages from the persistent neo:global session.
- * Returns messages ordered oldest-first (ascending timestamp) so the frontend
- * can render a chronological chat history.
- *
- * Pagination: LIMIT / OFFSET params (positional, required).
- */
-const NEO_MESSAGES_SQL = `
-SELECT
-  id,
-  session_id      AS sessionId,
-  message_type    AS messageType,
-  message_subtype AS messageSubtype,
-  sdk_message     AS content,
-  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-  send_status     AS sendStatus,
-  origin
-FROM sdk_messages
-WHERE session_id = 'neo:global'
-ORDER BY timestamp ASC, id ASC
-LIMIT ? OFFSET ?
-`.trim();
-
-/**
- * Neo activity log query — audit log of Neo agent tool invocations.
- * Returns entries ordered newest-first so the activity feed shows recent actions.
- *
- * Pagination: LIMIT / OFFSET params (positional, required).
- * Default limit of 50 entries per page prevents unbounded result sets.
- */
-const NEO_ACTIVITY_SQL = `
-SELECT
-  id,
-  tool_name   AS toolName,
-  input,
-  output,
-  status,
-  error,
-  target_type AS targetType,
-  target_id   AS targetId,
-  undoable,
-  undo_data   AS undoData,
-  created_at  AS createdAt
-FROM neo_activity_log
-ORDER BY created_at DESC, id DESC
-LIMIT ? OFFSET ?
-`.trim();
-
-/**
- * Map a raw neo_activity_log row — converts the SQLite integer `undoable`
- * column (0 / 1) to a JS boolean.
- */
-function mapNeoActivityRow(row: Record<string, unknown>): Record<string, unknown> {
-	return {
-		...row,
-		undoable: row.undoable === 1,
-	};
-}
-
-/**
  * Node executions by workflow run — returns all node execution records
  * for a given workflow run, ordered by creation time ascending.
  *
@@ -1712,16 +1653,16 @@ SELECT
   s.type as type,
   s.session_context as session_context,
   (SELECT COUNT(*) FROM sessions s2
-   WHERE s2.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+   WHERE s2.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
    AND json_extract(s2.session_context, '$.roomId') IS NULL
    AND json_extract(s2.session_context, '$.spaceId') IS NULL) as _totalCount,
   (SELECT COUNT(*) FROM sessions s3
-   WHERE s3.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+   WHERE s3.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
    AND json_extract(s3.session_context, '$.roomId') IS NULL
    AND json_extract(s3.session_context, '$.spaceId') IS NULL
    AND s3.status = 'archived') as _archivedCount
 FROM sessions s
-WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
   AND json_extract(s.session_context, '$.roomId') IS NULL
   AND json_extract(s.session_context, '$.spaceId') IS NULL
   AND (s.status != 'archived' OR ?1 = 1)
@@ -1735,7 +1676,7 @@ ORDER BY s.last_active_at DESC, s.id DESC
  */
 const SESSIONS_TOTAL_COUNT_SQL = `
 SELECT COUNT(*) as cnt FROM sessions s
-WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
   AND json_extract(s.session_context, '$.roomId') IS NULL
   AND json_extract(s.session_context, '$.spaceId') IS NULL
 `.trim();
@@ -1746,7 +1687,7 @@ WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'c
  */
 const SESSIONS_ARCHIVED_COUNT_SQL = `
 SELECT COUNT(*) as cnt FROM sessions s
-WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
   AND json_extract(s.session_context, '$.roomId') IS NULL
   AND json_extract(s.session_context, '$.spaceId') IS NULL
   AND s.status = 'archived'
@@ -1902,7 +1843,7 @@ ORDER BY timestamp ASC, id ASC
  *   - Parse the `sdk_message` JSON blob and spread its fields onto the output.
  *   - Override `origin` with the DB column value — explicit `undefined` is
  *     preserved so any SDK-level `origin?: SDKMessageOrigin` object gets
- *     stripped in favour of NeoKai's `MessageOrigin` string.
+ *     stripped in favour of the app's `MessageOrigin` string.
  *   - Attach `timestamp` (epoch ms, computed SQL-side).
  *   - Attach `sendStatus` only when the DB column equals `'failed'`, so the UI
  *     can render the retry affordance without carrying 'consumed' through the
@@ -2169,27 +2110,6 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			sql: MCP_ENABLEMENT_BY_SPACE_SQL,
 			paramCount: 1,
 			mapRow: mapMcpEnablementBySpaceRow,
-		},
-	],
-	[
-		'neo.messages',
-		{
-			sql: NEO_MESSAGES_SQL,
-			paramCount: 2,
-			buildScopeFilter: () => {
-				return (scope) => {
-					if (!scope.sessionId) return true;
-					return scope.sessionId === 'neo:global';
-				};
-			},
-		},
-	],
-	[
-		'neo.activity',
-		{
-			sql: NEO_ACTIVITY_SQL,
-			paramCount: 2,
-			mapRow: mapNeoActivityRow,
 		},
 	],
 	[

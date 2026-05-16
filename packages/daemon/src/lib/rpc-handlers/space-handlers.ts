@@ -198,7 +198,6 @@ export function setupSpaceHandlers(
 					},
 					sessionType: 'space_chat',
 					spaceId: space.id,
-					createdBy: 'neo',
 				});
 				// Register the session on the space so it appears in space.sessionIds.
 				// Mirrors roomManager.assignSession() in room-handlers.ts.
