@@ -716,6 +716,149 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		});
 	});
 
+	describe('edit task menu item', () => {
+		it('shows edit item in dropdown for in_progress tasks', () => {
+			mockTasks.value = [makeTask({ status: 'in_progress' })];
+			const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			expect(getByText('Edit title, description, or priority')).toBeTruthy();
+		});
+
+		it('shows edit item in dropdown for open tasks', () => {
+			mockTasks.value = [makeTask({ status: 'open' })];
+			const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			expect(getByText('Edit title, description, or priority')).toBeTruthy();
+		});
+
+		it('shows edit item in dropdown for draft tasks', () => {
+			mockTasks.value = [makeTask({ status: 'draft' })];
+			const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			expect(getByText('Edit title, description, or priority')).toBeTruthy();
+		});
+
+		it('shows edit item in dropdown for blocked tasks', () => {
+			mockTasks.value = [makeTask({ status: 'blocked' })];
+			const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			expect(getByText('Edit title, description, or priority')).toBeTruthy();
+		});
+
+		it('shows edit item in dropdown for review tasks', () => {
+			mockTasks.value = [makeTask({ status: 'review', taskAgentSessionId: 'session-abc' })];
+			const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			expect(getByText('Edit title, description, or priority')).toBeTruthy();
+		});
+
+		it('shows edit item in dropdown for approved tasks', () => {
+			mockTasks.value = [makeTask({ status: 'approved', taskAgentSessionId: 'session-abc' })];
+			const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			expect(getByText('Edit title, description, or priority')).toBeTruthy();
+		});
+
+		it('edit item is absent for terminal tasks (done)', () => {
+			mockTasks.value = [makeTask({ status: 'done' })];
+			const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(queryByText('Edit title, description, or priority')).toBeNull();
+		});
+
+		it('edit item is absent for terminal tasks (cancelled)', () => {
+			mockTasks.value = [makeTask({ status: 'cancelled' })];
+			const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(queryByText('Edit title, description, or priority')).toBeNull();
+		});
+
+		it('edit item is absent for terminal tasks (archived)', () => {
+			mockTasks.value = [makeTask({ status: 'archived' })];
+			const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(queryByText('Edit title, description, or priority')).toBeNull();
+		});
+
+		it('opens the edit modal when clicked', () => {
+			mockTasks.value = [makeTask({ status: 'in_progress' })];
+			const { getByTestId, getByText, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			expect(queryByTestId('edit-task-modal-content')).toBeNull();
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			fireEvent.click(getByText('Edit title, description, or priority'));
+			expect(getByTestId('edit-task-modal-content')).toBeTruthy();
+		});
+
+		it('calls spaceStore.updateTask when edit is confirmed', async () => {
+			mockTasks.value = [makeTask({ status: 'in_progress', title: 'Old Title' })];
+			mockUpdateTask.mockResolvedValueOnce(makeTask({ status: 'in_progress', title: 'New Title' }));
+			const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			fireEvent.click(getByText('Edit title, description, or priority'));
+
+			// Change the title
+			fireEvent.input(getByTestId('edit-task-title'), {
+				target: { value: 'New Title' },
+			});
+			fireEvent.click(getByTestId('edit-task-confirm'));
+
+			await waitFor(() => {
+				expect(mockUpdateTask).toHaveBeenCalledWith('task-1', {
+					title: 'New Title',
+				});
+			});
+		});
+
+		it('shows inline error when updateTask fails', async () => {
+			mockTasks.value = [makeTask({ status: 'in_progress', title: 'Old Title' })];
+			mockUpdateTask.mockRejectedValueOnce(new Error('Server error'));
+
+			const { getByTestId, getByText, findByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			fireEvent.click(getByText('Edit title, description, or priority'));
+
+			fireEvent.input(getByTestId('edit-task-title'), {
+				target: { value: 'New Title' },
+			});
+			fireEvent.click(getByTestId('edit-task-confirm'));
+
+			const errEl = await findByTestId('edit-task-error');
+			expect(errEl.textContent).toContain('Server error');
+		});
+
+		it('closes edit modal when task becomes terminal', async () => {
+			mockTasks.value = [makeTask({ status: 'in_progress' })];
+			const { getByTestId, getByText, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			fireEvent.click(getByText('Edit title, description, or priority'));
+			expect(getByTestId('edit-task-modal-content')).toBeTruthy();
+
+			// Simulate task transitioning to done via another client
+			mockTasks.value = [makeTask({ status: 'done' })];
+
+			// Modal should be closed after the effect processes the status change
+			await waitFor(() => {
+				expect(queryByTestId('edit-task-modal-content')).toBeNull();
+			});
+		});
+
+		it('clears edit modal state on task switch', () => {
+			mockTasks.value = [
+				makeTask({ id: 'task-1', status: 'in_progress' }),
+				makeTask({ id: 'task-2', status: 'in_progress', taskNumber: 2 }),
+			];
+			const { getByTestId, getByText, queryByTestId, rerender } = render(
+				<SpaceTaskPane taskId="task-1" />
+			);
+			// Open edit modal for task-1
+			fireEvent.click(getByTestId('task-actions-menu-trigger'));
+			fireEvent.click(getByText('Edit title, description, or priority'));
+			expect(getByTestId('edit-task-modal-content')).toBeTruthy();
+
+			// Switch to task-2
+			rerender(<SpaceTaskPane taskId="task-2" />);
+
+			// Edit modal should be closed
+			expect(queryByTestId('edit-task-modal-content')).toBeNull();
+		});
+	});
 	it('canvas node click matches by role (slot name), not by label — regression for Review node bug', () => {
 		// This test reproduces the bug where clicking a "Review" node opened the Task Agent
 		// session instead of the Reviewer session. The root cause was matching m.label against

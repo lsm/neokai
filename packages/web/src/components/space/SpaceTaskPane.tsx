@@ -8,6 +8,7 @@ import {
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import type { TaskComposerTarget } from '../../hooks';
 import { borderColors } from '../../lib/design-tokens';
 import {
 	navigateToSpaceTask,
@@ -20,6 +21,7 @@ import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { EditTaskModal } from './EditTaskModal';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
@@ -29,7 +31,6 @@ import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
-import { type TaskComposerTarget } from '../../hooks';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 
@@ -153,6 +154,11 @@ function formatTaskThreadError(err: unknown): string {
 	return message || 'Failed to update task thread';
 }
 
+function formatEditTaskError(err: unknown): string {
+	const message = err instanceof Error ? err.message : String(err);
+	return message || 'Failed to update task';
+}
+
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
 	// Lazy-load agents/workflows needed for mention autocomplete and canvas
 	useEffect(() => {
@@ -183,12 +189,17 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const threadPanelRef = useRef<HTMLDivElement>(null);
 	const scrollToBottomRef = useRef<((smooth?: boolean) => void) | null>(null);
 	const draftWasActiveRef = useRef(false);
+	const currentTaskIdRef = useRef<string | null>(taskId);
+	currentTaskIdRef.current = taskId;
 	// Modal-local error feedback. Separate from `threadSendError` because
 	// `threadSendError` is rendered inside `TaskSessionChatComposer`, which is
 	// only mounted when the inline composer is visible. A failed submit-for-
 	// review RPC needs to surface inside the modal regardless of composer
 	// visibility — see `SubmitForReviewModalProps.error`.
 	const [submitForReviewError, setSubmitForReviewError] = useState<string | null>(null);
+	const [showEditTaskModal, setShowEditTaskModal] = useState(false);
+	const [editTaskBusy, setEditTaskBusy] = useState(false);
+	const [editTaskError, setEditTaskError] = useState<string | null>(null);
 	const [fullWorkflow, setFullWorkflow] = useState<import('@neokai/shared').SpaceWorkflow | null>(
 		null
 	);
@@ -205,6 +216,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		setThreadScroller(null);
 		scrollToBottomRef.current = null;
 		draftWasActiveRef.current = false;
+		setShowEditTaskModal(false);
+		setEditTaskBusy(false);
+		setEditTaskError(null);
 	}, [taskId]);
 
 	useEffect(() => {
@@ -355,6 +369,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
+
+	// Close edit modal if the task becomes terminal while the modal is open
+	// (e.g. another client transitions the task to done/cancelled/archived).
+	useEffect(() => {
+		if (isTerminalTask && showEditTaskModal) {
+			setShowEditTaskModal(false);
+		}
+	}, [isTerminalTask]);
 
 	// Per-agent activity. Each member that's currently executing (not idle /
 	// completed / failed / interrupted) contributes its label to the active set.
@@ -658,6 +680,35 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
+	const handleEditTaskConfirm = async (
+		updates: Partial<{
+			title: string;
+			description: string;
+			priority: import('@neokai/shared').SpaceTaskPriority;
+		}>
+	) => {
+		// Capture the current taskId before the async gap. After `await`,
+		// the closure's `task` is stale (captured at render time), so we
+		// read `currentTaskIdRef.current` which is updated on each render.
+		const savedTaskId = task.id;
+		try {
+			setEditTaskBusy(true);
+			setEditTaskError(null);
+			await spaceStore.updateTask(savedTaskId, updates);
+			if (currentTaskIdRef.current === savedTaskId) {
+				setShowEditTaskModal(false);
+			}
+		} catch (err) {
+			if (currentTaskIdRef.current === savedTaskId) {
+				setEditTaskError(formatEditTaskError(err));
+			}
+		} finally {
+			if (currentTaskIdRef.current === savedTaskId) {
+				setEditTaskBusy(false);
+			}
+		}
+	};
+
 	const allTransitionActions = getTransitionActions(task.status);
 	// Mirrors the filter in `TaskStatusActions`: any task in `review` is
 	// "awaiting human approval via a dedicated banner" — the bare review→done /
@@ -694,6 +745,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	}
 
 	const taskActionItems: DropdownMenuItem[] = [];
+	if (!isTerminalTask) {
+		taskActionItems.push({
+			label: 'Edit title, description, or priority',
+			onClick: () => {
+				setEditTaskError(null);
+				setShowEditTaskModal(true);
+			},
+		});
+	}
 	if (activityMembers.length > 0) {
 		taskActionItems.push(
 			...activityMembers.map((member) => ({
@@ -1035,6 +1095,18 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				}}
 				onConfirm={handleSubmitForReviewConfirm}
 				error={submitForReviewError}
+			/>
+			<EditTaskModal
+				isOpen={showEditTaskModal}
+				busy={editTaskBusy}
+				initialTitle={task.title}
+				initialDescription={task.description ?? ''}
+				initialPriority={task.priority}
+				onCancel={() => {
+					if (!editTaskBusy) setShowEditTaskModal(false);
+				}}
+				onConfirm={handleEditTaskConfirm}
+				error={editTaskError}
 			/>
 		</div>
 	);
