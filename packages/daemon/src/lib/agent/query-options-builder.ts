@@ -61,6 +61,10 @@ import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
+function getMcpServerToolWildcards(mcpServers: Options['mcpServers'] | undefined): string[] {
+	return Object.keys(mcpServers ?? {}).flatMap((name) => [`${name}__*`, `mcp__${name}__*`]);
+}
+
 /**
  * Compile a single declarative tool guard into a PreToolUse hook callback.
  * The guard specifies a tool matcher, a regex pattern against the tool input,
@@ -502,9 +506,7 @@ export class QueryOptionsBuilder {
 			queryOptions.tools = spaceAllowedBuiltinTools;
 
 			// Auto-allow all explicitly configured MCP server tools (space-agent-tools + db-query).
-			const mcpServerWildcards = Object.keys(queryOptions.mcpServers ?? {}).map(
-				(name) => `${name}__*`
-			);
+			const mcpServerWildcards = getMcpServerToolWildcards(queryOptions.mcpServers);
 			queryOptions.allowedTools = [
 				...new Set([
 					...(queryOptions.allowedTools ?? []),
@@ -517,6 +519,35 @@ export class QueryOptionsBuilder {
 				...new Set([...(queryOptions.disallowedTools ?? []), ...spaceRestrictedBuiltinTools]),
 			];
 			// strictMcpConfig + settingSources are already set unconditionally above.
+		}
+
+		// Workflow node-agent sessions receive per-session MCP servers after agent init.
+		// If the custom agent also restricts allowedTools, the SDK requires explicit
+		// wildcards for those MCP servers or connects them without exposing tools.
+		if (
+			this.ctx.session.context?.spaceId &&
+			this.ctx.session.id.includes(':task:') &&
+			(this.ctx.session.id.includes(':exec:') || this.ctx.session.id.includes(':agent:'))
+		) {
+			const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {});
+			const mcpServerWildcards = getMcpServerToolWildcards(queryOptions.mcpServers);
+			if (mcpServerWildcards.length > 0) {
+				queryOptions.allowedTools = [
+					...new Set([...(queryOptions.allowedTools ?? []), ...mcpServerWildcards]),
+				];
+				const activeAgentName = queryOptions.agent;
+				const activeAgent = activeAgentName ? queryOptions.agents?.[activeAgentName] : undefined;
+				if (activeAgent) {
+					const { tools: _tools, ...agentWithoutToolFilter } = activeAgent;
+					queryOptions.agents = {
+						...queryOptions.agents,
+						[activeAgentName!]: {
+							...agentWithoutToolFilter,
+							mcpServers: [...new Set([...(activeAgent.mcpServers ?? []), ...mcpServerNames])],
+						},
+					};
+				}
+			}
 		}
 
 		// ============ Coordinator Mode ============
