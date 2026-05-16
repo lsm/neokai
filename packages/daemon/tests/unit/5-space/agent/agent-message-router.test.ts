@@ -100,7 +100,6 @@ interface TestCtx {
 	nodeId: string;
 	coderSessionId: string;
 	reviewerSessionId: string;
-	taskAgentSessionId: string;
 }
 
 /** Seeds a node execution with the given role and session for routing purposes. */
@@ -142,7 +141,6 @@ function makeCtx(): TestCtx {
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 
 	const nodeId = 'node-test-router';
-	const taskAgentSessionId = 'session-task-agent';
 	const coderSessionId = 'session-coder';
 	const reviewerSessionId = 'session-reviewer';
 
@@ -154,7 +152,6 @@ function makeCtx(): TestCtx {
 		nodeId,
 		coderSessionId,
 		reviewerSessionId,
-		taskAgentSessionId,
 	};
 }
 
@@ -412,21 +409,16 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
 			},
 		]);
 	});
-	test('uses an envelope when delivering node messages to the Task Agent', async () => {
+	test('targeting task-agent returns failure (removed)', async () => {
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
 			ctx.db,
 			ctx.spaceId,
 			[]
 		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-		const taskMessages: string[] = [];
 		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
 			taskId: 'task-123',
 			taskNumber: 236,
-			taskAgentRouter: async (message) => {
-				taskMessages.push(message);
-				return { sessionId: ctx.taskAgentSessionId };
-			},
 		});
 
 		const result = await router.deliverMessage({
@@ -436,16 +428,7 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
 			message: 'Need coordination',
 		});
 
-		expect(result.success).toBe(true);
-		expect(result.delivered).toEqual([
-			{ agentName: 'task-agent', sessionId: ctx.taskAgentSessionId },
-		]);
-		expect(taskMessages).toEqual([
-			'─── Message from coder (task #236) ───\n\n' +
-				'Need coordination\n\n' +
-				'─── Reply ───\n' +
-				'To reply, use: send_message with target "coder"',
-		]);
+		expect(result.success).toBe(false);
 	});
 });
 
