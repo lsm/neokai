@@ -27,8 +27,8 @@ UI and agents migrate to generic tools.
 - Role-based addressing where a role can resolve to one actor now, many actors later, or a fallback.
 - Space Session/ad-hoc chat can message Long-term Agents.
 - Long-term Agents can message each other.
-- Workflow Workers can escalate questions or blocked states to role agents such as `@task-manager`
-  or `@coordinator`.
+- Workflow Workers can escalate questions or blocked states to role agents such as
+  `@role:task-manager` or `@coordinator`.
 - Preserve auditability, permissions, autonomy boundaries, loop prevention, delivery state, retry
   state, and read/handled state.
 
@@ -125,7 +125,9 @@ delivery rows keep the actor ID with redacted display metadata rather than being
 - Runtime actor for workflow node execution: Coding, Review, deploy checker, gate evaluator, etc.
 - Stable actor ID within a run/node/session:
   `actor_worker_<spaceId>_<taskId>_<workflowRunId>_<nodeId>_<agentName>`.
-- Handles are scoped, e.g. `@coder`, `@review`, `@workflow/f1089/coder`.
+- Worker aliases such as `@coder` and `@review` are contextual-only and are not registered as
+  Space-global handles. Globally addressable worker handles must include workflow/run scope, e.g.
+  `@worker:f1089/Review` or another collision-free namespace.
 - Can send direct messages, escalate to roles, post to allowed channels, and receive direct feedback.
 - Actor may become inactive when run ends; audit records remain.
 
@@ -192,9 +194,10 @@ type SpaceRoleBinding = {
 
 Examples:
 
-- `@task-manager` resolves to one Long-term Agent today.
-- Later, `@task-manager` can resolve to multiple agents with broadcast or load balancing.
-- If no task manager exists, fallback routes to `@coordinator` and records
+- `@task-manager` is a concrete actor handle when a single Task Manager agent owns that handle.
+- `@role:task-manager` uses role-binding strategy and can resolve to one actor, many actors,
+  round-robin/least-busy selection, or fallback.
+- If no task manager role binding exists, fallback routes to `@coordinator` and records
   `resolution.fallbackUsed=true`.
 - Workflow Worker blocked-state escalation defaults to `@role:task-manager`, fallback
   `@coordinator`, fallback channel `#workflow-triage` if the Coordinator is unavailable.
@@ -406,8 +409,10 @@ Delivery status semantics:
 - `expired`: TTL exceeded.
 - `cancelled`: upstream task/run/conversation cancelled.
 
-Existing `pending_agent_messages` maps to rows with `status in ('queued', 'failed', 'expired')`,
-`attemptCount`, `maxAttempts`, and `expiresAt`.
+Existing `pending_agent_messages` maps legacy `pending` rows to deliverable `queued` delivery rows;
+legacy `delivered`, `failed`, and `expired` rows map to historical delivery rows with matching terminal
+state. Preserve `attemptCount`, `maxAttempts`, `expiresAt`, `lastError`, and `deliveredSessionId` so
+queued/retryable messages survive cutover.
 
 ## Membership and subscription model
 
@@ -490,7 +495,7 @@ Long-term Agents can subscribe to structured events:
 Fallback order:
 
 1. Target-specific fallback from role binding or channel config.
-2. Sender-context fallback, e.g. Workflow Worker blocked escalation → `@task-manager` →
+2. Sender-context fallback, e.g. Workflow Worker blocked escalation → `@role:task-manager` →
    `@coordinator` → `#workflow-triage`.
 3. Space default fallback `@coordinator`.
 4. System undeliverable notice to sender and audit log.
@@ -512,9 +517,10 @@ Fallback use must be visible in message metadata and UI badges.
 
 Flow:
 
-1. User chats in a Space Session and mentions `@task-manager` or calls `send_message` with target.
+1. User chats in a Space Session and mentions `@role:task-manager` or calls `send_message` with a
+   role target.
 2. Session actor posts a message in its session conversation with explicit target.
-3. Resolver maps `@task-manager` to Long-term Agent actor ID or fallback.
+3. Resolver maps `@role:task-manager` to Long-term Agent actor ID(s) or fallback.
 4. Router creates delivery to agent inbox and optional DM conversation link.
 5. Agent runtime reads message, with origin session context and allowed reply route.
 6. Agent reply posts to session conversation by default so the user sees it in the ad-hoc chat.
@@ -533,7 +539,8 @@ Flow:
 
 Flow:
 
-1. Worker reaches blocked state and calls `send_message({ target: '@task-manager', kind: 'blocked' })`.
+1. Worker reaches blocked state and calls
+   `send_message({ target: '@role:task-manager', body: '<blocked details>', messageKind: 'blocked' })`.
 2. Resolver expands role; if missing, fallback to `@coordinator`; if unavailable, fallback to
    `#workflow-triage`.
 3. Router preserves workflow run, task, node, and sender context on the message/delivery rows.
@@ -625,8 +632,8 @@ type MessageLoopTrace = {
 Detect:
 
 - A → B → A ping-pong above threshold.
-- Role fallback cycle, e.g. `@task-manager` fallback `@coordinator`, Coordinator policy forwards back
-  to `@task-manager`.
+- Role fallback cycle, e.g. `@role:task-manager` fallback `@coordinator`, Coordinator policy forwards
+  back to `@role:task-manager`.
 - Channel mention loops where agent responds with same channel mention repeatedly.
 - Delivery retry loop caused by activation failure.
 
@@ -719,8 +726,10 @@ UI-facing RPC mirrors MCP:
 
 Keep existing tools while migrating callers:
 
-- `space-agent-tools.send_message_to_task` → calls `send_message` targeting `task:<taskNumber>` or
-  explicit worker/role address. Mark deprecated in tool description.
+- `space-agent-tools.send_message_to_task` → calls `send_message` with task context and current
+  compatibility semantics. If caller provides only `task_id`/`task_number`, default delivery remains
+  the task-agent/legacy task coordinator actor for that task. If caller provides `node_id` or explicit
+  actor/role target, route to that worker/role. Mark deprecated in tool description.
 - `node-agent-tools.send_message` → calls `send_message` with sender actor type `workflow_worker`,
   sender workflow context, and topology/autonomy policy. Preserve current gated channel behavior by
   converting workflow topology to permissions plus role/channel destinations.
@@ -759,7 +768,8 @@ Seed actors from existing data:
 - Human actors from Space membership/users.
 - Coordinator from current Space Agent / `space_chat` default session.
 - Space Session actors from sessions with `context.spaceId` and non-workflow role.
-- Workflow Worker actors from active workflow node sessions.
+- Workflow Worker actors from active and declared workflow node executions, including inactive workers
+  referenced by `pending_agent_messages`, so queued/retryable deliveries keep resolvable recipients.
 - System actors for runtime subsystems.
 
 ### Phase 2: Resolver and router service
@@ -908,7 +918,7 @@ flowchart TD
 
 8. **Implement Workflow Worker role escalation**
    - Depends on legacy wrappers and resolver.
-   - Supports blocked/question escalation to `@task-manager`, fallback `@coordinator`, and direct
+   - Supports blocked/question escalation to `@role:task-manager`, fallback `@coordinator`, and direct
      delivery back to worker/origin session with task/workflow audit context.
 
 9. **Add actor/channel/conversation UI**
