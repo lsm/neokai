@@ -151,6 +151,11 @@ function formatTaskThreadError(err: unknown): string {
 	if (message.includes('Session not found')) {
 		return 'Task thread points to a stale session. Keep this pane open while it reconnects.';
 	}
+	return message || 'Failed to update task thread';
+}
+
+function formatEditTaskError(err: unknown): string {
+	const message = err instanceof Error ? err.message : String(err);
 	return message || 'Failed to update task';
 }
 
@@ -695,7 +700,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		} catch (err) {
 			// Only surface the error if we're still on the same task.
 			if (task.id === savedTaskId) {
-				setEditTaskError(formatTaskThreadError(err));
+				setEditTaskError(formatEditTaskError(err));
 			}
 		} finally {
 			if (task.id === savedTaskId) {

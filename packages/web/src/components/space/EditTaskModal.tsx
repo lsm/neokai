@@ -7,7 +7,7 @@
  */
 
 import type { SpaceTaskPriority } from '@neokai/shared';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal.tsx';
 
 const PRIORITY_OPTIONS: Array<{ value: SpaceTaskPriority; label: string }> = [
@@ -48,21 +48,34 @@ export function EditTaskModal({
 	const [description, setDescription] = useState(initialDescription);
 	const [priority, setPriority] = useState(initialPriority);
 
-	// Reset form when the modal opens. Only depend on `isOpen` so concurrent
-	// store updates (e.g. space.task.updated events) don't overwrite in-progress
-	// edits while the user is typing.
+	// Snapshot the initial values at modal-open time. This freezes the diff
+	// baseline so concurrent store updates to untouched fields don't cause
+	// the stale local value to be sent back, overwriting the concurrent edit.
+	const baselineRef = useRef({
+		title: initialTitle,
+		description: initialDescription,
+		priority: initialPriority,
+	});
+
 	useEffect(() => {
 		if (isOpen) {
 			setTitle(initialTitle);
 			setDescription(initialDescription);
 			setPriority(initialPriority);
+			baselineRef.current = {
+				title: initialTitle,
+				description: initialDescription,
+				priority: initialPriority,
+			};
 		}
 	}, [isOpen]);
 
+	const baseline = baselineRef.current;
+
 	const hasChanges =
-		title.trim() !== initialTitle.trim() ||
-		description.trim() !== initialDescription.trim() ||
-		priority !== initialPriority;
+		title.trim() !== baseline.title.trim() ||
+		description.trim() !== baseline.description.trim() ||
+		priority !== baseline.priority;
 
 	const trimmedTitle = title.trim();
 	const canConfirm = hasChanges && trimmedTitle.length > 0 && !busy;
@@ -70,15 +83,16 @@ export function EditTaskModal({
 	const handleConfirm = (): void => {
 		if (!canConfirm) return;
 		// Only send changed fields to avoid overwriting concurrent edits
-		// on untouched fields.
+		// on untouched fields. Compare against the frozen baseline, not live props.
 		const updates: Partial<{
 			title: string;
 			description: string;
 			priority: SpaceTaskPriority;
 		}> = {};
-		if (title.trim() !== initialTitle.trim()) updates.title = trimmedTitle;
-		if (description.trim() !== initialDescription.trim()) updates.description = description.trim();
-		if (priority !== initialPriority) updates.priority = priority;
+		if (title.trim() !== baseline.title.trim()) updates.title = trimmedTitle;
+		if (description.trim() !== baseline.description.trim())
+			updates.description = description.trim();
+		if (priority !== baseline.priority) updates.priority = priority;
 		if (Object.keys(updates).length === 0) return;
 		void onConfirm(updates);
 	};

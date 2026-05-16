@@ -267,4 +267,36 @@ describe('EditTaskModal', () => {
 		const title = getByTestId('edit-task-title') as HTMLInputElement;
 		expect(title.value).toBe('My New Title');
 	});
+
+	it('compares against frozen baseline, not live props, to avoid sending stale values', () => {
+		const onCancel = vi.fn();
+		const onConfirm = vi.fn();
+		const { rerender, getByTestId } = render(
+			<EditTaskModal
+				isOpen={true}
+				busy={false}
+				onCancel={onCancel}
+				onConfirm={onConfirm}
+				{...DEFAULT_PROPS}
+			/>
+		);
+
+		// Simulate external update changing the description while modal is open
+		rerender(
+			<EditTaskModal
+				isOpen={true}
+				busy={false}
+				onCancel={onCancel}
+				onConfirm={onConfirm}
+				initialTitle="My Task"
+				initialDescription="Updated externally"
+				initialPriority="high"
+			/>
+		);
+
+		// Confirm button should stay disabled — user made no local edits,
+		// and the baseline is frozen from modal-open time (same as local state).
+		const confirm = getByTestId('edit-task-confirm') as HTMLButtonElement;
+		expect(confirm.disabled).toBe(true);
+	});
 });
