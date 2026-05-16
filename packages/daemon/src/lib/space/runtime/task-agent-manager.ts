@@ -2255,7 +2255,8 @@ export class TaskAgentManager {
 			state.status === 'queued' ||
 			state.status === 'processing' ||
 			state.status === 'waiting_for_input' ||
-			state.status === 'interrupted'
+			state.status === 'interrupted' ||
+			state.status === 'rate_limit_cooldown'
 		);
 	}
 
@@ -3890,7 +3891,8 @@ export class TaskAgentManager {
 			state.status === 'processing' ||
 			state.status === 'queued' ||
 			state.status === 'waiting_for_input' ||
-			state.status === 'interrupted';
+			state.status === 'interrupted' ||
+			state.status === 'rate_limit_cooldown';
 
 		const messageId = generateUUID();
 		const hasImages = !!images && images.length > 0;

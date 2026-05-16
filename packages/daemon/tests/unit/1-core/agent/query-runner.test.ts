@@ -1560,7 +1560,7 @@ describe('QueryRunner', () => {
 
 			// Pre-set the tracked message (simulates createMessageGeneratorWrapper having
 			// consumed a user message before the transient error occurred).
-			(runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage = {
+			(runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
 				uuid: consumedUuid,
 				content: consumedContent,
 			};
@@ -1583,7 +1583,7 @@ describe('QueryRunner', () => {
 			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 
-			(runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage = {
+			(runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
 				uuid: consumedUuid,
 				content: consumedContent,
 			};
@@ -1593,7 +1593,7 @@ describe('QueryRunner', () => {
 
 			// After re-enqueue, the tracking field should be cleared
 			expect(
-				(runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage
+				(runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
 			).toBeNull();
 		});
 

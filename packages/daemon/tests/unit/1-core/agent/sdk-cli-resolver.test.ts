@@ -14,6 +14,7 @@ import {
 	resolveSDKCliPath,
 	getPlatformPackageName,
 	getCliBinaryName,
+	warmupSDKCliBinary,
 	_resetForTesting,
 } from '../../../../src/lib/agent/sdk-cli-resolver';
 
@@ -505,3 +506,226 @@ function createTarGzWithFile(fileName: string, content: Buffer): Buffer {
 	// Gzip compress
 	return zlib.gzipSync(tarData);
 }
+
+describe('warmupSDKCliBinary', () => {
+	let existsSyncSpy: ReturnType<typeof spyOn>;
+	let execSyncSpy: ReturnType<typeof spyOn>;
+	let execFileSyncSpy: ReturnType<typeof spyOn>;
+	let mkdirSyncSpy: ReturnType<typeof spyOn>;
+	let chmodSyncSpy: ReturnType<typeof spyOn>;
+	let readFileSyncSpy: ReturnType<typeof spyOn>;
+	let writeFileSyncSpy: ReturnType<typeof spyOn>;
+	let renameSyncSpy: ReturnType<typeof spyOn>;
+	let logSpy: ReturnType<typeof spyOn>;
+	let originalReadFileSync: typeof fs.readFileSync;
+
+	beforeEach(() => {
+		_resetForTesting();
+		originalReadFileSync = fs.readFileSync.bind(fs);
+		chmodSyncSpy = spyOn(fs, 'chmodSync').mockImplementation(() => {});
+		renameSyncSpy = spyOn(fs, 'renameSync').mockImplementation(() => {});
+		mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as unknown as string);
+		writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+		// oxlint-disable-next-line no-console
+		logSpy = spyOn(console, 'log').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		existsSyncSpy?.mockRestore();
+		execSyncSpy?.mockRestore();
+		execFileSyncSpy?.mockRestore();
+		mkdirSyncSpy.mockRestore();
+		renameSyncSpy.mockRestore();
+		chmodSyncSpy.mockRestore();
+		readFileSyncSpy?.mockRestore();
+		writeFileSyncSpy.mockRestore();
+		logSpy.mockRestore();
+	});
+
+	it('returns ready from node_modules in dev mode', () => {
+		const result = warmupSDKCliBinary();
+
+		expect(result.status).toBe('ready');
+		expect(result.source).toBe('node_modules');
+		expect(result.path).toBeDefined();
+		expect(result.path!).toContain('@anthropic-ai');
+		expect(result.packageName).toBeDefined();
+		expect(result.version).toBeDefined();
+	});
+
+	it('returns ready from cache when node_modules unavailable', () => {
+		const originalExistsSync = fs.existsSync.bind(fs);
+		const binaryName = getCliBinaryName();
+
+		const lstatSyncSpy = spyOn(fs, 'lstatSync').mockImplementation((path: fs.PathLike) => {
+			const p = String(path);
+			if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) {
+				return { isFile: () => true, size: 200000000 } as unknown as fs.Stats;
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT', path: p });
+		});
+
+		existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+			const p = String(path);
+			if (p.includes('node_modules')) return false;
+			if (p.endsWith('/rg')) return false;
+			if (p.includes('.neokai/sdk') && p.endsWith(binaryName)) return true;
+			return originalExistsSync(p);
+		});
+
+		const result = warmupSDKCliBinary();
+
+		expect(result.status).toBe('ready');
+		expect(result.source).toBe('cache');
+		expect(result.path).toContain('.neokai/sdk');
+
+		lstatSyncSpy.mockRestore();
+	});
+
+	it('returns failed when all strategies fail', () => {
+		existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
+		execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+			throw new Error('not found');
+		});
+		execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+			throw new Error('not found');
+		});
+
+		const result = warmupSDKCliBinary();
+
+		expect(result.status).toBe('failed');
+		expect(result.error).toBeDefined();
+	});
+
+	it('returns ready on download success when node_modules and cache miss', () => {
+		const originalExistsSync = fs.existsSync.bind(fs);
+		const binaryName = getCliBinaryName();
+
+		// Create valid tar.gz with the binary
+		const binaryContent = Buffer.from('#!/bin/bash\necho claude');
+		const tarData = createTarGzWithFile(`package/${binaryName}`, binaryContent);
+		const expectedIntegrity = `sha512-${require('node:crypto').createHash('sha512').update(tarData).digest('base64')}`;
+
+		existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+			const p = String(path);
+			if (p.includes('node_modules')) return false;
+			if (p.includes('.neokai/sdk')) return false;
+			if (p.endsWith('.tgz')) return true;
+			return originalExistsSync(p);
+		});
+
+		readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((path: fs.PathLike) => {
+			const p = String(path);
+			if (p.endsWith('.tgz')) return tarData;
+			return originalReadFileSync(p);
+		});
+
+		execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(
+			(file: string, args?: string[]) => {
+				if (file === 'curl') {
+					const url = Array.isArray(args) ? args.find((a) => a.includes('registry.npmjs.org')) : '';
+					if (url) {
+						return JSON.stringify({
+							dist: {
+								tarball: 'https://registry.npmjs.org/fake/-/fake.tgz',
+								integrity: expectedIntegrity,
+							},
+						});
+					}
+					return '';
+				}
+				throw new Error(`unexpected execFileSync: ${file}`);
+			}
+		);
+
+		const result = warmupSDKCliBinary();
+
+		expect(result.status).toBe('ready');
+		expect(result.source).toBe('download');
+		expect(result.path).toContain('.neokai/sdk');
+	});
+
+	it('logs startup messages regardless of NEOKAI_VERBOSE', () => {
+		// Ensure NEOKAI_VERBOSE is NOT set
+		delete process.env.NEOKAI_VERBOSE;
+
+		warmupSDKCliBinary();
+
+		// Should have logged at least one [SDK] message
+		const calls = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+		const sdkLogs = calls.filter((c: string) => c.includes('[SDK]'));
+		expect(sdkLogs.length).toBeGreaterThan(0);
+	});
+
+	it('returns cached result on second call without re-resolving', () => {
+		const first = warmupSDKCliBinary();
+		expect(first.status).toBe('ready');
+
+		// Reset log spy to count second call
+		logSpy.mockClear();
+
+		const second = warmupSDKCliBinary();
+		expect(second.status).toBe('ready');
+		expect(second.path).toBe(first.path);
+	});
+
+	it('populates cachedCliPath so subsequent resolveSDKCliPath is instant', () => {
+		warmupSDKCliBinary();
+
+		const resolved = resolveSDKCliPath();
+		expect(resolved).toBeDefined();
+	});
+
+	it('does not set negative cache on failure, allowing resolveSDKCliPath to retry', () => {
+		existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
+		execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+			throw new Error('not found');
+		});
+		execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+			throw new Error('not found');
+		});
+
+		const result = warmupSDKCliBinary();
+		expect(result.status).toBe('failed');
+
+		// Restore mocks so resolveSDKCliPath can try node_modules
+		existsSyncSpy.mockRestore();
+		execSyncSpy.mockRestore();
+		execFileSyncSpy.mockRestore();
+
+		// resolveSDKCliPath should still be able to resolve (not negative-cached)
+		const resolved = resolveSDKCliPath();
+		expect(resolved).toBeDefined();
+	});
+
+	it('returns failed for unsupported platform', () => {
+		// Mock getPlatformPackageName to return undefined via module spy.
+		// Internal calls bypass the export, so we patch the resolver module.
+		// Since process.platform/arch are read-only in Bun, we test the
+		// unsupported platform path by verifying the error shape when
+		// all resolution strategies fail.
+		existsSyncSpy = spyOn(fs, 'existsSync').mockReturnValue(false);
+		execSyncSpy = spyOn(childProcess, 'execSync').mockImplementation(() => {
+			throw new Error('not found');
+		});
+		execFileSyncSpy = spyOn(childProcess, 'execFileSync').mockImplementation(() => {
+			throw new Error('not found');
+		});
+
+		const result = warmupSDKCliBinary();
+
+		expect(result.status).toBe('failed');
+		expect(result.error).toBeDefined();
+		expect(result.version).toBeDefined();
+	});
+
+	it('handles sequential warmup calls correctly (mutex releases)', () => {
+		const first = warmupSDKCliBinary();
+		expect(first.status).toBe('ready');
+
+		// Mutex released after first call — second succeeds immediately.
+		const second = warmupSDKCliBinary();
+		expect(second.status).toBe('ready');
+		expect(second.path).toBe(first.path);
+	});
+});

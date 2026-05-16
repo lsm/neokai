@@ -242,6 +242,7 @@ import { SlashCommandManager, type SlashCommandManagerContext } from './slash-co
 import { MessageRecoveryHandler } from './message-recovery-handler';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
+import { RateLimitWatchdog } from './rate-limit-watchdog';
 
 /**
  * AgentSession - Pure facade that delegates to specialized handlers
@@ -288,6 +289,9 @@ export class AgentSession
 
 	// Config handler
 	private sessionConfigHandler: SessionConfigHandler;
+
+	// Rate limit auto-retry watchdog
+	private rateLimitWatchdog: RateLimitWatchdog;
 
 	// SDK query state (accessible to handlers via context interfaces)
 	queryObject: Query | null = null;
@@ -408,6 +412,12 @@ export class AgentSession
 
 		// Initialize SessionConfigHandler (handlers take AgentSession context directly)
 		this.sessionConfigHandler = new SessionConfigHandler(this);
+
+		// Initialize RateLimitWatchdog — detects 429 exhaustion and schedules auto-retry
+		this.rateLimitWatchdog = new RateLimitWatchdog(session.id, this.stateManager);
+		this.rateLimitWatchdog.setRetryCallback(async (lastUserMessage) => {
+			await this.executeRateLimitAutoRetry(lastUserMessage);
+		});
 
 		// Initialize EventSubscriptionSetup (handlers take AgentSession context directly)
 		// Must be last since it needs other handlers to be initialized
@@ -705,6 +715,8 @@ export class AgentSession
 		messageId: string,
 		messageContent: string | MessageContent[]
 	): Promise<void> {
+		// Cancel any pending rate limit auto-retry — user sent a new message
+		this.rateLimitWatchdog.cancel();
 		await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent);
 	}
 
@@ -720,12 +732,85 @@ export class AgentSession
 		restartQuery?: boolean;
 		hardReset?: boolean;
 	}): Promise<{ success: boolean; error?: string }> {
+		// Cancel any pending rate-limit cooldown timer so it doesn't
+		// inject stale messages into the reset session.
+		this.rateLimitWatchdog.cancel();
+
 		const restartQuery = options?.restartQuery ?? true;
 		if (options?.hardReset && this.runtimeOptions.hardReset) {
 			return await this.runtimeOptions.hardReset(this, { restartQuery });
 		}
 
 		return await this.lifecycleManager.reset({ restartAfter: restartQuery });
+	}
+
+	// ============================================================================
+	// Rate Limit Auto-Retry
+	// ============================================================================
+
+	/**
+	 * Execute auto-retry after rate limit cooldown.
+	 * Re-enqueues the last user message and starts a new query.
+	 */
+	private async executeRateLimitAutoRetry(
+		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+	): Promise<void> {
+		if (!lastUserMessage) {
+			this.logger.warn('Rate limit auto-retry skipped: no last user message available.');
+			await this.stateManager.setIdle();
+			return;
+		}
+
+		this.logger.info(
+			`Rate limit auto-retry: re-enqueueing user message ${lastUserMessage.uuid} ` +
+				`and restarting query.`
+		);
+
+		try {
+			// Ensure the session is idle before starting a new query
+			await this.stateManager.setIdle();
+
+			// Re-enqueue the last user message and start the query
+			await this.startQueryAndEnqueue(lastUserMessage.uuid, lastUserMessage.content);
+		} catch (error) {
+			this.logger.error('Rate limit auto-retry failed:', error);
+			await this.stateManager.setIdle();
+		}
+	}
+
+	/**
+	 * Cancel a pending rate limit auto-retry.
+	 * Called when the user explicitly cancels or sends a new message.
+	 */
+	cancelRateLimitRetry(): void {
+		this.rateLimitWatchdog.cancel();
+		// Transition from rate_limit_cooldown to idle
+		if (this.stateManager.getState().status === 'rate_limit_cooldown') {
+			void this.stateManager.setIdle();
+		}
+	}
+
+	/**
+	 * Immediately retry after a rate limit (bypassing the cooldown timer).
+	 * Called when the user clicks "Retry Now" in the UI.
+	 */
+	async retryNowAfterRateLimit(): Promise<void> {
+		const state = this.rateLimitWatchdog.getState();
+		if (state.status !== 'cooldown') {
+			this.logger.warn('retryNowAfterRateLimit: no cooldown pending.');
+			return;
+		}
+
+		const lastUserMessage = state.lastUserMessage;
+		this.rateLimitWatchdog.cancel();
+		await this.executeRateLimitAutoRetry(lastUserMessage);
+	}
+
+	/**
+	 * Get current rate limit watchdog state (for RPC responses).
+	 */
+	getRateLimitWatchdogState() {
+		return this.rateLimitWatchdog.getState();
 	}
 
 	// ============================================================================
@@ -1147,6 +1232,7 @@ export class AgentSession
 	 * while preserving conversation history.
 	 */
 	async restart(): Promise<void> {
+		this.rateLimitWatchdog.cancel();
 		await this.lifecycleManager.restart();
 	}
 
@@ -1232,6 +1318,20 @@ export class AgentSession
 
 	async onMarkApiSuccess(): Promise<void> {
 		this.errorManager.markApiSuccess();
+		// Reset rate limit watchdog on successful API call
+		this.rateLimitWatchdog.reset();
+	}
+
+	/**
+	 * Called by QueryRunner when 429 rate limit exhaustion is detected.
+	 * Delegates to the RateLimitWatchdog to schedule auto-retry.
+	 * @returns true if cooldown was scheduled, false if max retries exceeded.
+	 */
+	async onRateLimitExhausted(
+		errorMessage: string,
+		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+	): Promise<boolean> {
+		return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage);
 	}
 
 	// ============================================================================
@@ -1428,6 +1528,7 @@ export class AgentSession
 	// ============================================================================
 
 	async cleanup(): Promise<void> {
+		this.rateLimitWatchdog.destroy();
 		await this.lifecycleManager.cleanup();
 	}
 }

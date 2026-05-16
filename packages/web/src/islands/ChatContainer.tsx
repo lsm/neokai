@@ -42,6 +42,7 @@ import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
+import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { ContentContainer } from '../components/ui/ContentContainer.tsx';
@@ -1191,6 +1192,16 @@ export default function ChatContainer({
 						sessionStore.clearError();
 					}}
 					actions={errorActions.length > 0 ? errorActions : undefined}
+				/>
+			)}
+
+			{/* Rate Limit Cooldown Banner */}
+			{agentState.status === 'rate_limit_cooldown' && session && (
+				<RateLimitCooldownBanner
+					sessionId={session.id}
+					retryCount={agentState.retryCount}
+					maxRetries={agentState.maxRetries}
+					retryAt={agentState.retryAt}
 				/>
 			)}
 

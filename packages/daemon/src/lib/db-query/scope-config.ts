@@ -405,6 +405,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'mcp_enablement',
 	// External Event Bus — internal event routing/delivery/config state, not useful for ad-hoc agent queries.
 	'external_event_source_configs',
+	'external_event_extension_configs',
 	'space_external_event_source_configs',
 	'space_external_events',
 	'space_external_event_deliveries',

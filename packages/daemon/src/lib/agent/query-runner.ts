@@ -161,6 +161,17 @@ export interface QueryRunnerContext {
 
 	/** Consume (clear) the one-shot resumeSessionAt after the query has started. */
 	consumePendingResumeSessionAt?(): string | undefined;
+
+	/**
+	 * Called when a 429 rate limit exhaustion error is detected (all SDK retries exhausted).
+	 * The RateLimitWatchdog uses this to schedule an automatic retry after cooldown.
+	 * @returns true if cooldown was scheduled (caller should skip setIdle),
+	 *          false if max retries exceeded or callback is unset.
+	 */
+	onRateLimitExhausted?: (
+		errorMessage: string,
+		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+	) => Promise<boolean>;
 }
 
 /**
@@ -169,13 +180,22 @@ export interface QueryRunnerContext {
 export class QueryRunner {
 	/**
 	 * Last non-internal user message consumed by the generator, for re-enqueue
-	 * on transient connection error retry.  Set by createMessageGeneratorWrapper()
-	 * when a message is yielded to the SDK; cleared after re-enqueue or on cleanup.
+	 * on transient connection error retry or rate limit auto-retry.
+	 * Set by createMessageGeneratorWrapper() when a message is yielded to the SDK;
+	 * cleared after re-enqueue or on cleanup.
 	 */
-	private lastConsumedUserMessage: {
+	private _lastConsumedUserMessage: {
 		uuid: string;
 		content: string | MessageContent[];
 	} | null = null;
+
+	/**
+	 * Public accessor for the last consumed user message.
+	 * Used by RateLimitWatchdog to re-enqueue on auto-retry.
+	 */
+	get lastConsumedUserMessage() {
+		return this._lastConsumedUserMessage;
+	}
 
 	constructor(private ctx: QueryRunnerContext) {}
 
@@ -737,7 +757,7 @@ export class QueryRunner {
 				// process.  Without this, the message was already shifted out of
 				// MessageQueue by messageGenerator() and the retry starts with an
 				// empty queue, silently dropping the user's request.
-				const lastMsg = this.lastConsumedUserMessage;
+				const lastMsg = this._lastConsumedUserMessage;
 				if (lastMsg) {
 					logger.warn(
 						`Re-enqueueing user message ${lastMsg.uuid} for transient connection error retry.`
@@ -745,7 +765,7 @@ export class QueryRunner {
 					// Fire-and-forget: the promise resolves when the retry's generator
 					// consumes the message, or rejects on timeout/interrupt (harmless).
 					messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
-					this.lastConsumedUserMessage = null;
+					this._lastConsumedUserMessage = null;
 				}
 
 				// Display a sanitized retry message so the user knows what's happening,
@@ -784,6 +804,10 @@ export class QueryRunner {
 
 			if (!isAbortError) {
 				const apiErrorHandled = await this.handleApiValidationError(error);
+
+				// Track whether rate limit cooldown was scheduled; if so, skip setIdle
+				// below to preserve the rate_limit_cooldown processing state.
+				let rateLimitCooldownScheduled = false;
 
 				if (!apiErrorHandled) {
 					let category = ErrorCategory.SYSTEM;
@@ -852,6 +876,23 @@ export class QueryRunner {
 
 					const processingState = stateManager.getState();
 
+					// Notify rate limit watchdog when 429 exhaustion is detected.
+					// Only trigger for genuine 429 rate-limit errors, not 402/quota/billing
+					// issues (which are non-retryable). Use case-insensitive matching.
+					const lowerMsg = errorMessage.toLowerCase();
+					const isBillingError =
+						errorMessage.includes('402') ||
+						lowerMsg.includes('no quota') ||
+						lowerMsg.includes('quota exceeded') ||
+						lowerMsg.includes('insufficient_quota');
+					const is429Error =
+						category === ErrorCategory.RATE_LIMIT &&
+						!isBillingError &&
+						(errorMessage.includes('429') || lowerMsg.includes('rate limit'));
+					rateLimitCooldownScheduled =
+						is429Error &&
+						!!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+
 					// For startup timeouts / resume failures, provide actionable recovery hints.
 					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
 					// missing/corrupt session file — sdkSessionId is intentionally preserved so
@@ -877,23 +918,33 @@ export class QueryRunner {
 								: isTransientConnectionError && isRetry
 									? 'Could not get a response. The connection was interrupted. Please try again.'
 									: undefined;
-					await errorManager.handleError(
-						session.id,
-						error as Error,
-						category,
-						startupTimeoutUserMessage,
-						processingState,
-						{
-							errorMessage,
-							queueSize: messageQueue.size(),
-							providerId: providerId ?? 'anthropic',
-							workspacePath: session.workspacePath ?? undefined,
-							isRootWorkspace: !session.worktree,
-							startupTimeoutMs: STARTUP_TIMEOUT_MS,
-						}
-					);
+					// Skip error broadcast when rate-limit cooldown is scheduled —
+					// the session.error event is terminal in Space workflows and would
+					// prematurely mark the task as failed before the auto-retry fires.
+					if (!rateLimitCooldownScheduled) {
+						await errorManager.handleError(
+							session.id,
+							error as Error,
+							category,
+							startupTimeoutUserMessage,
+							processingState,
+							{
+								errorMessage,
+								queueSize: messageQueue.size(),
+								providerId: providerId ?? 'anthropic',
+								workspacePath: session.workspacePath ?? undefined,
+								isRootWorkspace: !session.worktree,
+								startupTimeoutMs: STARTUP_TIMEOUT_MS,
+							}
+						);
+					}
 				}
-				await stateManager.setIdle();
+				// Skip idle transition when rate limit cooldown was scheduled —
+				// the watchdog already set rate_limit_cooldown state and will
+				// transition to idle when the user cancels or the retry fires.
+				if (!rateLimitCooldownScheduled) {
+					await stateManager.setIdle();
+				}
 			}
 		} finally {
 			// Check for stale query FIRST to avoid race conditions.
@@ -1046,7 +1097,7 @@ export class QueryRunner {
 				// already been shifted out of MessageQueue by messageGenerator(),
 				// so without re-enqueue the retry starts with an empty queue and
 				// the user's request is silently dropped.
-				this.lastConsumedUserMessage = {
+				this._lastConsumedUserMessage = {
 					uuid: message.uuid ?? '',
 					content: message.message?.content ?? '',
 				};
