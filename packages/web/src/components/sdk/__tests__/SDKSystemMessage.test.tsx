@@ -294,43 +294,95 @@ describe('SDKSystemMessage', () => {
 	});
 
 	describe('Hook Response Message', () => {
-		it('should render hook name and event', () => {
+		it('should render hook name and event in collapsed header', () => {
 			const message = createHookResponseMessage();
 			const { container } = render(<SDKSystemMessage message={message} />);
 
-			expect(container.textContent).toContain('Hook: pre-commit');
+			expect(container.textContent).toContain('pre-commit');
 			expect(container.textContent).toContain('PreToolUse');
 		});
 
-		it('should show stdout', () => {
+		it('should show truncated stdout summary in collapsed header', () => {
 			const message = createHookResponseMessage();
 			const { container } = render(<SDKSystemMessage message={message} />);
+
+			// First line of stdout shown as summary in header
+			expect(container.textContent).toContain('Hook executed successfully');
+		});
+
+		it('should be collapsed by default — stdout body hidden', () => {
+			const message = createHookResponseMessage();
+			const { container } = render(<SDKSystemMessage message={message} />);
+
+			// Full stdout (second line) should not be visible until expanded
+			expect(container.textContent).not.toContain('All checks passed');
+		});
+
+		it('should expand to show full stdout', () => {
+			const message = createHookResponseMessage();
+			const { container } = render(<SDKSystemMessage message={message} />);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
 
 			expect(container.textContent).toContain('Hook executed successfully');
 			expect(container.textContent).toContain('All checks passed');
 		});
 
-		it('should show stderr in red', () => {
+		it('should expand to show stderr in red', () => {
 			const message = createHookResponseWithError();
 			const { container } = render(<SDKSystemMessage message={message} />);
 
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
 			expect(container.textContent).toContain('Validation failed');
 			// Error text should have red styling
-			expect(container.querySelector('.text-red-600, .text-red-400')).toBeTruthy();
+			expect(container.querySelector('.text-red-700, .text-red-300')).toBeTruthy();
 		});
 
-		it('should show exit code', () => {
+		it('should expand to show exit code', () => {
 			const message = createHookResponseMessage();
 			const { container } = render(<SDKSystemMessage message={message} />);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
 
 			expect(container.textContent).toContain('Exit code: 0');
 		});
 
-		it('should have purple color scheme', () => {
+		it('should have slate color scheme', () => {
 			const message = createHookResponseMessage();
 			const { container } = render(<SDKSystemMessage message={message} />);
 
-			expect(container.querySelector('.bg-purple-50, .dark\\:bg-purple-900\\/20')).toBeTruthy();
+			expect(container.querySelector('.bg-slate-50, .dark\\:bg-slate-900\\/30')).toBeTruthy();
+		});
+
+		it('should show error indicator for non-zero exit code', () => {
+			const message = createHookResponseWithError();
+			const { container } = render(<SDKSystemMessage message={message} />);
+
+			// Should have error X icon in header
+			const errorSvg = container.querySelector('.text-red-500');
+			expect(errorSvg).toBeTruthy();
+		});
+
+		it('should toggle expand/collapse', () => {
+			const message = createHookResponseMessage();
+			const { container } = render(<SDKSystemMessage message={message} />);
+
+			const button = container.querySelector('button')!;
+
+			// Initially collapsed — no full stdout body
+			expect(container.textContent).not.toContain('All checks passed');
+
+			// Expand
+			fireEvent.click(button);
+			expect(container.textContent).toContain('All checks passed');
+
+			// Collapse
+			fireEvent.click(button);
+			expect(container.querySelector('.p-3.border-t')).toBeFalsy();
 		});
 	});
 

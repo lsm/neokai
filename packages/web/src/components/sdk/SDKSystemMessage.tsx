@@ -65,28 +65,7 @@ export function SDKSystemMessage({ message }: Props) {
 	// Hook response
 	if (isSDKHookResponse(message)) {
 		const hookMessage = message as SDKHookResponseMessage;
-		return (
-			<div class="py-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
-				<div class="text-sm font-medium text-purple-900 dark:text-purple-100 mb-1">
-					Hook: {hookMessage.hook_name} ({hookMessage.hook_event})
-				</div>
-				{hookMessage.stdout && (
-					<pre class="text-xs text-purple-700 dark:text-purple-300 whitespace-pre-wrap">
-						{hookMessage.stdout}
-					</pre>
-				)}
-				{hookMessage.stderr && (
-					<pre class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap mt-1">
-						{hookMessage.stderr}
-					</pre>
-				)}
-				{hookMessage.exit_code !== undefined && (
-					<div class="text-xs text-purple-600 dark:text-purple-400 mt-1">
-						Exit code: {hookMessage.exit_code}
-					</div>
-				)}
-			</div>
-		);
+		return <HookResponseCard message={hookMessage} />;
 	}
 
 	return null;
@@ -226,6 +205,119 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 					</div>
 				</div>
 			)}
+		</div>
+	);
+}
+
+/**
+ * Hook Response Card - Collapsible card for hook execution results
+ * Matches the visual pattern of ToolResultCard (header button + chevron + expand/collapse).
+ * Default collapsed since hooks are noise, not signal.
+ */
+function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
+	const [isExpanded, setIsExpanded] = useState(false);
+
+	// Muted slate/violet color scheme
+	const colors = {
+		bg: 'bg-slate-50 dark:bg-slate-900/30',
+		border: 'border-slate-200 dark:border-slate-700',
+		text: 'text-slate-900 dark:text-slate-100',
+		lightText: 'text-slate-600 dark:text-slate-400',
+		iconColor: 'text-slate-500 dark:text-slate-400',
+	};
+
+	// Truncated first line of stdout for summary
+	const summary = message.stdout?.trim() ? message.stdout.split('\n')[0].slice(0, 80) : undefined;
+
+	return (
+		<div class="my-2">
+			<div class={`border rounded-lg overflow-hidden ${colors.bg} ${colors.border}`}>
+				{/* Header - clickable to expand/collapse */}
+				<button
+					onClick={() => setIsExpanded(!isExpanded)}
+					class="w-full flex items-center justify-between p-3 transition-colors hover:bg-opacity-80 dark:hover:bg-opacity-80"
+				>
+					<div class="flex items-center gap-2 min-w-0 flex-1">
+						{/* Hook icon - link/chain */}
+						<svg
+							class={`w-5 h-5 flex-shrink-0 ${colors.iconColor}`}
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+							/>
+						</svg>
+						<span class={`font-semibold text-sm flex-shrink-0 ${colors.text}`}>
+							{message.hook_name}
+						</span>
+						<span
+							class={`text-xs px-1.5 py-0.5 rounded font-mono ${colors.lightText} bg-slate-100 dark:bg-slate-800`}
+						>
+							{message.hook_event}
+						</span>
+						{summary && (
+							<span class={`text-sm font-mono truncate ${colors.lightText}`}>{summary}</span>
+						)}
+					</div>
+
+					<div class="flex items-center gap-2 flex-shrink-0">
+						{/* Error indicator */}
+						{message.exit_code !== undefined && message.exit_code !== 0 && (
+							<svg
+								class="w-4 h-4 text-red-500"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M6 18L18 6M6 6l12 12"
+								/>
+							</svg>
+						)}
+						{/* Chevron */}
+						<svg
+							class={`w-5 h-5 transition-transform ${colors.iconColor} ${isExpanded ? 'rotate-180' : ''}`}
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M19 9l-7 7-7-7"
+							/>
+						</svg>
+					</div>
+				</button>
+
+				{/* Expanded content */}
+				{isExpanded && (
+					<div class={`p-3 border-t bg-white dark:bg-gray-900 space-y-2 ${colors.border}`}>
+						{message.stdout?.trim() && (
+							<pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-slate-50 dark:bg-slate-800 p-2 rounded border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200">
+								{message.stdout}
+							</pre>
+						)}
+						{message.stderr?.trim() && (
+							<pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-red-50 dark:bg-red-900/20 p-2 rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300">
+								{message.stderr}
+							</pre>
+						)}
+						{message.exit_code !== undefined && (
+							<div class={`text-xs ${colors.lightText}`}>Exit code: {message.exit_code}</div>
+						)}
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }
