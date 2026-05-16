@@ -59,6 +59,7 @@ import {
 	type PostApprovalTemplateContext,
 } from '../workflows/post-approval-template';
 import { Logger } from '../../logger';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 
 const log = new Logger('post-approval-router');
 
@@ -252,6 +253,14 @@ export class PostApprovalRouter {
 
 		const { targetAgent, instructions } = route;
 
+		// Legacy task-agent target: the built-in task-agent session was removed.
+		// Persisted workflows may still reference targetAgent: "task-agent";
+		// skip gracefully rather than attempting a spawn that will fail.
+		if (targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) {
+			const reason = `task ${task.id}: legacy task-agent post-approval target is no longer supported; skipping`;
+			log.warn(`PostApprovalRouter.route: ${reason}`);
+			return { mode: 'skipped', reason };
+		}
 		// -------------------------------------------------------------------
 		// 2. Node-agent spawn route.
 		// -------------------------------------------------------------------

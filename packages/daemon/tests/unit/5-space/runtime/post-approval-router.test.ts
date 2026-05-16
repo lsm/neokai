@@ -12,7 +12,7 @@
  *   - postApprovalSessionId already set + live → already-routed (no spawn).
  *   - postApprovalSessionId set but dead → re-spawn.
  *   - Empty instructions on spawn path → skipped.
- *   - task-agent target is no longer valid → spawn path treated as node agent.
+ *   - task-agent target is now skipped gracefully (legacy compat).
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -296,7 +296,7 @@ describe('PostApprovalRouter.route', () => {
 		expect(result.mode).toBe('skipped');
 	});
 
-	test('task-agent target treated as node-agent name → attempts spawn', async () => {
+	test('legacy task-agent target → skipped gracefully', async () => {
 		const task = makeApprovedTask(taskRepo);
 		const delegates = makeDelegates();
 		const router = new PostApprovalRouter({
@@ -306,7 +306,8 @@ describe('PostApprovalRouter.route', () => {
 		});
 
 		// Legacy workflows may still declare targetAgent: 'task-agent'.
-		// After removal, the router treats it as a node-agent name and attempts spawn.
+		// After removal, the router skips gracefully rather than attempting
+		// a spawn that would fail (no workflow slot named 'task-agent').
 		const workflow = stubWorkflow({
 			postApproval: {
 				targetAgent: 'task-agent',
@@ -320,9 +321,10 @@ describe('PostApprovalRouter.route', () => {
 			task_id: task.id,
 		});
 
-		// Router now spawns a sub-session for 'task-agent' agent name
-		expect(result.mode).toBe('spawn');
-		expect(delegates.spawned).toHaveLength(1);
-		expect(delegates.spawned[0].targetAgent).toBe('task-agent');
+		expect(result.mode).toBe('skipped');
+		if (result.mode !== 'skipped') return;
+		expect(result.reason).toContain('legacy task-agent');
+		// Spawner must NOT have been called
+		expect(delegates.spawned).toHaveLength(0);
 	});
 });
