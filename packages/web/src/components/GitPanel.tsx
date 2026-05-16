@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'preact/hooks';
-import type { GitChangedFile, GitFileStatusKind, GitSessionStatusResponse } from '@neokai/shared';
+import { useEffect, useMemo, useState } from 'preact/hooks';
+import type {
+	GitCheckSummary,
+	GitFileStatusKind,
+	GitPullRequestSummary,
+	GitReviewFile,
+	GitReviewSummary,
+	GitSessionStatusResponse,
+} from '@neokai/shared';
 import { getGitSessionStatus } from '../lib/api-helpers.ts';
 import { cn } from '../lib/utils.ts';
 
@@ -7,66 +14,92 @@ interface GitPanelProps {
 	sessionId: string;
 }
 
-const STATUS_LABELS: Record<GitFileStatusKind, string> = {
-	modified: 'Modified',
-	added: 'Added',
-	deleted: 'Deleted',
-	renamed: 'Renamed',
-	untracked: 'Untracked',
-	conflicted: 'Conflicted',
-	other: 'Other',
+const STATUS_BADGES: Record<GitFileStatusKind, string> = {
+	modified: 'M',
+	added: 'A',
+	deleted: 'D',
+	renamed: 'R',
+	untracked: '?',
+	conflicted: '!',
+	other: '*',
 };
 
-const STATUS_DOTS: Record<GitFileStatusKind, string> = {
-	modified: 'bg-amber-400',
-	added: 'bg-emerald-400',
-	deleted: 'bg-red-400',
-	renamed: 'bg-sky-400',
-	untracked: 'bg-violet-400',
-	conflicted: 'bg-orange-500',
-	other: 'bg-gray-500',
+const STATUS_COLORS: Record<GitFileStatusKind, string> = {
+	modified: 'text-amber-300',
+	added: 'text-emerald-300',
+	deleted: 'text-red-300',
+	renamed: 'text-sky-300',
+	untracked: 'text-violet-300',
+	conflicted: 'text-orange-300',
+	other: 'text-gray-400',
 };
 
-const STATUS_ORDER: GitFileStatusKind[] = [
-	'conflicted',
-	'modified',
-	'added',
-	'deleted',
-	'renamed',
-	'untracked',
-	'other',
-];
+const EMPTY_REVIEW: GitReviewSummary = {
+	files: [],
+	totalAdditions: 0,
+	totalDeletions: 0,
+	pullRequest: null,
+	checks: [],
+};
 
-function basename(path: string | null): string {
+function basename(path: string | null | undefined): string {
 	if (!path) return 'None';
 	const trimmed = path.replace(/\/+$/, '');
 	return trimmed.split('/').pop() || trimmed;
 }
 
+function compactPath(path: string): string {
+	const parts = path.split('/');
+	if (parts.length <= 3) return path;
+	return `${parts[0]}/.../${parts.slice(-2).join('/')}`;
+}
+
+function fallbackReview(status: GitSessionStatusResponse): GitReviewSummary {
+	if (status.review) return status.review;
+	return {
+		...EMPTY_REVIEW,
+		files: status.files.map((file) => ({
+			path: file.path,
+			oldPath: file.oldPath,
+			status: file.status,
+			additions: 0,
+			deletions: 0,
+			patch: null,
+			patchTruncated: false,
+			source: 'working_tree',
+		})),
+	};
+}
+
 function modeLabel(status: GitSessionStatusResponse): string {
 	if (status.mode === 'worktree') return 'Worktree';
-	if (status.mode === 'direct') return 'Direct';
+	if (status.mode === 'direct') return 'Local';
 	return 'No workspace';
 }
 
-function groupFiles(
-	files: GitChangedFile[]
-): Array<{ status: GitFileStatusKind; files: GitChangedFile[] }> {
-	return STATUS_ORDER.map((status) => ({
-		status,
-		files: files.filter((file) => file.status === status),
-	})).filter((group) => group.files.length > 0);
-}
-
-function InfoRow({ label, value, title }: { label: string; value: string; title?: string }) {
-	return (
-		<div class="min-w-0">
-			<div class="text-[11px] font-medium uppercase text-gray-600">{label}</div>
-			<div class="mt-1 truncate text-sm text-gray-300" title={title ?? value}>
-				{value}
-			</div>
-		</div>
-	);
+function checkBucket(check: GitCheckSummary): 'pass' | 'fail' | 'pending' | 'other' {
+	const bucket = check.bucket?.toLowerCase();
+	const state = check.state.toLowerCase();
+	if (bucket === 'pass' || state === 'success' || state === 'completed') return 'pass';
+	if (
+		bucket === 'fail' ||
+		state === 'failure' ||
+		state === 'failed' ||
+		state === 'error' ||
+		state === 'cancelled'
+	) {
+		return 'fail';
+	}
+	if (
+		bucket === 'pending' ||
+		state === 'pending' ||
+		state === 'queued' ||
+		state === 'in_progress' ||
+		state === 'waiting'
+	) {
+		return 'pending';
+	}
+	return 'other';
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {
@@ -93,7 +126,301 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 	);
 }
 
+function SectionHeader({ title, value }: { title: string; value?: string }) {
+	return (
+		<div class="mb-2 flex items-center justify-between gap-3">
+			<h3 class="text-xs font-medium uppercase tracking-wide text-gray-500">{title}</h3>
+			{value && <span class="text-xs text-gray-500">{value}</span>}
+		</div>
+	);
+}
+
+function ReviewSummary({
+	status,
+	review,
+}: {
+	status: GitSessionStatusResponse;
+	review: GitReviewSummary;
+}) {
+	const pullRequest = review.pullRequest;
+	const additions = pullRequest?.additions ?? review.totalAdditions;
+	const deletions = pullRequest?.deletions ?? review.totalDeletions;
+	const branchText = status.branch
+		? status.baseBranch
+			? `${status.branch} -> ${status.baseBranch}`
+			: status.branch
+		: 'Detached';
+
+	return (
+		<section class="border-b border-white/10 px-4 py-4">
+			<div class="flex items-start justify-between gap-4">
+				<div class="min-w-0">
+					<div class="flex items-center gap-2">
+						<h3 class="truncate text-sm font-semibold text-gray-100">Branch</h3>
+						<span
+							class={cn(
+								'rounded-full px-2 py-0.5 text-[11px] font-medium',
+								status.mode === 'worktree'
+									? 'bg-emerald-400/10 text-emerald-300'
+									: 'bg-amber-400/10 text-amber-300'
+							)}
+						>
+							{modeLabel(status)}
+						</span>
+					</div>
+					<p class="mt-1 truncate text-xs text-gray-500" title={branchText}>
+						{branchText}
+					</p>
+				</div>
+
+				<div class="flex flex-shrink-0 items-center gap-2 font-mono text-sm">
+					<span class="text-emerald-300">+{additions.toLocaleString()}</span>
+					<span class="text-red-300">-{deletions.toLocaleString()}</span>
+				</div>
+			</div>
+
+			<div class="mt-4 space-y-2">
+				{pullRequest ? (
+					<PullRequestRow pullRequest={pullRequest} />
+				) : (
+					<SummaryRow icon={<PullRequestIcon />} label="No pull request found" muted />
+				)}
+				<ChecksRow checks={review.checks} githubError={review.githubError} />
+				<SummaryRow
+					icon={<WorkspaceIcon />}
+					label={basename(status.worktreePath ?? status.workspacePath)}
+					value={status.mode === 'worktree' ? 'Worktree' : 'Workspace'}
+				/>
+			</div>
+		</section>
+	);
+}
+
+function SummaryRow({
+	icon,
+	label,
+	value,
+	muted = false,
+	tone,
+}: {
+	icon: preact.ComponentChildren;
+	label: string;
+	value?: string;
+	muted?: boolean;
+	tone?: 'success' | 'danger' | 'pending';
+}) {
+	return (
+		<div class="flex min-w-0 items-center gap-3 text-sm">
+			<span
+				class={cn(
+					'flex h-5 w-5 flex-shrink-0 items-center justify-center',
+					tone === 'success'
+						? 'text-emerald-300'
+						: tone === 'danger'
+							? 'text-red-300'
+							: tone === 'pending'
+								? 'text-amber-300'
+								: 'text-gray-300'
+				)}
+			>
+				{icon}
+			</span>
+			<span class={cn('min-w-0 flex-1 truncate', muted ? 'text-gray-500' : 'text-gray-200')}>
+				{label}
+			</span>
+			{value && <span class="flex-shrink-0 text-xs text-gray-500">{value}</span>}
+		</div>
+	);
+}
+
+function PullRequestRow({ pullRequest }: { pullRequest: GitPullRequestSummary }) {
+	const label = `PR #${pullRequest.number}`;
+	const state = pullRequest.isDraft ? 'Draft' : pullRequest.state.toLowerCase();
+
+	return (
+		<a
+			href={pullRequest.url || undefined}
+			target="_blank"
+			rel="noreferrer"
+			class="flex min-w-0 items-center gap-3 rounded-md text-sm text-gray-200 hover:text-gray-100"
+			title={pullRequest.title}
+		>
+			<span class="flex h-5 w-5 flex-shrink-0 items-center justify-center text-gray-300">
+				<PullRequestIcon />
+			</span>
+			<span class="min-w-0 flex-1 truncate">{label}</span>
+			<span class="flex-shrink-0 text-xs capitalize text-gray-500">{state}</span>
+		</a>
+	);
+}
+
+function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubError?: string }) {
+	if (checks.length === 0) {
+		return (
+			<SummaryRow
+				icon={<ChecksIcon />}
+				label={githubError ? 'Checks unavailable' : 'No checks found'}
+				muted={!githubError}
+				tone={githubError ? 'pending' : undefined}
+			/>
+		);
+	}
+
+	const failed = checks.filter((check) => checkBucket(check) === 'fail').length;
+	const pending = checks.filter((check) => checkBucket(check) === 'pending').length;
+	const passed = checks.filter((check) => checkBucket(check) === 'pass').length;
+	const label = failed
+		? `${failed} check${failed === 1 ? '' : 's'} failing`
+		: pending
+			? `${pending} check${pending === 1 ? '' : 's'} pending`
+			: `${passed || checks.length} check${(passed || checks.length) === 1 ? '' : 's'} passing`;
+
+	return (
+		<SummaryRow
+			icon={failed ? <ErrorIcon /> : pending ? <PendingIcon /> : <ChecksIcon />}
+			label={label}
+			value={`${checks.length} total`}
+			tone={failed ? 'danger' : pending ? 'pending' : 'success'}
+		/>
+	);
+}
+
+function FileList({
+	files,
+	selectedPath,
+	onSelect,
+}: {
+	files: GitReviewFile[];
+	selectedPath: string | null;
+	onSelect: (path: string) => void;
+}) {
+	return (
+		<section class="border-b border-white/10 px-3 py-3">
+			<SectionHeader
+				title="Changed files"
+				value={
+					files.length === 0 ? 'Clean' : `${files.length} file${files.length === 1 ? '' : 's'}`
+				}
+			/>
+			{files.length === 0 ? (
+				<div class="rounded-lg bg-white/[0.03] px-3 py-4 text-sm text-gray-500">
+					Working tree is clean.
+				</div>
+			) : (
+				<div class="max-h-72 space-y-0.5 overflow-y-auto">
+					{files.map((file) => (
+						<button
+							type="button"
+							key={file.path}
+							onClick={() => onSelect(file.path)}
+							class={cn(
+								'flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+								selectedPath === file.path
+									? 'bg-white/10 text-gray-100'
+									: 'text-gray-400 hover:bg-white/5'
+							)}
+							title={file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path}
+						>
+							<span class={cn('w-4 flex-shrink-0 font-mono', STATUS_COLORS[file.status])}>
+								{STATUS_BADGES[file.status]}
+							</span>
+							<span class="min-w-0 flex-1 truncate font-mono">{compactPath(file.path)}</span>
+							<span class="flex flex-shrink-0 items-center gap-1 font-mono">
+								{file.additions > 0 && (
+									<span class="text-emerald-300">+{file.additions.toLocaleString()}</span>
+								)}
+								{file.deletions > 0 && (
+									<span class="text-red-300">-{file.deletions.toLocaleString()}</span>
+								)}
+							</span>
+						</button>
+					))}
+				</div>
+			)}
+		</section>
+	);
+}
+
+function DiffPreview({ file }: { file: GitReviewFile | null }) {
+	if (!file) {
+		return (
+			<section class="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
+				<p class="text-sm text-gray-500">Select a changed file to review its diff.</p>
+			</section>
+		);
+	}
+
+	return (
+		<section class="flex min-h-0 flex-1 flex-col">
+			<div class="flex flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+				<div class="min-w-0">
+					<h3 class="truncate font-mono text-xs text-gray-200" title={file.path}>
+						{file.path}
+					</h3>
+					{file.oldPath && (
+						<p class="mt-0.5 truncate font-mono text-[11px] text-gray-600">from {file.oldPath}</p>
+					)}
+				</div>
+				<div class="flex flex-shrink-0 items-center gap-2 font-mono text-xs">
+					<span class="text-emerald-300">+{file.additions.toLocaleString()}</span>
+					<span class="text-red-300">-{file.deletions.toLocaleString()}</span>
+				</div>
+			</div>
+
+			{file.patch ? (
+				<div class="min-h-0 flex-1 overflow-auto bg-dark-900/50">
+					<pre class="min-w-max p-3 text-[11px] leading-relaxed">
+						{file.patch.split('\n').map((line, index) => (
+							<div
+								key={`${index}:${line.slice(0, 24)}`}
+								class={cn(
+									'font-mono',
+									line.startsWith('+') && !line.startsWith('+++')
+										? 'bg-emerald-400/10 text-emerald-200'
+										: line.startsWith('-') && !line.startsWith('---')
+											? 'bg-red-400/10 text-red-200'
+											: line.startsWith('@@')
+												? 'text-sky-300'
+												: line.startsWith('diff --git')
+													? 'text-gray-300'
+													: 'text-gray-500'
+								)}
+							>
+								{line || ' '}
+							</div>
+						))}
+						{file.patchTruncated && (
+							<div class="pt-2 font-mono text-amber-300">Diff truncated for panel preview.</div>
+						)}
+					</pre>
+				</div>
+			) : (
+				<div class="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
+					<p class="text-sm text-gray-500">
+						No inline diff available for this file. This can happen for untracked or binary files.
+					</p>
+				</div>
+			)}
+		</section>
+	);
+}
+
 function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
+	const review = fallbackReview(status);
+	const [selectedPath, setSelectedPath] = useState<string | null>(review.files[0]?.path ?? null);
+
+	useEffect(() => {
+		setSelectedPath((currentPath) => {
+			if (currentPath && review.files.some((file) => file.path === currentPath)) return currentPath;
+			return review.files[0]?.path ?? null;
+		});
+	}, [review.files]);
+
+	const selectedFile = useMemo(
+		() => review.files.find((file) => file.path === selectedPath) ?? null,
+		[review.files, selectedPath]
+	);
+
 	if (status.mode === 'none') {
 		return (
 			<EmptyState
@@ -112,134 +439,16 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
 		);
 	}
 
-	const groups = groupFiles(status.files);
-
 	return (
-		<div class="flex-1 overflow-y-auto px-4 py-4">
-			<div class="space-y-5">
-				<section>
-					<div class="mb-3 flex items-center justify-between gap-3">
-						<h3 class="text-xs font-medium uppercase text-gray-500">Repository</h3>
-						<span
-							class={cn(
-								'rounded-full px-2 py-0.5 text-xs font-medium',
-								status.mode === 'worktree'
-									? 'bg-emerald-400/10 text-emerald-300'
-									: 'bg-amber-400/10 text-amber-300'
-							)}
-						>
-							{modeLabel(status)}
-						</span>
-					</div>
-					<div class="space-y-3 rounded-lg bg-white/[0.03] p-3">
-						<InfoRow label="Branch" value={status.branch ?? 'Detached'} />
-						{status.baseBranch && <InfoRow label="Base" value={status.baseBranch} />}
-						<InfoRow
-							label={status.mode === 'worktree' ? 'Worktree' : 'Workspace'}
-							value={basename(status.worktreePath ?? status.workspacePath)}
-							title={status.worktreePath ?? status.workspacePath ?? undefined}
-						/>
-						{status.mode === 'worktree' && status.workspacePath && (
-							<InfoRow
-								label="Project"
-								value={basename(status.workspacePath)}
-								title={status.workspacePath}
-							/>
-						)}
-					</div>
-					{status.mode === 'direct' && (
-						<p class="mt-2 rounded-lg bg-amber-400/10 px-3 py-2 text-xs leading-relaxed text-amber-200">
-							Direct mode edits the real checkout. Changes here are not isolated in a session
-							worktree.
-						</p>
-					)}
-				</section>
-
-				<section>
-					<div class="mb-3 flex items-center justify-between">
-						<h3 class="text-xs font-medium uppercase text-gray-500">Changes</h3>
-						<span class="text-xs text-gray-500">
-							{status.files.length === 0
-								? 'Clean'
-								: `${status.files.length} file${status.files.length === 1 ? '' : 's'}`}
-						</span>
-					</div>
-					{groups.length === 0 ? (
-						<div class="rounded-lg bg-white/[0.03] px-3 py-4 text-sm text-gray-500">
-							Working tree is clean.
-						</div>
-					) : (
-						<div class="space-y-3">
-							{groups.map((group) => (
-								<div key={group.status}>
-									<div class="mb-1.5 flex items-center gap-2 px-1">
-										<span class={cn('h-2 w-2 rounded-full', STATUS_DOTS[group.status])} />
-										<span class="text-xs font-medium text-gray-400">
-											{STATUS_LABELS[group.status]}
-										</span>
-										<span class="text-xs text-gray-600">{group.files.length}</span>
-									</div>
-									<div class="space-y-0.5">
-										{group.files.map((file) => (
-											<div
-												key={`${group.status}:${file.path}:${file.oldPath ?? ''}`}
-												class="rounded-md px-2 py-1.5 text-xs text-gray-400 hover:bg-white/5"
-												title={file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path}
-											>
-												<div class="truncate font-mono">{file.path}</div>
-												{file.oldPath && (
-													<div class="mt-0.5 truncate font-mono text-gray-600">
-														from {file.oldPath}
-													</div>
-												)}
-											</div>
-										))}
-									</div>
-								</div>
-							))}
-						</div>
-					)}
-				</section>
-
-				<section>
-					<div class="mb-3 flex items-center justify-between">
-						<h3 class="text-xs font-medium uppercase text-gray-500">Commits</h3>
-						{status.aheadCount !== null && (
-							<span class="text-xs text-gray-500">
-								{status.aheadCount} ahead
-								{status.behindCount ? `, ${status.behindCount} behind` : ''}
-							</span>
-						)}
-					</div>
-					{status.commitsAhead.length === 0 ? (
-						<div class="rounded-lg bg-white/[0.03] px-3 py-4 text-sm text-gray-500">
-							No commits ahead of {status.baseBranch ?? 'base'}.
-						</div>
-					) : (
-						<div class="space-y-1">
-							{status.commitsAhead.map((commit) => (
-								<div key={commit.hash} class="rounded-lg bg-white/[0.03] px-3 py-2">
-									<div class="flex items-center gap-2">
-										<span class="font-mono text-xs text-emerald-300">{commit.hash}</span>
-										<span class="min-w-0 flex-1 truncate text-sm text-gray-300">
-											{commit.message}
-										</span>
-									</div>
-									<div class="mt-1 truncate text-xs text-gray-600">
-										{commit.author} - {new Date(commit.date).toLocaleDateString()}
-									</div>
-								</div>
-							))}
-						</div>
-					)}
-				</section>
-
-				{status.error && (
-					<p class="rounded-lg bg-red-500/10 px-3 py-2 text-xs leading-relaxed text-red-300">
-						{status.error}
-					</p>
-				)}
-			</div>
+		<div class="flex min-h-0 flex-1 flex-col">
+			<ReviewSummary status={status} review={review} />
+			<FileList files={review.files} selectedPath={selectedPath} onSelect={setSelectedPath} />
+			<DiffPreview file={selectedFile} />
+			{status.error && (
+				<p class="flex-shrink-0 border-t border-white/10 bg-red-500/10 px-4 py-2 text-xs leading-relaxed text-red-300">
+					{status.error}
+				</p>
+			)}
 		</div>
 	);
 }
@@ -287,7 +496,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 		<aside class="hidden w-full flex-shrink-0 flex-col border-l border-dark-700 bg-dark-800 lg:flex">
 			<div class="flex h-[52px] flex-shrink-0 items-center gap-2 px-4 pr-14">
 				<div class="min-w-0 flex-1">
-					<h2 class="text-sm font-semibold text-gray-100">Git</h2>
+					<h2 class="text-sm font-semibold text-gray-100">Review</h2>
 					<p class="truncate text-xs text-gray-500">
 						{status?.branch ?? (loading ? 'Loading status...' : 'Session workspace')}
 					</p>
@@ -297,8 +506,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 					onClick={refresh}
 					disabled={loading}
 					class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:opacity-50"
-					title="Refresh Git status"
-					aria-label="Refresh Git status"
+					title="Refresh review"
+					aria-label="Refresh review"
 				>
 					<svg
 						class={cn('h-4 w-4', loading && 'animate-spin')}
@@ -320,8 +529,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 				<div class="flex-1 px-4 py-4">
 					<div class="space-y-3">
 						<div class="h-20 rounded-lg bg-white/[0.03] animate-pulse" />
-						<div class="h-32 rounded-lg bg-white/[0.03] animate-pulse" />
-						<div class="h-24 rounded-lg bg-white/[0.03] animate-pulse" />
+						<div class="h-36 rounded-lg bg-white/[0.03] animate-pulse" />
+						<div class="h-44 rounded-lg bg-white/[0.03] animate-pulse" />
 					</div>
 				</div>
 			) : error ? (
@@ -330,5 +539,70 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 				<GitPanelBody status={status} />
 			) : null}
 		</aside>
+	);
+}
+
+function PullRequestIcon() {
+	return (
+		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+			<path
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width={1.8}
+				d="M7 5v14M17 5v3a4 4 0 0 1-4 4H7M17 5a2 2 0 1 0-4 0 2 2 0 0 0 4 0ZM9 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM19 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"
+			/>
+		</svg>
+	);
+}
+
+function WorkspaceIcon() {
+	return (
+		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+			<path
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width={1.8}
+				d="M4.5 17.5h15M6.5 6.5h11a1 1 0 0 1 1 1v8.5h-13V7.5a1 1 0 0 1 1-1Z"
+			/>
+		</svg>
+	);
+}
+
+function ChecksIcon() {
+	return (
+		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+			<path
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width={1.8}
+				d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+			/>
+		</svg>
+	);
+}
+
+function ErrorIcon() {
+	return (
+		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+			<path
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width={1.8}
+				d="M12 8v4M12 16h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+			/>
+		</svg>
+	);
+}
+
+function PendingIcon() {
+	return (
+		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+			<path
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width={1.8}
+				d="M12 6v6l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+			/>
+		</svg>
 	);
 }

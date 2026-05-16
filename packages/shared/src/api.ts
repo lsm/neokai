@@ -151,6 +151,49 @@ export interface GitChangedFile {
 	staged: boolean;
 }
 
+export type GitReviewFileSource = 'branch' | 'working_tree' | 'both';
+
+export interface GitReviewFile {
+	path: string;
+	oldPath?: string;
+	status: GitFileStatusKind;
+	additions: number;
+	deletions: number;
+	patch: string | null;
+	patchTruncated: boolean;
+	source: GitReviewFileSource;
+}
+
+export interface GitPullRequestSummary {
+	number: number;
+	title: string;
+	url: string;
+	state: string;
+	isDraft: boolean;
+	mergeable: string | null;
+	reviewDecision: string | null;
+	headRefName: string | null;
+	baseRefName: string | null;
+	additions: number;
+	deletions: number;
+}
+
+export interface GitCheckSummary {
+	name: string;
+	state: string;
+	bucket: string | null;
+	url: string | null;
+}
+
+export interface GitReviewSummary {
+	files: GitReviewFile[];
+	totalAdditions: number;
+	totalDeletions: number;
+	pullRequest: GitPullRequestSummary | null;
+	checks: GitCheckSummary[];
+	githubError?: string;
+}
+
 /** Response for `git.sessionStatus` — Git context for a specific chat session. */
 export interface GitSessionStatusResponse {
 	sessionId: string;
@@ -167,6 +210,7 @@ export interface GitSessionStatusResponse {
 	commitsAhead: CommitInfo[];
 	aheadCount: number | null;
 	behindCount: number | null;
+	review: GitReviewSummary;
 	error?: string;
 }
 

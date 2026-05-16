@@ -1,4 +1,5 @@
 import simpleGit, { SimpleGit } from 'simple-git';
+import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import type {
@@ -8,6 +9,10 @@ import type {
 	GitBranchesResponse,
 	GitChangedFile,
 	GitFileStatusKind,
+	GitReviewFile,
+	GitReviewSummary,
+	GitCheckSummary,
+	GitPullRequestSummary,
 	GitSessionStatusResponse,
 	Session,
 } from '@neokai/shared';
@@ -27,6 +32,18 @@ export interface CreateWorktreeOptions {
 	branchName?: string; // Optional custom branch name
 	baseBranch?: string;
 }
+
+const MAX_REVIEW_FILES = 80;
+const MAX_PATCH_CHARS = 24_000;
+const GH_TIMEOUT_MS = 8_000;
+
+const EMPTY_REVIEW: GitReviewSummary = {
+	files: [],
+	totalAdditions: 0,
+	totalDeletions: 0,
+	pullRequest: null,
+	checks: [],
+};
 
 export class WorktreeManager {
 	private gitCache = new Map<string, SimpleGit>();
@@ -181,6 +198,7 @@ export class WorktreeManager {
 			commitsAhead: [],
 			aheadCount: null,
 			behindCount: null,
+			review: EMPTY_REVIEW,
 		};
 
 		if (!effectivePath) return empty;
@@ -212,6 +230,7 @@ export class WorktreeManager {
 		let commitsAhead: CommitInfo[] = [];
 		let aheadCount: number | null = null;
 		let behindCount: number | null = null;
+		let review: GitReviewSummary = EMPTY_REVIEW;
 
 		try {
 			if (session.worktree) {
@@ -231,6 +250,8 @@ export class WorktreeManager {
 				aheadCount = 0;
 				behindCount = 0;
 			}
+
+			review = await this.getReviewSummary(effectivePath, baseBranch, branch, files);
 		} catch (error) {
 			return {
 				...empty,
@@ -241,6 +262,7 @@ export class WorktreeManager {
 				defaultBranch: repoInfo.defaultBranch,
 				isDirty: files.length > 0 || repoInfo.isDirty,
 				files,
+				review,
 				error: error instanceof Error ? error.message : String(error),
 			};
 		}
@@ -260,8 +282,258 @@ export class WorktreeManager {
 			commitsAhead,
 			aheadCount,
 			behindCount,
+			review,
 			error: fileStatusError,
 		};
+	}
+
+	private async getReviewSummary(
+		repoPath: string,
+		baseBranch: string | null,
+		branch: string | null,
+		workingTreeFiles: GitChangedFile[]
+	): Promise<GitReviewSummary> {
+		const git = this.getGit(repoPath);
+		const reviewFiles = new Map<string, GitReviewFile>();
+
+		if (baseBranch && branch && baseBranch !== branch) {
+			await this.addBranchReviewFiles(git, reviewFiles, baseBranch, branch);
+		}
+
+		await this.addWorkingTreeReviewFiles(git, reviewFiles, workingTreeFiles);
+
+		const files = [...reviewFiles.values()].sort((a, b) => a.path.localeCompare(b.path));
+		const github = await this.getGitHubReviewSummary(repoPath);
+
+		return {
+			files,
+			totalAdditions: files.reduce((sum, file) => sum + file.additions, 0),
+			totalDeletions: files.reduce((sum, file) => sum + file.deletions, 0),
+			pullRequest: github.pullRequest,
+			checks: github.checks,
+			githubError: github.error,
+		};
+	}
+
+	private async addBranchReviewFiles(
+		git: SimpleGit,
+		reviewFiles: Map<string, GitReviewFile>,
+		baseBranch: string,
+		branch: string
+	): Promise<void> {
+		let nameStatusOutput = '';
+		try {
+			nameStatusOutput = await git.raw([
+				'diff',
+				'--name-status',
+				'-z',
+				`${baseBranch}...${branch}`,
+			]);
+		} catch {
+			return;
+		}
+
+		const stats = await this.getNumstatMap(git, [`${baseBranch}...${branch}`]);
+		const entries = nameStatusOutput.split('\0').filter(Boolean);
+
+		for (let index = 0; index < entries.length && reviewFiles.size < MAX_REVIEW_FILES; index++) {
+			const statusCode = entries[index];
+			const statusLetter = statusCode[0];
+			let oldPath: string | undefined;
+			let path = entries[++index];
+
+			if (!path) continue;
+
+			if (statusLetter === 'R' || statusLetter === 'C') {
+				oldPath = path;
+				path = entries[++index];
+				if (!path) continue;
+			}
+
+			const stat = stats.get(path) ?? { additions: 0, deletions: 0 };
+			const patchResult = await this.getFilePatch(git, [`${baseBranch}...${branch}`, '--', path]);
+			reviewFiles.set(path, {
+				path,
+				oldPath,
+				status: this.gitStatusKind(statusLetter, ' '),
+				additions: stat.additions,
+				deletions: stat.deletions,
+				patch: patchResult.patch,
+				patchTruncated: patchResult.truncated,
+				source: 'branch',
+			});
+		}
+	}
+
+	private async addWorkingTreeReviewFiles(
+		git: SimpleGit,
+		reviewFiles: Map<string, GitReviewFile>,
+		workingTreeFiles: GitChangedFile[]
+	): Promise<void> {
+		const stats = await this.getNumstatMap(git, ['HEAD']);
+
+		for (const file of workingTreeFiles) {
+			if (reviewFiles.size >= MAX_REVIEW_FILES && !reviewFiles.has(file.path)) break;
+
+			const stat = stats.get(file.path) ?? { additions: 0, deletions: 0 };
+			const patchResult =
+				file.status === 'untracked'
+					? { patch: null, truncated: false }
+					: await this.getFilePatch(git, ['HEAD', '--', file.path]);
+			const existing = reviewFiles.get(file.path);
+
+			reviewFiles.set(file.path, {
+				path: file.path,
+				oldPath: file.oldPath ?? existing?.oldPath,
+				status: file.status !== 'other' ? file.status : (existing?.status ?? file.status),
+				additions: (existing?.additions ?? 0) + stat.additions,
+				deletions: (existing?.deletions ?? 0) + stat.deletions,
+				patch: this.combinePatches(existing?.patch ?? null, patchResult.patch),
+				patchTruncated: (existing?.patchTruncated ?? false) || patchResult.truncated,
+				source: existing ? 'both' : 'working_tree',
+			});
+		}
+	}
+
+	private async getNumstatMap(
+		git: SimpleGit,
+		rangeArgs: string[]
+	): Promise<Map<string, { additions: number; deletions: number }>> {
+		const stats = new Map<string, { additions: number; deletions: number }>();
+		try {
+			const output = await git.raw(['diff', '--numstat', ...rangeArgs]);
+			for (const line of output.split('\n')) {
+				if (!line.trim()) continue;
+				const [additionsRaw, deletionsRaw, path] = line.split('\t');
+				if (!path) continue;
+				stats.set(path, {
+					additions: Number.parseInt(additionsRaw, 10) || 0,
+					deletions: Number.parseInt(deletionsRaw, 10) || 0,
+				});
+			}
+		} catch {
+			// Diff stats are best-effort for the panel; status and patches still render.
+		}
+		return stats;
+	}
+
+	private async getFilePatch(
+		git: SimpleGit,
+		rangeArgs: string[]
+	): Promise<{ patch: string | null; truncated: boolean }> {
+		try {
+			const patch = await git.raw(['diff', '--no-ext-diff', '--no-color', ...rangeArgs]);
+			if (!patch.trim()) return { patch: null, truncated: false };
+			if (patch.length <= MAX_PATCH_CHARS) return { patch, truncated: false };
+			return { patch: patch.slice(0, MAX_PATCH_CHARS), truncated: true };
+		} catch {
+			return { patch: null, truncated: false };
+		}
+	}
+
+	private combinePatches(first: string | null, second: string | null): string | null {
+		if (!first) return second;
+		if (!second) return first;
+		const combined = `${first.trimEnd()}\n\n${second}`;
+		return combined.length <= MAX_PATCH_CHARS ? combined : combined.slice(0, MAX_PATCH_CHARS);
+	}
+
+	private async getGitHubReviewSummary(repoPath: string): Promise<{
+		pullRequest: GitPullRequestSummary | null;
+		checks: GitCheckSummary[];
+		error?: string;
+	}> {
+		const prResult = await this.execGhJson(repoPath, [
+			'pr',
+			'view',
+			'--json',
+			'number,title,url,state,isDraft,mergeable,reviewDecision,headRefName,baseRefName,additions,deletions',
+		]);
+
+		if (!prResult.ok) {
+			return { pullRequest: null, checks: [], error: prResult.error };
+		}
+
+		const pullRequest = this.parsePullRequestSummary(prResult.data);
+		const checksResult = await this.execGhJson(repoPath, [
+			'pr',
+			'checks',
+			'--json',
+			'name,state,bucket,link',
+		]);
+
+		return {
+			pullRequest,
+			checks: checksResult.ok ? this.parseCheckSummaries(checksResult.data) : [],
+			error: checksResult.ok ? undefined : checksResult.error,
+		};
+	}
+
+	private async execGhJson(
+		cwd: string,
+		args: string[]
+	): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> {
+		return new Promise((resolve) => {
+			execFile(
+				'gh',
+				args,
+				{ cwd, encoding: 'utf8', timeout: GH_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+				(error, stdout, stderr) => {
+					const output = typeof stdout === 'string' ? stdout.trim() : '';
+					if (output) {
+						try {
+							resolve({ ok: true, data: JSON.parse(output) });
+							return;
+						} catch {
+							// Fall through to a readable error below.
+						}
+					}
+					const message =
+						(typeof stderr === 'string' && stderr.trim()) ||
+						(error instanceof Error ? error.message : 'GitHub CLI request failed');
+					resolve({ ok: false, error: message });
+				}
+			);
+		});
+	}
+
+	private parsePullRequestSummary(data: unknown): GitPullRequestSummary | null {
+		if (!data || typeof data !== 'object') return null;
+		const record = data as Record<string, unknown>;
+		const number = typeof record.number === 'number' ? record.number : null;
+		if (!number) return null;
+
+		return {
+			number,
+			title: typeof record.title === 'string' ? record.title : `PR #${number}`,
+			url: typeof record.url === 'string' ? record.url : '',
+			state: typeof record.state === 'string' ? record.state : 'UNKNOWN',
+			isDraft: record.isDraft === true,
+			mergeable: typeof record.mergeable === 'string' ? record.mergeable : null,
+			reviewDecision: typeof record.reviewDecision === 'string' ? record.reviewDecision : null,
+			headRefName: typeof record.headRefName === 'string' ? record.headRefName : null,
+			baseRefName: typeof record.baseRefName === 'string' ? record.baseRefName : null,
+			additions: typeof record.additions === 'number' ? record.additions : 0,
+			deletions: typeof record.deletions === 'number' ? record.deletions : 0,
+		};
+	}
+
+	private parseCheckSummaries(data: unknown): GitCheckSummary[] {
+		if (!Array.isArray(data)) return [];
+		return data
+			.map((item): GitCheckSummary | null => {
+				if (!item || typeof item !== 'object') return null;
+				const record = item as Record<string, unknown>;
+				const name = typeof record.name === 'string' ? record.name : null;
+				if (!name) return null;
+				return {
+					name,
+					state: typeof record.state === 'string' ? record.state : 'UNKNOWN',
+					bucket: typeof record.bucket === 'string' ? record.bucket : null,
+					url: typeof record.link === 'string' ? record.link : null,
+				};
+			})
+			.filter((check): check is GitCheckSummary => check !== null);
 	}
 
 	private async getChangedFiles(repoPath: string): Promise<GitChangedFile[]> {
