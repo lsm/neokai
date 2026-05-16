@@ -248,10 +248,21 @@ type DeliveryRecord = {
 
 - `messageId`: generate deterministic ID from legacy row ID (e.g. `msg_legacy_<id>`).
 - `spaceId`: copy from legacy row's workflow/task Space context.
-- `senderActorId`: derive from `sourceAgentName` as worker actor — format
-  `@worker:<run>/<node>/<sourceAgentName>` if `targetKind = 'node_agent'`, or Coordinator for
-  `targetKind = 'space_agent'` sources.
-- `targets`: `[targetAgentName]` (or `['@coordinator']` for `space_agent` rows).
+- `senderActorId`: resolve from `sourceAgentName` using sender-kind logic — not all senders are workers.
+  Known cases:
+  - `'human'` → human actor (sender was a human via task message RPC).
+  - `'coordinator'` or `'space-agent'` → agent actor with coordinator role.
+  - `'task-agent'` → legacy; map to coordinator agent role for backward compatibility.
+  - worker agent name (e.g. `'coder'`, `'reviewer'`) → worker actor scoped by
+    `(workflowRunId, nodeId, agentName)` from the legacy row's run context.
+  Do not infer sender kind from `targetKind`. A `targetKind = 'node_agent'` row can have
+  `sourceAgentName: 'human'` (human sends to worker), and a `targetKind = 'space_agent'` row can have
+  a real worker source (worker escalates to Coordinator). Preserve original sender identity in both
+  directions.
+- `targets`: `[targetAgentName]` — preserve original target text. For `space_agent` rows, keep
+  `'space-agent'` (not rewritten to `@coordinator`). The DeliveryRecord mapping handles actual routing
+  to Coordinator or stored reply-session; the MessageRecord stores the original caller-specified target
+  for audit/replay fidelity.
 - `body`: copy from legacy `message` field.
 - `kind`: `'message'`.
 - `workflowRunId`: copy from legacy row.
@@ -289,10 +300,11 @@ Keep resolver deterministic:
    delivery for each inactive holder — preserves escalation/retry behavior when role holder restarts.
 5. Resolve `@session:<id>` to session actor if session is user-facing/ad-hoc. Inactive sessions can
    create queued delivery if activation/retry policy exists.
-6. Resolve `@worker:<node>` using `workflowRunId` plus current `agentName` context, or only if that
-   node has one routable agent slot. Inactive workers create queued delivery. Resolution must enforce
-   channel topology permissions before delivery — direct worker addressing does not bypass declared
-   workflow channel policy.
+6. Resolve `@worker:<node>` using `workflowRunId` from context plus current `agentName` context, or only
+   if that node has one routable agent slot. If `workflowRunId` is missing (non-workflow caller such as
+   Coordinator or session actor), require explicit run-qualified target `@worker:<run>/<node>/<agent>`
+   instead. Inactive workers create queued delivery. Resolution must enforce channel topology permissions
+   before delivery — direct worker addressing does not bypass declared workflow channel policy.
 7. Resolve `@worker:<node>/<agent>` using `workflowRunId` from context. If `workflowRunId` is missing
    (non-workflow caller such as Coordinator or session actor), require explicit run-qualified target
    `@worker:<run>/<node>/<agent>` instead. Inactive workers create queued delivery. Resolution must
