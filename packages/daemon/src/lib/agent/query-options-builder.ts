@@ -519,6 +519,27 @@ export class QueryOptionsBuilder {
 			// strictMcpConfig + settingSources are already set unconditionally above.
 		}
 
+		// ============ Workflow Node-Agent Sub-Session MCP Tool Exposure ============
+		// Exec sessions (`…:task:…:exec:…`) and eager-spawn sessions (`…:task:…:agent:…`)
+		// have allowedTools restricted to CODER_TOOLS (built-in only). Auto-allow all
+		// explicitly configured MCP server tools so node-agent and other per-session
+		// MCP servers are usable without a permission prompt (there is no human in the
+		// loop to approve tool calls in automated workflow execution).
+		if (
+			this.ctx.session.context?.spaceId &&
+			this.ctx.session.id.includes(':task:') &&
+			(this.ctx.session.id.includes(':exec:') || this.ctx.session.id.includes(':agent:'))
+		) {
+			const mcpServerWildcards = Object.keys(queryOptions.mcpServers ?? {}).map(
+				(name) => `${name}__*`
+			);
+			if (mcpServerWildcards.length > 0) {
+				queryOptions.allowedTools = [
+					...new Set([...(queryOptions.allowedTools ?? []), ...mcpServerWildcards]),
+				];
+			}
+		}
+
 		// ============ Coordinator Mode ============
 		// When coordinator mode is enabled, apply the coordinator agent to the main thread
 		// and merge specialist agents with any user-defined agents
