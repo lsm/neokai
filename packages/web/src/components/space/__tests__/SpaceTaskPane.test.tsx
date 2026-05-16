@@ -830,6 +830,23 @@ describe('SpaceTaskPane — canvas toggle', () => {
 				expect(queryByTestId('edit-task-modal-content')).toBeNull();
 			});
 		});
+
+		it('clears edit modal state on task switch', () => {
+			mockTasks.value = [
+				makeTask({ id: 'task-1', status: 'in_progress' }),
+				makeTask({ id: 'task-2', status: 'in_progress', taskNumber: 2 }),
+			];
+			const { getByTestId, queryByTestId, rerender } = render(<SpaceTaskPane taskId="task-1" />);
+			// Open edit modal for task-1
+			fireEvent.click(getByTestId('task-edit-button'));
+			expect(getByTestId('edit-task-modal-content')).toBeTruthy();
+
+			// Switch to task-2
+			rerender(<SpaceTaskPane taskId="task-2" />);
+
+			// Edit modal should be closed
+			expect(queryByTestId('edit-task-modal-content')).toBeNull();
+		});
 	});
 	it('canvas node click matches by role (slot name), not by label — regression for Review node bug', () => {
 		// This test reproduces the bug where clicking a "Review" node opened the Task Agent

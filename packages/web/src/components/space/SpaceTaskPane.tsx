@@ -208,6 +208,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		setThreadScroller(null);
 		scrollToBottomRef.current = null;
 		draftWasActiveRef.current = false;
+		setShowEditTaskModal(false);
+		setEditTaskBusy(false);
+		setEditTaskError(null);
 	}, [taskId]);
 
 	useEffect(() => {

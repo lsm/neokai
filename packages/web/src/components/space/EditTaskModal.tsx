@@ -46,14 +46,16 @@ export function EditTaskModal({
 	const [description, setDescription] = useState(initialDescription);
 	const [priority, setPriority] = useState(initialPriority);
 
-	// Reset form when modal opens with fresh values
+	// Reset form when the modal opens. Only depend on `isOpen` so concurrent
+	// store updates (e.g. space.task.updated events) don't overwrite in-progress
+	// edits while the user is typing.
 	useEffect(() => {
 		if (isOpen) {
 			setTitle(initialTitle);
 			setDescription(initialDescription);
 			setPriority(initialPriority);
 		}
-	}, [isOpen, initialTitle, initialDescription, initialPriority]);
+	}, [isOpen]);
 
 	const hasChanges =
 		title.trim() !== initialTitle.trim() ||

@@ -228,4 +228,37 @@ describe('EditTaskModal', () => {
 		const { queryByTestId } = renderModal({ error: null });
 		expect(queryByTestId('edit-task-error')).toBeNull();
 	});
+
+	it('does not overwrite user edits when initial props change while open', () => {
+		const onCancel = vi.fn();
+		const onConfirm = vi.fn();
+		const { rerender, getByTestId } = render(
+			<EditTaskModal
+				isOpen={true}
+				busy={false}
+				onCancel={onCancel}
+				onConfirm={onConfirm}
+				{...DEFAULT_PROPS}
+			/>
+		);
+		// User types a new title
+		fireEvent.input(getByTestId('edit-task-title'), { target: { value: 'My New Title' } });
+
+		// Simulate external update changing the initial title (e.g. space.task.updated event)
+		rerender(
+			<EditTaskModal
+				isOpen={true}
+				busy={false}
+				onCancel={onCancel}
+				onConfirm={onConfirm}
+				initialTitle="Changed Externally"
+				initialDescription="Do the thing"
+				initialPriority="normal"
+			/>
+		);
+
+		// User's edit should be preserved — not overwritten by the prop change
+		const title = getByTestId('edit-task-title') as HTMLInputElement;
+		expect(title.value).toBe('My New Title');
+	});
 });
