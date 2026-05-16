@@ -1320,12 +1320,13 @@ export class AgentSession
 	/**
 	 * Called by QueryRunner when 429 rate limit exhaustion is detected.
 	 * Delegates to the RateLimitWatchdog to schedule auto-retry.
+	 * @returns true if cooldown was scheduled, false if max retries exceeded.
 	 */
 	onRateLimitExhausted(
 		errorMessage: string,
 		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
-	): void {
-		this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage);
+	): boolean {
+		return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage);
 	}
 
 	// ============================================================================

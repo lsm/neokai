@@ -165,13 +165,13 @@ export interface QueryRunnerContext {
 	/**
 	 * Called when a 429 rate limit exhaustion error is detected (all SDK retries exhausted).
 	 * The RateLimitWatchdog uses this to schedule an automatic retry after cooldown.
-	 * @param errorMessage - The error message from the SDK
-	 * @param lastUserMessage - The last consumed user message for re-enqueue on retry
+	 * @returns true if cooldown was scheduled (caller should skip setIdle),
+	 *          false if max retries exceeded or callback is unset.
 	 */
 	onRateLimitExhausted?: (
 		errorMessage: string,
 		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
-	) => void;
+	) => boolean;
 }
 
 /**
@@ -805,6 +805,10 @@ export class QueryRunner {
 			if (!isAbortError) {
 				const apiErrorHandled = await this.handleApiValidationError(error);
 
+				// Track whether rate limit cooldown was scheduled; if so, skip setIdle
+				// below to preserve the rate_limit_cooldown processing state.
+				let rateLimitCooldownScheduled = false;
+
 				if (!apiErrorHandled) {
 					let category = ErrorCategory.SYSTEM;
 					const providerId = session.config.provider as string | undefined;
@@ -874,13 +878,13 @@ export class QueryRunner {
 
 					// Notify rate limit watchdog when 429 exhaustion is detected.
 					// Only trigger for 429/rate limit errors (not 402/quota which are
-					// non-retryable billing issues).
+					// non-retryable billing issues). Returns true if cooldown was scheduled.
 					const is429Error =
 						category === ErrorCategory.RATE_LIMIT &&
 						(errorMessage.includes('429') || errorMessage.includes('rate limit'));
-					if (is429Error && this.ctx.onRateLimitExhausted) {
-						this.ctx.onRateLimitExhausted(errorMessage, this._lastConsumedUserMessage);
-					}
+					rateLimitCooldownScheduled =
+						is429Error &&
+						!!this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage);
 
 					// For startup timeouts / resume failures, provide actionable recovery hints.
 					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
@@ -923,7 +927,12 @@ export class QueryRunner {
 						}
 					);
 				}
-				await stateManager.setIdle();
+				// Skip idle transition when rate limit cooldown was scheduled —
+				// the watchdog already set rate_limit_cooldown state and will
+				// transition to idle when the user cancels or the retry fires.
+				if (!rateLimitCooldownScheduled) {
+					await stateManager.setIdle();
+				}
 			}
 		} finally {
 			// Check for stale query FIRST to avoid race conditions.

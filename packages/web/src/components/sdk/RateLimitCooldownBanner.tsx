@@ -49,6 +49,8 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
 			await cancelRateLimitRetry(sessionId);
 		} catch {
 			// Session may have already transitioned
+		} finally {
+			setCancelling(false);
 		}
 	}, [sessionId]);
 
@@ -58,6 +60,8 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
 			await retryNowAfterRateLimit(sessionId);
 		} catch {
 			// Session may have already transitioned
+		} finally {
+			setRetrying(false);
 		}
 	}, [sessionId]);
 

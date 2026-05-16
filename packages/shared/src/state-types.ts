@@ -4,13 +4,7 @@
  * Fine-grained state channels - each property has its own channel
  */
 
-import type {
-	AuthStatus,
-	MessageContent,
-	SessionInfo,
-	HealthStatus,
-	NeokaiActionMessage,
-} from './types.ts';
+import type { AuthStatus, SessionInfo, HealthStatus, NeokaiActionMessage } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
 
@@ -180,7 +174,6 @@ export type AgentProcessingState =
 			retryCount: number;
 			maxRetries: number;
 			retryAt: number;
-			lastUserMessage: { uuid: string; content: string | MessageContent[] } | null;
 	  }
 	| { status: 'interrupted' };
 

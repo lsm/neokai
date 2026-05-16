@@ -122,7 +122,6 @@ export class RateLimitWatchdog {
 			retryCount: this.retryCount,
 			maxRetries: this.config.maxAutoRetries,
 			retryAt,
-			lastUserMessage: this.lastUserMessage,
 		});
 
 		this.cooldownTimer = setTimeout(() => {

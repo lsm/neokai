@@ -9,7 +9,7 @@
  * - Reset clears state
  */
 
-import { describe, expect, it, beforeEach, mock, jest } from 'bun:test';
+import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { RateLimitWatchdog } from '../../../../src/lib/agent/rate-limit-watchdog';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 

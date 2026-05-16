@@ -8,7 +8,7 @@
  * Now persists state to database for recovery after restarts.
  */
 
-import type { AgentProcessingState, MessageContent, PendingUserQuestion } from '@neokai/shared';
+import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SDKAssistantMessage, SDKMessage } from '@neokai/shared/sdk';
 import { isToolUseBlock } from '@neokai/shared/sdk/type-guards';
@@ -177,14 +177,12 @@ export class ProcessingStateManager {
 		retryCount: number;
 		maxRetries: number;
 		retryAt: number;
-		lastUserMessage: { uuid: string; content: string | MessageContent[] } | null;
 	}): Promise<void> {
 		await this.setState({
 			status: 'rate_limit_cooldown',
 			retryCount: state.retryCount,
 			maxRetries: state.maxRetries,
 			retryAt: state.retryAt,
-			lastUserMessage: state.lastUserMessage,
 		});
 	}
 
