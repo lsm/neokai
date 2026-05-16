@@ -226,7 +226,9 @@ export function ContextPanel() {
 						/>
 					</svg>
 					<p class="text-sm font-medium text-gray-300">No spaces yet</p>
-					<p class="text-xs text-gray-500 mt-1">Create a space from the Spaces tab.</p>
+					<p class="text-xs text-gray-500 mt-1">
+						Create a Space to organize agents, missions, and project context.
+					</p>
 				</div>
 			) : (
 				<nav class="px-2 space-y-1" aria-label="Switch spaces">
