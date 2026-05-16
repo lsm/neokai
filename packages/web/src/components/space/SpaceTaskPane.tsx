@@ -672,20 +672,34 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
-	const handleEditTaskConfirm = async (updates: {
-		title: string;
-		description: string;
-		priority: import('@neokai/shared').SpaceTaskPriority;
-	}) => {
+	const handleEditTaskConfirm = async (
+		updates: Partial<{
+			title: string;
+			description: string;
+			priority: import('@neokai/shared').SpaceTaskPriority;
+		}>
+	) => {
+		// Capture the current taskId before the async gap. If the user
+		// switches tasks while the save is in-flight, the stale callback
+		// must not mutate the new task's modal state.
+		const savedTaskId = task.id;
 		try {
 			setEditTaskBusy(true);
 			setEditTaskError(null);
-			await spaceStore.updateTask(task.id, updates);
-			setShowEditTaskModal(false);
+			await spaceStore.updateTask(savedTaskId, updates);
+			// Only close the modal if we're still on the same task.
+			if (task.id === savedTaskId) {
+				setShowEditTaskModal(false);
+			}
 		} catch (err) {
-			setEditTaskError(formatTaskThreadError(err));
+			// Only surface the error if we're still on the same task.
+			if (task.id === savedTaskId) {
+				setEditTaskError(formatTaskThreadError(err));
+			}
 		} finally {
-			setEditTaskBusy(false);
+			if (task.id === savedTaskId) {
+				setEditTaskBusy(false);
+			}
 		}
 	};
 

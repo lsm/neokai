@@ -99,6 +99,15 @@ describe('EditTaskModal', () => {
 		expect(confirm.disabled).toBe(false);
 	});
 
+	it('confirm sends only the changed title, not untouched fields', () => {
+		const { getByTestId, onConfirm } = renderModal();
+		fireEvent.input(getByTestId('edit-task-title'), { target: { value: 'New Title' } });
+		fireEvent.click(getByTestId('edit-task-confirm'));
+		expect(onConfirm).toHaveBeenCalledWith({
+			title: 'New Title',
+		});
+	});
+
 	it('confirm is disabled when title is emptied', () => {
 		const { getByTestId } = renderModal();
 		fireEvent.input(getByTestId('edit-task-title'), { target: { value: '' } });
@@ -124,7 +133,7 @@ describe('EditTaskModal', () => {
 		expect(confirm.disabled).toBe(true);
 	});
 
-	it('confirm forwards trimmed title and description', () => {
+	it('confirm forwards only changed fields', () => {
 		const { getByTestId, onConfirm } = renderModal();
 		fireEvent.input(getByTestId('edit-task-title'), {
 			target: { value: '  Updated Title  ' },
@@ -137,17 +146,14 @@ describe('EditTaskModal', () => {
 		expect(onConfirm).toHaveBeenCalledWith({
 			title: 'Updated Title',
 			description: 'New desc',
-			priority: 'normal',
 		});
 	});
 
-	it('confirm forwards priority change', () => {
+	it('confirm forwards priority change only', () => {
 		const { getByTestId, onConfirm } = renderModal();
 		fireEvent.change(getByTestId('edit-task-priority'), { target: { value: 'urgent' } });
 		fireEvent.click(getByTestId('edit-task-confirm'));
 		expect(onConfirm).toHaveBeenCalledWith({
-			title: 'My Task',
-			description: 'Do the thing',
 			priority: 'urgent',
 		});
 	});

@@ -24,11 +24,13 @@ export interface EditTaskModalProps {
 	initialDescription: string;
 	initialPriority: SpaceTaskPriority;
 	onCancel: () => void;
-	onConfirm: (updates: {
-		title: string;
-		description: string;
-		priority: SpaceTaskPriority;
-	}) => void | Promise<void>;
+	onConfirm: (
+		updates: Partial<{
+			title: string;
+			description: string;
+			priority: SpaceTaskPriority;
+		}>
+	) => void | Promise<void>;
 	error?: string | null;
 }
 
@@ -67,11 +69,18 @@ export function EditTaskModal({
 
 	const handleConfirm = (): void => {
 		if (!canConfirm) return;
-		void onConfirm({
-			title: trimmedTitle,
-			description: description.trim(),
-			priority,
-		});
+		// Only send changed fields to avoid overwriting concurrent edits
+		// on untouched fields.
+		const updates: Partial<{
+			title: string;
+			description: string;
+			priority: SpaceTaskPriority;
+		}> = {};
+		if (title.trim() !== initialTitle.trim()) updates.title = trimmedTitle;
+		if (description.trim() !== initialDescription.trim()) updates.description = description.trim();
+		if (priority !== initialPriority) updates.priority = priority;
+		if (Object.keys(updates).length === 0) return;
+		void onConfirm(updates);
 	};
 
 	return (

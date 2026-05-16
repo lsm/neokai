@@ -794,8 +794,6 @@ describe('SpaceTaskPane — canvas toggle', () => {
 			await waitFor(() => {
 				expect(mockUpdateTask).toHaveBeenCalledWith('task-1', {
 					title: 'New Title',
-					description: 'Task description',
-					priority: 'normal',
 				});
 			});
 		});
