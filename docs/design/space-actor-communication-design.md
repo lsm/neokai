@@ -256,12 +256,12 @@ type DeliveryRecord = {
   - worker agent name (e.g. `'coder'`, `'reviewer'`) → worker actor scoped by
     `(workflowRunId, nodeId, agentName)` from the legacy row's run context. Legacy rows do not store
     sender `nodeId`, so when the same agent name exists on multiple nodes in the run, the sender cannot
-    be unambiguously reconstructed. Disambiguation rule: use the source node that matches the delivery's
-    resolved target — a worker sending to another node sent from its own slot. If the target is
-    `space-agent` or `human` (non-worker), pick the first matching node by node creation order and mark
-    the sender `nodeId` as approximate. The `senderActorId` field in this case preserves the agent name
-    identity even if `nodeId` is approximate, because v1 audit uses sender kind + name + run, not
-    exact node, for human-visible attribution.
+    be unambiguously reconstructed. Disambiguation rule: when `sourceAgentName` matches worker slots on
+    multiple nodes, exclude the delivery target's node (sender and target are different nodes in
+    worker-to-worker flows). If only one candidate remains, use that node. If multiple candidates remain
+    (e.g. 3+ nodes with the same agent name), or the target is `space-agent`/`human` (non-worker), pick
+    the first match by node creation order and mark the `senderActorId` nodeId as approximate. V1 audit
+    uses sender kind + name + run for human-visible attribution, not exact node.
   Do not infer sender kind from `targetKind`. A `targetKind = 'node_agent'` row can have
   `sourceAgentName: 'human'` (human sends to worker), and a `targetKind = 'space_agent'` row can have
   a real worker source (worker escalates to Coordinator). Preserve original sender identity in both
