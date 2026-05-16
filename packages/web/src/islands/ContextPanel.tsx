@@ -204,6 +204,11 @@ export function ContextPanel() {
 		contextPanelOpenSignal.value = false;
 	};
 
+	const handleSettingsNav = (section?: SettingsSection) => {
+		navigateToSettings(section);
+		contextPanelOpenSignal.value = false;
+	};
+
 	const activeSpaces = spaceStore.spacesWithTasks.value.filter(
 		(space) => space.status === 'active'
 	);
@@ -416,7 +421,7 @@ export function ContextPanel() {
 										<button
 											key={section.id}
 											type="button"
-											onClick={() => navigateToSettings(section.id)}
+											onClick={() => handleSettingsNav(section.id)}
 											class={cn(
 												'w-full px-4 py-3 flex items-center gap-3 text-left transition-colors duration-150',
 												isActive
@@ -442,7 +447,7 @@ export function ContextPanel() {
 				<div class={`flex items-center gap-1 p-2 border-t ${borderColors.ui.default}`}>
 					<button
 						type="button"
-						onClick={() => navigateToSettings()}
+						onClick={() => handleSettingsNav()}
 						class={cn(
 							'flex-1 flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors',
 							navSection === 'settings'
@@ -450,12 +455,7 @@ export function ContextPanel() {
 								: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
 						)}
 					>
-						<svg
-							class="w-4 h-4 text-gray-400"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
+						<svg class="w-4 h-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
