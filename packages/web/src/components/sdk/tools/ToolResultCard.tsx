@@ -282,6 +282,28 @@ export function ToolResultCard({
 			{/* Expanded content - input and output details */}
 			{isExpanded && (
 				<div class={cn('p-3 border-t bg-white dark:bg-gray-900 space-y-3', colors.border)}>
+					{/* Error display takes priority when tool failed */}
+					{isError && output !== undefined && output !== null && (
+						<div>
+							<div class="text-xs font-semibold text-red-600 dark:text-red-400 mb-2">
+								Error
+								{inputRecord?.file_path && (
+									<span class="font-normal text-gray-500 dark:text-gray-400 ml-1">
+										— {String(inputRecord.file_path)}
+									</span>
+								)}
+							</div>
+							<pre
+								class={cn(
+									'text-xs p-3 rounded overflow-x-auto border',
+									'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
+								)}
+							>
+								{getOutputDisplayText(output)}
+							</pre>
+						</div>
+					)}
+
 					{/* Custom renderer takes priority */}
 					{customRenderer ? (
 						customRenderer({ toolName, input, output, isError, variant })
@@ -295,6 +317,7 @@ export function ToolResultCard({
 					) : /* Special handling for Read tool - show syntax-highlighted code */
 					toolName === 'Read' &&
 						output &&
+						!isError &&
 						(typeof output === 'string' ||
 							(typeof output === 'object' &&
 								'content' in output &&
@@ -314,7 +337,8 @@ export function ToolResultCard({
 					) : /* Special handling for Write tool - show syntax-highlighted code */
 					toolName === 'Write' &&
 						inputRecord?.content &&
-						typeof inputRecord.content === 'string' ? (
+						typeof inputRecord.content === 'string' &&
+						!isError ? (
 						<div>
 							{variant === 'detailed' && (
 								<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
@@ -376,12 +400,11 @@ export function ToolResultCard({
 							</div>
 
 							{/* Output/Result */}
-							{output !== undefined && output !== null && (
+							{!isError && output !== undefined && output !== null && (
 								<div>
 									<div class="flex items-center justify-between mb-2">
 										<div class="text-xs font-semibold text-gray-600 dark:text-gray-400">
 											Output:
-											{isError && <span class="ml-2 text-red-600 dark:text-red-400">(Error)</span>}
 										</div>
 										{messageUuid && sessionId && !isOutputRemoved && (
 											<button

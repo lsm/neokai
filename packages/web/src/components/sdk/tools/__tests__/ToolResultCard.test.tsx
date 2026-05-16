@@ -249,7 +249,8 @@ describe('ToolResultCard Component', () => {
 				/>
 			);
 
-			expect(screen.getByText('(Error)')).toBeTruthy();
+			expect(screen.getByText('Error')).toBeTruthy();
+			expect(screen.getByText('command not found')).toBeTruthy();
 		});
 	});
 
@@ -286,6 +287,25 @@ describe('ToolResultCard Component', () => {
 			expect(screen.getByTestId('diff-viewer')).toBeTruthy();
 		});
 
+		it('should render error message for failed Edit tool', () => {
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-123"
+					input={{ file_path: '/test.ts', old_string: 'old', new_string: 'new' }}
+					output="Error: old_string not found in file"
+					isError={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Error')).toBeTruthy();
+			expect(screen.getByText('— /test.ts')).toBeTruthy();
+			expect(screen.getByText('Error: old_string not found in file')).toBeTruthy();
+			// DiffViewer should still render below the error
+			expect(screen.getByTestId('diff-viewer')).toBeTruthy();
+		});
+
 		it('should render CodeViewer for Read tool with string output', () => {
 			render(
 				<ToolResultCard
@@ -298,6 +318,25 @@ describe('ToolResultCard Component', () => {
 			);
 
 			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+		});
+
+		it('should render error message for failed Read tool', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/missing.ts' }}
+					output="Error: file not found"
+					isError={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Error')).toBeTruthy();
+			expect(screen.getByText('— /missing.ts')).toBeTruthy();
+			expect(screen.getByText('Error: file not found')).toBeTruthy();
+			// CodeViewer should not render on error
+			expect(screen.queryByTestId('code-viewer')).toBeNull();
 		});
 
 		it('should render CodeViewer for Read tool with object output', () => {
@@ -326,6 +365,25 @@ describe('ToolResultCard Component', () => {
 			);
 
 			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+		});
+
+		it('should render error message for failed Write tool', () => {
+			render(
+				<ToolResultCard
+					toolName="Write"
+					toolId="write-123"
+					input={{ file_path: '/test.ts', content: 'const x = 1;' }}
+					output="Error: permission denied"
+					isError={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Error')).toBeTruthy();
+			expect(screen.getByText('— /test.ts')).toBeTruthy();
+			expect(screen.getByText('Error: permission denied')).toBeTruthy();
+			// CodeViewer should not render on error
+			expect(screen.queryByTestId('code-viewer')).toBeNull();
 		});
 
 		it('should render Thinking tool with character count in detailed variant', () => {
