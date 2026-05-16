@@ -17,7 +17,7 @@ export function SectionSwitcher({ onClose }: SectionSwitcherProps) {
 
 	return (
 		<div class={`flex items-center gap-2 px-2 py-2 border-b ${borderColors.ui.default}`}>
-			<div class="grid grid-cols-2 flex-1 rounded-lg bg-dark-900/70 p-0.5" role="tablist">
+			<div class="grid grid-cols-2 flex-1 rounded-full bg-dark-900/70 p-0.5" role="tablist">
 				{SECTIONS.map((section) => {
 					const isActive = navSection === section.id;
 					return (
@@ -31,7 +31,7 @@ export function SectionSwitcher({ onClose }: SectionSwitcherProps) {
 								onClose?.();
 							}}
 							class={cn(
-								'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+								'rounded-full px-3 py-1.5 text-sm font-medium transition-colors',
 								isActive
 									? 'bg-white/10 text-gray-100 shadow-sm'
 									: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
@@ -47,7 +47,7 @@ export function SectionSwitcher({ onClose }: SectionSwitcherProps) {
 					type="button"
 					onClick={onClose}
 					class={cn(
-						'md:hidden flex p-1.5 rounded-lg text-gray-400 transition-colors',
+						'md:hidden flex p-1.5 rounded-full text-gray-400 transition-colors',
 						'hover:bg-white/5 hover:text-gray-100'
 					)}
 					title="Close panel"
