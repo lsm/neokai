@@ -169,6 +169,12 @@ export type AgentProcessingState =
 			isCompacting?: boolean; // True during context compaction
 	  }
 	| { status: 'waiting_for_input'; pendingQuestion: PendingUserQuestion }
+	| {
+			status: 'rate_limit_cooldown';
+			retryCount: number;
+			maxRetries: number;
+			retryAt: number;
+	  }
 	| { status: 'interrupted' };
 
 /**

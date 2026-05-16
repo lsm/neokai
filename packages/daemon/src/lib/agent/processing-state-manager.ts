@@ -59,6 +59,10 @@ export class ProcessingStateManager {
 				// Active processing states should reset to idle after restart
 				// The SDK query will need to be restarted anyway
 				this.processingState = { status: 'idle' };
+			} else if (restoredState.status === 'rate_limit_cooldown') {
+				// Cooldown timers are not persisted; reset to idle so the user
+				// can manually retry or send a new message.
+				this.processingState = { status: 'idle' };
 			} else if (restoredState.status === 'waiting_for_input') {
 				// IMPORTANT: Preserve waiting_for_input state across restarts
 				// The user's pending question should still be answerable after page refresh
@@ -163,6 +167,23 @@ export class ProcessingStateManager {
 	 */
 	async setWaitingForInput(pendingQuestion: PendingUserQuestion): Promise<void> {
 		await this.setState({ status: 'waiting_for_input', pendingQuestion });
+	}
+
+	/**
+	 * Set state to rate_limit_cooldown
+	 * Called when 429 retry exhaustion is detected and auto-retry is scheduled
+	 */
+	async setRateLimitCooldown(state: {
+		retryCount: number;
+		maxRetries: number;
+		retryAt: number;
+	}): Promise<void> {
+		await this.setState({
+			status: 'rate_limit_cooldown',
+			retryCount: state.retryCount,
+			maxRetries: state.maxRetries,
+			retryAt: state.retryAt,
+		});
 	}
 
 	/**
