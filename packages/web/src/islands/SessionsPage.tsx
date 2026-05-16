@@ -4,7 +4,7 @@ import type {
 	GitBranchesResponse,
 	WorkspaceHistoryEntry,
 } from '@neokai/shared';
-import { connectionState, authStatus, sessions } from '../lib/state.ts';
+import { connectionState, sessions } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
 import {
 	createSession,
@@ -37,8 +37,9 @@ export function SessionsPage() {
 	const [mode, setMode] = useState<'worktree' | 'direct'>('worktree');
 	const [baseBranch, setBaseBranch] = useState<string | null>(null);
 
-	const canCreate =
-		connectionState.value === 'connected' && (authStatus.value?.isAuthenticated ?? false);
+	// Session creation only needs a live connection — auth is exercised later by
+	// the message send, which surfaces its own error.
+	const canCreate = connectionState.value === 'connected';
 
 	// Project folders shown in the picker — same set as the sidebar: folders
 	// with sessions, merged with registered workspace-history folders.
