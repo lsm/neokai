@@ -13,7 +13,6 @@ interface TaskSessionChatComposerProps {
 	mentionCandidates: Array<{ id: string; name: string }>;
 	targets: TaskComposerTarget[];
 	selectedTargetId: string | null;
-	hasTaskAgentSession: boolean;
 	canSend: boolean;
 	isSending: boolean;
 	/** @deprecated isProcessing is now computed from the targeted agent's activity */
@@ -40,7 +39,6 @@ export function TaskSessionChatComposer({
 	mentionCandidates,
 	targets,
 	selectedTargetId,
-	hasTaskAgentSession,
 	canSend,
 	isSending,
 	isProcessing: _isProcessingProp,
@@ -83,7 +81,6 @@ export function TaskSessionChatComposer({
 		targets,
 		selectedTarget,
 		activityMembers,
-		taskAgentSessionId: sessionId || null,
 		defaultAgentModels,
 	});
 
@@ -147,9 +144,7 @@ export function TaskSessionChatComposer({
 									<span class="min-w-0">
 										<span class="block truncate text-gray-100">{target.label}</span>
 										<span class="block truncate text-xs text-gray-500">
-											{target.kind === 'task_agent'
-												? 'Fallback coordinator'
-												: `${target.nodeName ?? 'Workflow'}${target.state ? ` · ${target.state}` : ''}`}
+											{`${target.nodeName ?? 'Workflow'}${target.state ? ` · ${target.state}` : ''}`}
 										</span>
 									</span>
 									{target.id === selectedTarget?.id && (
@@ -225,15 +220,7 @@ export function TaskSessionChatComposer({
 				onExitRewindMode={() => {}}
 				agentMentionCandidates={mentionCandidates}
 				inputPlaceholder={
-					selectedTarget?.kind === 'task_agent'
-						? hasTaskAgentSession
-							? 'Message task agent...'
-							: 'Message task agent (auto-start)...'
-						: selectedTarget
-							? `Message ${selectedTarget.label}...`
-							: hasTaskAgentSession
-								? 'Message task agent...'
-								: 'Message task agent (auto-start)...'
+					selectedTarget ? `Message ${selectedTarget.label}...` : 'Select a target agent...'
 				}
 				inputLeadingElement={targetPicker}
 				inputLeadingPaddingClass="pl-12"

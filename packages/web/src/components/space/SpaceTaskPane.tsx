@@ -142,9 +142,6 @@ function TaskMetaBadge({
 
 function formatTaskThreadError(err: unknown): string {
 	const message = err instanceof Error ? err.message : String(err);
-	if (message.includes('No handler for method: space.task.ensureAgentSession')) {
-		return 'Task thread startup is unavailable on this daemon. Restart the app server to load the latest RPC handlers.';
-	}
 	if (message.includes('Task Agent session not started')) {
 		return 'Task thread is still starting. Try sending again in a moment.';
 	}
@@ -236,8 +233,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setThreadSessionId(null);
 			return;
 		}
-		setThreadSessionId(task.taskAgentSessionId ?? null);
-	}, [task?.id, task?.taskAgentSessionId]);
+		// Thread session ID is now resolved from node agent activity members.
+		setThreadSessionId(null);
+	}, [task?.id]);
 
 	// Resolve runId/workflowId here (before the early returns) so the gate-status
 	// hook is always called — React's Rules of Hooks require a stable call order.
@@ -266,7 +264,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const runtimeSpaceId = spaceId ?? task.spaceId;
 	const navigationSpaceId = spaceId ?? currentSpaceIdSignal.value ?? task.spaceId;
-	const agentSessionId = task.taskAgentSessionId ?? threadSessionId;
+	const agentSessionId = threadSessionId;
 
 	// Resolve workflowId from the active run for canvas mode
 	const workflowRun = task.workflowRunId
@@ -301,7 +299,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const workflow = fullWorkflow;
 	const spaceAgents = spaceStore.agents.value;
 	const nodeExecutions = spaceStore.nodeExecutions.value;
-	const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent') ?? null;
 	const composerTargets: TaskComposerTarget[] = useMemo(() => {
 		const nodeTargets =
 			workflow?.nodes.flatMap((node) =>
@@ -335,16 +332,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					};
 				})
 			) ?? [];
-
-		const taskAgentTarget: TaskComposerTarget = {
-			id: 'task-agent',
-			kind: 'task_agent',
-			label: 'Task Agent',
-			state: taskAgentMember ? ACTIVITY_STATE_LABELS[taskAgentMember.state] : undefined,
-		};
-
-		return nodeTargets.length > 0 ? [...nodeTargets, taskAgentTarget] : [taskAgentTarget];
-	}, [workflow, activityMembers, task.workflowRunId, taskAgentMember, nodeExecutions, spaceAgents]);
+		return nodeTargets;
+	}, [workflow, activityMembers, task.workflowRunId, nodeExecutions, spaceAgents]);
 
 	// Extract per-agent default models from the workflow definition so the
 	// composer can show the workflow-defined model as the default for agents
@@ -562,13 +551,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			return;
 		}
 
-		// Fall back to the task agent session (coordinator/leader)
-		const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent');
-		if (taskAgentMember) {
-			pushOverlayHistory(taskAgentMember.sessionId, taskAgentMember.label);
-			return;
-		}
-
 		// Last resort: use the task’s own agentSessionId
 		if (agentSessionId) {
 			pushOverlayHistory(agentSessionId, agentActionLabel);
@@ -587,13 +569,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setSendingThread(true);
 			setThreadSendError(null);
 
-			if (target?.kind !== 'node_agent' && !agentSessionId) {
-				setEnsuringThread(true);
-				const ensured = await spaceStore.ensureTaskAgentSession(task.id);
-				setThreadSessionId(ensured.taskAgentSessionId ?? null);
-				setEnsuringThread(false);
-			}
-
 			const result = await spaceStore.sendTaskMessage(
 				task.id,
 				nextMessage,
@@ -603,7 +578,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							agentName: target.agentName,
 							...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
 						}
-					: { kind: 'task_agent' },
+					: undefined,
 				images
 			);
 
@@ -1062,7 +1037,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								mentionCandidates={mentionCandidates}
 								targets={composerTargets}
 								selectedTargetId={selectedTarget?.id ?? null}
-								hasTaskAgentSession={!!agentSessionId}
 								canSend={canSendThreadMessage}
 								isSending={sendingThread}
 								autoScroll={autoScrollEnabled}
