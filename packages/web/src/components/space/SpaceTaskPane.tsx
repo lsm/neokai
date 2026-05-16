@@ -564,6 +564,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	): Promise<boolean> => {
 		if (!nextMessage) return false;
 		if (!runtimeSpaceId || !task) return false;
+		// Require an explicit node_agent target — messages without one are rejected
+		// by the daemon ("Target agent is required"). Guard here to avoid a round-trip.
+		if (target?.kind !== 'node_agent' || !target.agentName) {
+			setThreadSendError('Select a target agent before sending.');
+			return false;
+		}
 
 		try {
 			setSendingThread(true);
@@ -572,13 +578,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			const result = await spaceStore.sendTaskMessage(
 				task.id,
 				nextMessage,
-				target?.kind === 'node_agent' && target.agentName
-					? {
-							kind: 'node_agent',
-							agentName: target.agentName,
-							...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
-						}
-					: undefined,
+				{
+					kind: 'node_agent',
+					agentName: target.agentName,
+					...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
+				},
 				images
 			);
 

@@ -1776,7 +1776,7 @@ export class TaskAgentManager {
 	 * WorkflowExecutors are loaded, so executors are ready when sub-sessions run.
 	 */
 	async rehydrate(): Promise<void> {
-		const activeTasks = this.config.taskRepo.listActiveWithTaskAgentSession();
+		const activeTasks = this.config.taskRepo.listActive();
 
 		let selfHealed = 0;
 		const processedRunIds = new Set<string>();
@@ -1784,20 +1784,17 @@ export class TaskAgentManager {
 		for (const task of activeTasks) {
 			// Clear stale taskAgentSessionId (task-agent LLM sessions removed)
 			if (task.taskAgentSessionId) {
-				const dbSession = this.config.db.getSession(task.taskAgentSessionId);
-				if (!dbSession) {
+				log.info(
+					`TaskAgentManager.rehydrate: clearing legacy task_agent_session_id for task ${task.id}`
+				);
+				try {
+					this.config.taskRepo.updateTask(task.id, { taskAgentSessionId: null });
+					selfHealed++;
+				} catch (err) {
 					log.warn(
-						`TaskAgentManager.rehydrate: task ${task.id} references missing session ${task.taskAgentSessionId} — clearing dangling task_agent_session_id`
+						`TaskAgentManager.rehydrate: failed to clear task_agent_session_id for task ${task.id}:`,
+						err
 					);
-					try {
-						this.config.taskRepo.updateTask(task.id, { taskAgentSessionId: null });
-						selfHealed++;
-					} catch (err) {
-						log.warn(
-							`TaskAgentManager.rehydrate: failed to clear dangling task_agent_session_id for task ${task.id}:`,
-							err
-						);
-					}
 				}
 			}
 

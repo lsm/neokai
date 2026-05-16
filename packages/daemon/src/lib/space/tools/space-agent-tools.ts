@@ -20,36 +20,37 @@
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
 
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	NodeExecution,
 	SpaceTask,
-	SpaceTaskStatus,
 	SpaceTaskPriority,
-	TaskScheduleTriggerType,
+	SpaceTaskStatus,
 	TaskScheduleStatus,
+	TaskScheduleTriggerType,
 } from '@neokai/shared';
-import type { SpaceRuntime } from '../runtime/space-runtime';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import { z } from 'zod';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { SpaceTaskManager } from '../managers/space-task-manager';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
+import { Logger } from '../../logger';
+import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
+import { formatAgentMessage } from '../agent-message-envelope';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
-import type { TaskAgentManager } from '../runtime/task-agent-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
-import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
-import { jsonResult } from './tool-result';
-import type { ToolResult } from './tool-result';
-import { Logger } from '../../logger';
-import { formatAgentMessage } from '../agent-message-envelope';
+import type { SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry';
+import type { SpaceRuntime } from '../runtime/space-runtime';
+import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { canTransition } from '../runtime/workflow-run-status-machine';
+import type { ToolResult } from './tool-result';
+import { jsonResult } from './tool-result';
+
 const log = new Logger('space-agent-tools');
 
 function normalizeAgentNameToken(value: string): string {
@@ -907,7 +908,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			task_id?: string;
 			task_number?: number;
 			message: string;
-			node_id?: string;
+			node_id: string;
 		}): Promise<ToolResult> {
 			if (!taskAgentManager) {
 				return jsonResult({
@@ -1787,7 +1788,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		// Task agent communication tools
 		tool(
 			'send_message_to_task',
-			'Send a message to a task. Targets the Task Agent by default; optionally target a specific workflow node via node_id (execution UUID or agent name like "coder"/"reviewer"). If the task or node has not started yet, it will be spawned/activated automatically (unless the task is archived). Provide either task_id or task_number — if both are given, task_id takes precedence.',
+			'Send a message to a specific workflow node agent on a task. Requires node_id (execution UUID or agent name like "coder"/"reviewer"). If the node has not started yet, it will be spawned/activated automatically (unless the task is archived). Provide either task_id or task_number — if both are given, task_id takes precedence.',
 			{
 				task_id: z
 					.string()
@@ -1801,12 +1802,11 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.positive()
 					.optional()
 					.describe('Space-scoped numeric task ID (e.g. 37). Used when task_id is not provided.'),
-				message: z.string().describe('Message to inject into the task agent session'),
+				message: z.string().describe('Message to send to the target node agent'),
 				node_id: z
 					.string()
-					.optional()
 					.describe(
-						'Optional workflow node selector. Accepts a node_execution UUID or an agent name (e.g. "coder", "reviewer"). When present, the message is routed to that node\'s sub-session instead of the Task Agent; the node is activated automatically if it has no live session.'
+						'Required workflow node selector. Accepts a node_execution UUID or an agent name (e.g. "coder", "reviewer"). The message is routed to that node\'s sub-session; the node is activated automatically if it has no live session.'
 					),
 			},
 			(args) => handlers.send_message_to_task(args)
