@@ -73,6 +73,7 @@ export function setupSessionHandlers(
 			initialTools: req.initialTools,
 			config: req.config,
 			worktreeBaseBranch: req.worktreeBaseBranch,
+			worktreeMode: req.worktreeMode,
 			title: req.title,
 			spaceId: req.spaceId,
 			createdBy: req.createdBy ?? 'human',

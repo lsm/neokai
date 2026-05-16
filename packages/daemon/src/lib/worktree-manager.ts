@@ -1,7 +1,12 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@neokai/shared';
+import type {
+	WorktreeMetadata,
+	CommitInfo,
+	WorktreeCommitStatus,
+	GitBranchesResponse,
+} from '@neokai/shared';
 import { Logger } from './logger';
 import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils';
 
@@ -84,6 +89,64 @@ export class WorktreeManager {
 			isGitRepo: gitRoot !== null,
 			gitRoot,
 		};
+	}
+
+	/**
+	 * Collect git context for a folder path: repo detection, local branches,
+	 * current/default branch, and whether the working tree is dirty.
+	 *
+	 * Used by the `git.branches` RPC to drive workspace/worktree/branch pickers.
+	 * Never throws — non-git paths and partial git failures degrade to a safe,
+	 * mostly-empty response.
+	 */
+	async getRepoGitInfo(workspacePath: string): Promise<GitBranchesResponse> {
+		const empty: GitBranchesResponse = {
+			isGitRepo: false,
+			gitRoot: null,
+			currentBranch: null,
+			defaultBranch: null,
+			branches: [],
+			isDirty: false,
+		};
+
+		const trimmed = workspacePath?.trim();
+		if (!trimmed) return empty;
+
+		const gitRoot = await this.findGitRoot(trimmed);
+		if (!gitRoot) return empty;
+
+		const git = this.getGit(gitRoot);
+
+		let branches: string[] = [];
+		let currentBranch: string | null = null;
+		try {
+			const summary = await git.branchLocal();
+			branches = summary.all;
+			// `current` is an empty string on a detached or unborn HEAD.
+			currentBranch = summary.current ? summary.current : null;
+		} catch (error) {
+			this.logger.warn(`getRepoGitInfo: failed to list branches for ${gitRoot}:`, error);
+		}
+
+		let defaultBranch: string | null = null;
+		try {
+			const detected = await this.getDefaultBranch(gitRoot);
+			// getDefaultBranch returns the 'HEAD' sentinel when it cannot resolve a
+			// real branch — surface that as null so callers don't treat it as one.
+			defaultBranch = detected && detected !== 'HEAD' ? detected : null;
+		} catch (error) {
+			this.logger.warn(`getRepoGitInfo: failed to resolve default branch for ${gitRoot}:`, error);
+		}
+
+		let isDirty = false;
+		try {
+			const status = await git.status();
+			isDirty = !status.isClean();
+		} catch (error) {
+			this.logger.warn(`getRepoGitInfo: failed to read status for ${gitRoot}:`, error);
+		}
+
+		return { isGitRepo: true, gitRoot, currentBranch, defaultBranch, branches, isDirty };
 	}
 
 	/**

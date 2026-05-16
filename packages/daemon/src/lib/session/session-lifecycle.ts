@@ -48,6 +48,12 @@ export interface CreateSessionParams {
 	initialTools?: string[];
 	config?: Partial<Session['config']>;
 	worktreeBaseBranch?: string;
+	/**
+	 * Explicit worktree decision. When set, the session is created already
+	 * decided (no `pending_worktree_choice` prompt). Only honored for worker
+	 * sessions that have a workspace path.
+	 */
+	worktreeMode?: 'worktree' | 'direct';
 	title?: string; // Optional title - if provided, skips auto-title generation
 	sessionId?: string; // Optional custom session ID
 	lobbyId?: string; // Optional lobby ID to assign session to
@@ -114,16 +120,25 @@ export class SessionLifecycle {
 		// Worktree choice is only for worker sessions.
 		const supportsWorktreeChoice = sessionType === 'worker';
 
-		// Determine if worktree choice should be shown
-		const shouldShowChoice = supportsWorktreeChoice && isGitRepo && !this.config.disableWorktrees;
+		// An explicit worktree decision from the caller (e.g. the empty-state
+		// composer) skips the in-chat choice prompt. Only meaningful for worker
+		// sessions that actually have a workspace path.
+		const explicitWorktreeMode =
+			supportsWorktreeChoice && baseWorkspacePath !== undefined ? params.worktreeMode : undefined;
 
-		// Determine if worktree should be created immediately
-		// Only for non-git repos (git repos go through choice flow); requires a workspace path.
+		// Determine if worktree choice should be shown — git repos with no
+		// explicit decision still go through the in-chat choice flow.
+		const shouldShowChoice =
+			supportsWorktreeChoice && isGitRepo && !this.config.disableWorktrees && !explicitWorktreeMode;
+
+		// Determine if a worktree should be created immediately:
+		//  - non-git repos (no choice flow exists for them), or
+		//  - git repos where the caller explicitly chose 'worktree'.
 		const shouldCreateWorktree =
 			baseWorkspacePath !== undefined &&
 			supportsWorktreeChoice &&
 			!this.config.disableWorktrees &&
-			!isGitRepo;
+			(!isGitRepo || explicitWorktreeMode === 'worktree');
 
 		// Read global settings for defaults (model, thinkingLevel, autoScroll)
 		const globalSettings = this.db.getGlobalSettings();
@@ -236,13 +251,21 @@ export class SessionLifecycle {
 				titleGenerated: shouldSkipAutoTitle,
 				// Workspace is initialized only when a concrete workspace path exists.
 				workspaceInitialized: sessionWorkspacePath !== null,
-				// Only set worktreeChoice if we're showing the choice UI
+				// Pending when the choice UI will be shown; pre-completed when the
+				// caller decided up front; otherwise omitted.
 				worktreeChoice: shouldShowChoice
 					? {
 							status: 'pending',
 							createdAt: new Date().toISOString(),
 						}
-					: undefined,
+					: explicitWorktreeMode
+						? {
+								status: 'completed',
+								choice: explicitWorktreeMode,
+								createdAt: new Date().toISOString(),
+								completedAt: new Date().toISOString(),
+							}
+						: undefined,
 				// Dual-session architecture fields
 				...(params.sessionType && { sessionType: params.sessionType }),
 				...(params.pairedSessionId && { pairedSessionId: params.pairedSessionId }),

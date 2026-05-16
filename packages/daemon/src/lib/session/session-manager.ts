@@ -413,6 +413,13 @@ export class SessionManager {
 	}
 
 	/**
+	 * Get the worktree manager (git detection, branch listing, worktree ops).
+	 */
+	getWorktreeManager(): WorktreeManager {
+		return this.worktreeManager;
+	}
+
+	/**
 	 * Get session asynchronously (preferred for concurrent access)
 	 *
 	 * FIX: Handles concurrent requests properly with locking
