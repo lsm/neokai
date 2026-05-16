@@ -602,14 +602,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		},
 	});
 
-	// Warm up SDK CLI binary — resolves from node_modules/cache or downloads.
-	// Deferred to next tick so the WS server binds and starts accepting connections
-	// before any potential download (~200 MB, up to ~135s timeout).
-	// Non-fatal: daemon continues if download fails. resolveSDKCliPath() retries on first query.
-	if (process.env.NODE_ENV !== 'test') {
-		setTimeout(warmupSDKCliBinary, 0);
-	}
-
 	// Start GitHub service after server is ready.
 	// GitHubService.start() registers the github.poll handler and enqueues the
 	// initial job when jobProcessor/jobQueue are provided.
@@ -906,6 +898,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			throw error;
 		}
 	};
+
+	// Warm up SDK CLI binary — resolves from node_modules/cache or downloads.
+	// Scheduled after ALL awaits in createDaemonApp so it doesn't fire during
+	// neoAgentManager.provision() or other async startup steps. The setTimeout
+	// runs after this function returns, so callers (dev-server, prod-server)
+	// can set up their own server before warmup begins.
+	// Non-fatal: daemon continues if download fails. resolveSDKCliPath() retries on first query.
+	if (process.env.NODE_ENV !== 'test') {
+		setTimeout(warmupSDKCliBinary, 0);
+	}
 
 	return {
 		server,
