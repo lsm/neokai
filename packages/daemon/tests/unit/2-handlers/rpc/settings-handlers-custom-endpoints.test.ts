@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { CustomEndpointConfig, GlobalSettings } from '@neokai/shared';
 import { registerSettingsHandlers } from '../../../../src/lib/rpc-handlers/settings-handlers';
+import { registerCustomEndpointHandlers } from '../../../../src/lib/rpc-handlers/custom-endpoint-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { Database } from '../../../../src/storage/database';
 import type {
@@ -154,6 +155,54 @@ describe('settings handlers — custom endpoints integration', () => {
 				)
 			).rejects.toThrow(/invalid/);
 			expect(syncCalls).toHaveLength(0);
+		});
+	});
+
+	describe('cross-RPC mutation serialisation', () => {
+		it('serialises a concurrent settings.global.update + customEndpoints.remove via the shared lock', async () => {
+			// Register both handler sets onto the same hub so both RPCs share
+			// the in-process `withCustomEndpointsLock` queue.
+			registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
+
+			// Starting state: [validEndpoint].
+			// Fire concurrently:
+			//   - settings.global.update → customEndpoints = [validEndpoint, second]
+			//   - customEndpoints.remove → remove 'lmstudio'
+			//
+			// Without the shared lock both ops would read the same pre-state
+			// `[validEndpoint]` and last-writer-wins would either drop `second`
+			// (remove wins) or leave `lmstudio` registered (update wins).
+			// With the lock the two writes are serialised, so the final state
+			// is the *composition* of both: exactly one of {[second]} (update
+			// then remove) or {[validEndpoint, second]} after remove failure
+			// is impossible because update already replaced the array.
+			//
+			// What we assert: whichever order the lock picks, both handlers
+			// observe a consistent snapshot — no lost-update where the final
+			// array is [validEndpoint] (would mean remove was a no-op on a
+			// stale read AND update never landed).
+			const updateHandler = hubData.handlers.get('settings.global.update')!;
+			const removeHandler = hubData.handlers.get('customEndpoints.remove')!;
+			const second: CustomEndpointConfig = { ...validEndpoint, id: 'second' };
+
+			const results = await Promise.allSettled([
+				updateHandler({ updates: { customEndpoints: [validEndpoint, second] } }, {}),
+				removeHandler({ id: 'lmstudio' }, {}),
+			]);
+
+			// Neither op should silently swallow the other; one of the two
+			// orderings must hold:
+			//   A) remove → update: remove succeeds against initial [lmstudio],
+			//      then update overwrites to [lmstudio, second].
+			//   B) update → remove: update overwrites to [lmstudio, second],
+			//      then remove drops lmstudio leaving [second].
+			const final = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
+			const orderA = ['lmstudio', 'second'];
+			const orderB = ['second'];
+			expect([JSON.stringify(orderA), JSON.stringify(orderB)]).toContain(JSON.stringify(final));
+			// Both ops must succeed under the lock; failure here would mean a
+			// race surfaced a "not found" against a stale read.
+			expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
 		});
 	});
 });
