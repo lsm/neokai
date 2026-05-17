@@ -38,6 +38,7 @@ export interface ConfigOverrides {
 	port?: number;
 	host?: string;
 	dbPath?: string;
+	workspaceRoot?: string;
 }
 
 export function getConfig(overrides?: ConfigOverrides): Config {
@@ -62,7 +63,7 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
 		maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
 		nodeEnv,
-		workspaceRoot: process.env.NEOKAI_WORKSPACE_ROOT,
+		workspaceRoot: overrides?.workspaceRoot ?? process.env.NEOKAI_WORKSPACE_ROOT,
 		disableWorktrees: process.env.NEOKAI_DISABLE_WORKTREES === '1',
 		disableGoalProcessing: process.env.NEOKAI_DISABLE_GOAL_PROCESSING === '1',
 		// GitHub integration
