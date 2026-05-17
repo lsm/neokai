@@ -13,6 +13,7 @@ import type {
 	McpServerConfig,
 	Space,
 	SpaceAgent,
+	SpaceGoal,
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
@@ -135,6 +136,8 @@ export interface CustomAgentConfig {
 	sessionId: string;
 	/** Workspace path (typically `space.workspacePath`) */
 	workspacePath: string;
+	/** Linked long-horizon goal for this task, when present. */
+	goal?: SpaceGoal | null;
 	/** Summaries of previously completed tasks for context */
 	previousTaskSummaries?: string[];
 	/** Optional per-slot workflow overrides */
@@ -240,6 +243,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		workflow,
 		space,
 		workspacePath,
+		goal,
 		previousTaskSummaries,
 		nodeId,
 		agentSlotName,
@@ -264,7 +268,32 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 	sections.push(`- Worktree: ${workspacePath}`);
 	sections.push(`- PR: ${prUrl ?? 'none yet'}`);
 
-	// 3. Your Role in This Workflow — scoped to the current node when known.
+	// 3. Linked Goal — rolling state for long-horizon work.
+	if (goal) {
+		sections.push('');
+		sections.push('## Linked Goal');
+		sections.push('');
+		sections.push(`**Title:** ${goal.title}`);
+		if (goal.description) sections.push(`**Description:** ${goal.description}`);
+		sections.push(`**Status:** ${goal.status}`);
+		sections.push(`**Type:** ${goal.type}`);
+		sections.push(`**Priority:** ${goal.priority}`);
+		if (goal.labels.length > 0) sections.push(`**Labels:** ${goal.labels.join(', ')}`);
+		sections.push(`**Progress:** ${goal.progress}%`);
+		if (goal.summary) sections.push(`**Current Summary:** ${goal.summary}`);
+		if (Object.keys(goal.metrics).length > 0) {
+			sections.push(`**Metrics:** ${JSON.stringify(goal.metrics)}`);
+		}
+		if (goal.nextSteps.length > 0) {
+			sections.push('**Next Steps:**');
+			for (const step of goal.nextSteps) sections.push(`- ${step}`);
+		}
+		sections.push(
+			'When your work changes long-horizon state, update this goal via goal tools or mark_complete goal_update with a concise summary, progress, metrics, and next steps.'
+		);
+	}
+
+	// 4. Your Role in This Workflow — scoped to the current node when known.
 	const roleLines = buildRoleSection(workflow, nodeId, agentSlotName);
 	if (roleLines.length > 0) {
 		sections.push('');

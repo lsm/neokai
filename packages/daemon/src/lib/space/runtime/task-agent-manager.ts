@@ -718,6 +718,8 @@ export class TaskAgentManager {
 				const gateDataSnapshot = this.config.gateDataRepo
 					.listByRun(workflowRun.id)
 					.map((record) => ({ gateId: record.gateId, data: record.data }));
+				const goal = task.goalId ? this.config.goalService?.getGoal(task.goalId) : null;
+				const linkedGoal = goal?.spaceId === task.spaceId ? goal : null;
 
 				const memoryQuery = `${task.title}\n${task.description}`;
 				const relevantMemories = this.config.memoryRepo
@@ -731,6 +733,7 @@ export class TaskAgentManager {
 					space,
 					sessionId: actualSessionId,
 					workspacePath,
+					goal: linkedGoal,
 					slotOverrides,
 					nodeId: execution.workflowNodeId,
 					agentSlotName: execution.agentName,
@@ -743,7 +746,6 @@ export class TaskAgentManager {
 					: initialMessage;
 				await this.injectMessageIntoSession(spawned, kickoffMessage);
 			}
-
 			return actualSessionId;
 		} catch (err) {
 			// Roll back partially-created sessions so executions do not get stuck as pending with a stale session.

@@ -1,5 +1,12 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { Space, SpaceAgent, SpaceTask, SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
+import type {
+	Space,
+	SpaceAgent,
+	SpaceGoal,
+	SpaceTask,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+} from '@neokai/shared';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import {
 	buildCustomAgentSystemPrompt,
@@ -52,6 +59,35 @@ function makeTask(overrides?: Partial<SpaceTask>): SpaceTask {
 		dependsOn: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
+function makeGoal(overrides?: Partial<SpaceGoal>): SpaceGoal {
+	return {
+		id: 'goal-1',
+		spaceId: 'space-1',
+		title: 'Improve onboarding',
+		description: 'Make first-run smoother',
+		status: 'active',
+		type: 'recurring',
+		priority: 'high',
+		labels: ['product'],
+		metrics: { activated: 10 },
+		summary: 'Initial state',
+		progress: 35,
+		nextSteps: ['Audit current flow'],
+		preferredWorkflowId: null,
+		taskScheduleId: null,
+		autoTriggerNext: false,
+		pendingNextRun: false,
+		activeTaskId: null,
+		lastTaskId: null,
+		lastCheckInAt: null,
+		nextCheckInAt: null,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		completedAt: null,
 		...overrides,
 	};
 }
@@ -262,6 +298,21 @@ describe('buildCustomAgentTaskMessage', () => {
 
 		const head = message.slice(0, 500);
 		expect(head).toContain('Implement passwordless auth end-to-end.');
+	});
+
+	it('renders linked goal state when provided', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				goal: makeGoal(),
+			})
+		);
+
+		expect(message).toContain('## Linked Goal');
+		expect(message).toContain('Improve onboarding');
+		expect(message).toContain('**Progress:** 35%');
+		expect(message).toContain('**Metrics:** {"activated":10}');
+		expect(message).toContain('- Audit current flow');
+		expect(message).toContain('mark_complete goal_update');
 	});
 
 	it('renders PR URL from gate data when present', () => {

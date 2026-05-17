@@ -206,6 +206,20 @@ describe('SpaceGoalService', () => {
 		expect(updated?.pendingNextRun).toBe(false);
 	});
 
+	it('clears active task pointer for all terminal statuses', () => {
+		for (const status of ['done', 'blocked', 'cancelled', 'archived'] as const) {
+			const goal = service.createGoal({ spaceId, title: `Terminal ${status}` });
+			const created = service.createImmediateTask(goal.id);
+			expect(created.task).not.toBeNull();
+
+			taskRepo.updateTask(created.task!.id, { status });
+			const terminal = service.handleTaskTerminal(created.task!.id);
+
+			expect(terminal?.goal.id).toBe(goal.id);
+			expect(goalRepo.getById(goal.id)?.activeTaskId).toBeNull();
+		}
+	});
+
 	it('ignores terminal and scheduled tasks linked to goals in another space', () => {
 		const goal = service.createGoal({
 			spaceId,

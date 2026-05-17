@@ -14,7 +14,13 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
+import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
+import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
 import {
 	createEndNodeHandlers,
 	createMarkCompleteHandler,
@@ -101,20 +107,37 @@ interface TestCtx {
 	spaceId: string;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
+	goalService: SpaceGoalService;
 }
 
 function makeCtx(autonomyLevel = 1): TestCtx {
 	const db = makeDb();
 	const spaceId = 'space-end-node-test';
 	seedSpaceRow(db, spaceId, autonomyLevel);
+	const taskRepo = new SpaceTaskRepository(db);
+	const spaceRepo = new SpaceRepository(db);
+	const scheduleRepo = new TaskScheduleRepository(db);
+	const scheduleService = new ScheduleService({
+		db,
+		scheduleRepo,
+		jobQueue: new JobQueueRepository(db),
+		spaceRepo,
+	});
 	return {
 		db,
 		spaceId,
-		taskRepo: new SpaceTaskRepository(db),
+		taskRepo,
 		// Real SpaceTaskManager so the centralised transition validator runs
 		// inside `submitTaskForReview` — exercises the same code path that the
 		// production wiring takes from `task-agent-manager.ts`.
 		taskManager: new SpaceTaskManager(db, spaceId),
+		goalService: new SpaceGoalService({
+			goalRepo: new SpaceGoalRepository(db),
+			taskRepo,
+			spaceRepo,
+			scheduleService,
+			db,
+		}),
 	};
 }
 
@@ -150,6 +173,66 @@ describe('createMarkCompleteHandler', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
+	});
+
+	test('applies goal_update before marking a linked task complete', async () => {
+		const goal = ctx.goalService.createGoal({
+			spaceId: ctx.spaceId,
+			title: 'Improve onboarding',
+		});
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'T',
+			description: '',
+			status: 'approved',
+			goalId: goal.id,
+		});
+		const handler = createMarkCompleteHandler({
+			taskId: task.id,
+			spaceId: ctx.spaceId,
+			taskRepo: ctx.taskRepo,
+			taskManager: ctx.taskManager,
+			goalService: ctx.goalService,
+		});
+
+		const out = await handler({
+			goal_update: {
+				summary: 'First milestone shipped',
+				progress: 55,
+				metrics: { activated: 20 },
+				nextSteps: ['Measure adoption'],
+			},
+		});
+		const parsed = JSON.parse(out.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		const updatedGoal = ctx.goalService.getGoal(goal.id);
+		expect(updatedGoal?.summary).toBe('First milestone shipped');
+		expect(updatedGoal?.progress).toBe(55);
+		expect(updatedGoal?.metrics).toEqual({ activated: 20 });
+		expect(updatedGoal?.nextSteps).toEqual(['Measure adoption']);
+	});
+
+	test('rejects goal_update on a task without a linked goal', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'T',
+			description: '',
+			status: 'approved',
+		});
+		const handler = createMarkCompleteHandler({
+			taskId: task.id,
+			spaceId: ctx.spaceId,
+			taskRepo: ctx.taskRepo,
+			taskManager: ctx.taskManager,
+			goalService: ctx.goalService,
+		});
+
+		const out = await handler({ goal_update: { summary: 'No linked goal' } });
+		const parsed = JSON.parse(out.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('not linked to a goal');
+		expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
 	});
 
 	test('emits space.task.updated for cascaded dependent tasks', async () => {

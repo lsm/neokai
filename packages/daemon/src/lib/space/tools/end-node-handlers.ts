@@ -94,7 +94,7 @@ export interface MarkCompleteHandlerDeps {
 	/** Optional hub for emitting `space.task.updated` events. */
 	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
 	/** Optional goal service for processing terminal goal-task side effects. */
-	goalService?: Pick<SpaceGoalService, 'handleTaskTerminal'>;
+	goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal' | 'handleTaskTerminal'>;
 }
 
 /**
@@ -129,7 +129,7 @@ export function createMarkCompleteHandler(
 			});
 	};
 
-	return async (_args: MarkCompleteInput): Promise<ToolResult> => {
+	return async (args: MarkCompleteInput): Promise<ToolResult> => {
 		const task = taskRepo.getTask(taskId);
 		if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
@@ -139,6 +139,31 @@ export function createMarkCompleteHandler(
 				error:
 					`task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
 					`mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
+			});
+		}
+
+		if (args.goal_update) {
+			if (!goalService) {
+				return jsonResult({
+					success: false,
+					error: 'Goal update is not available in this context.',
+				});
+			}
+			if (!task.goalId) {
+				return jsonResult({
+					success: false,
+					error: 'Cannot apply goal_update: this task is not linked to a goal.',
+				});
+			}
+			const goal = goalService.getGoal(task.goalId);
+			if (!goal || goal.spaceId !== task.spaceId) {
+				return jsonResult({ success: false, error: `Goal not found: ${task.goalId}` });
+			}
+			goalService.updateGoal(goal.id, {
+				summary: args.goal_update.summary,
+				progress: args.goal_update.progress,
+				metrics: args.goal_update.metrics,
+				nextSteps: args.goal_update.nextSteps,
 			});
 		}
 

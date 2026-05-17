@@ -24,6 +24,8 @@ import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	NodeExecution,
+	SpaceGoalStatus,
+	SpaceGoalType,
 	SpaceTask,
 	SpaceTaskPriority,
 	SpaceTaskStatus,
@@ -52,6 +54,38 @@ import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
 
 const log = new Logger('space-agent-tools');
+
+type GoalToolUpdateArgs = {
+	title?: string;
+	description?: string;
+	status?: SpaceGoalStatus;
+	type?: SpaceGoalType;
+	priority?: SpaceTaskPriority;
+	labels?: string[];
+	metrics?: Record<string, string | number | boolean | null>;
+	summary?: string;
+	progress?: number;
+	next_steps?: string[];
+	preferred_workflow_id?: string | null;
+	auto_trigger_next?: boolean;
+};
+
+function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
+	return {
+		title: args.title,
+		description: args.description,
+		status: args.status,
+		type: args.type,
+		priority: args.priority,
+		labels: args.labels,
+		metrics: args.metrics,
+		summary: args.summary,
+		progress: args.progress,
+		nextSteps: args.next_steps,
+		preferredWorkflowId: args.preferred_workflow_id,
+		autoTriggerNext: args.auto_trigger_next,
+	};
+}
 
 function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
@@ -235,6 +269,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 	const outboundSenderLevel = outboundSenderName === 'task-agent' ? 'task-agent' : 'space-agent';
 	const outboundSenderDisplayName =
 		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
+
+	function requireGoalService() {
+		if (!config.goalService) throw new Error('Goal management not available');
+		return config.goalService;
+	}
+
+	function requireGoalInSpace(goalId: string) {
+		const goal = requireGoalService().getGoal(goalId);
+		if (!goal || goal.spaceId !== spaceId) throw new Error(`Goal not found: ${goalId}`);
+		return goal;
+	}
 
 	function emitTaskUpdated(task: SpaceTask): void {
 		if (!internalEventBus) return;
@@ -1392,6 +1437,152 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
+		 * List goals for this space, optionally filtered by status.
+		 */
+		async list_goals(args: { status?: SpaceGoalStatus } = {}): Promise<ToolResult> {
+			try {
+				const goals = requireGoalService().listGoals({ spaceId, status: args.status });
+				return jsonResult({ success: true, goals });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Get one goal in this space.
+		 */
+		async get_goal(args: { goal_id: string }): Promise<ToolResult> {
+			try {
+				const goal = requireGoalInSpace(args.goal_id);
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Create a long-horizon goal in this space.
+		 */
+		async create_goal(args: {
+			title: string;
+			description?: string;
+			type?: SpaceGoalType;
+			priority?: SpaceTaskPriority;
+			labels?: string[];
+			metrics?: Record<string, string | number | boolean | null>;
+			summary?: string;
+			progress?: number;
+			next_steps?: string[];
+			preferred_workflow_id?: string | null;
+			auto_trigger_next?: boolean;
+			check_in_cron_expression?: string;
+			check_in_timezone?: string;
+			trigger_immediately?: boolean;
+		}): Promise<ToolResult> {
+			try {
+				const goal = requireGoalService().createGoal({
+					spaceId,
+					title: args.title,
+					description: args.description,
+					type: args.type,
+					priority: args.priority,
+					labels: args.labels,
+					metrics: args.metrics,
+					summary: args.summary,
+					progress: args.progress,
+					nextSteps: args.next_steps,
+					preferredWorkflowId: args.preferred_workflow_id,
+					autoTriggerNext: args.auto_trigger_next,
+					checkInCronExpression: args.check_in_cron_expression,
+					checkInTimezone: args.check_in_timezone,
+					triggerImmediately: args.trigger_immediately,
+				});
+				logAudit('create_goal', {
+					title: args.title,
+					type: args.type,
+					priority: args.priority,
+					trigger_immediately: args.trigger_immediately,
+					check_in_cron_expression: args.check_in_cron_expression,
+				});
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Update public goal fields and rolling state.
+		 */
+		async update_goal(args: { goal_id: string } & GoalToolUpdateArgs): Promise<ToolResult> {
+			try {
+				requireGoalInSpace(args.goal_id);
+				const { goal_id: goalId, ...updates } = args;
+				const goal = requireGoalService().updateGoal(goalId, normalizeGoalUpdateArgs(updates));
+				logAudit('update_goal', { goal_id: goalId, fields: Object.keys(updates) });
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async pause_goal(args: { goal_id: string }): Promise<ToolResult> {
+			try {
+				requireGoalInSpace(args.goal_id);
+				const goal = requireGoalService().pauseGoal(args.goal_id);
+				logAudit('pause_goal', { goal_id: args.goal_id });
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async resume_goal(args: { goal_id: string }): Promise<ToolResult> {
+			try {
+				requireGoalInSpace(args.goal_id);
+				const goal = requireGoalService().resumeGoal(args.goal_id);
+				logAudit('resume_goal', { goal_id: args.goal_id });
+				return jsonResult({ success: true, goal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async trigger_goal_task(args: { goal_id: string }): Promise<ToolResult> {
+			try {
+				requireGoalInSpace(args.goal_id);
+				const result = requireGoalService().createImmediateTask(args.goal_id);
+				logAudit('trigger_goal_task', { goal_id: args.goal_id }, result.task?.id);
+				return jsonResult({ success: true, ...result });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_goal_tasks(args: {
+			goal_id: string;
+			status?: SpaceTaskStatus;
+		}): Promise<ToolResult> {
+			try {
+				requireGoalInSpace(args.goal_id);
+				const tasks = taskRepo
+					.listBySpace(spaceId)
+					.filter((task) => task.goalId === args.goal_id)
+					.filter((task) => (args.status ? task.status === args.status : true));
+				return jsonResult({ success: true, total: tasks.length, tasks });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
 		 * Create a recurring (cron) or one-shot (at) scheduled task.
 		 */
 		async create_scheduled_task(args: {
@@ -1851,6 +2042,137 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			(args) => handlers.approve_task(args)
 		),
 	];
+
+	// Goal management tools — only registered when goalService is provided.
+	if (config.goalService) {
+		const goalStatusSchema = z.enum(['active', 'paused', 'completed', 'archived']);
+		const goalTypeSchema = z.enum(['one_shot', 'measurable', 'recurring']);
+		const goalMetricsSchema = z.record(
+			z.string(),
+			z.union([z.string(), z.number(), z.boolean(), z.null()])
+		);
+		const goalUpdateShape = {
+			title: z.string().min(1).optional().describe('New goal title'),
+			description: z.string().optional().describe('New goal description'),
+			status: goalStatusSchema.optional().describe('New lifecycle status'),
+			type: goalTypeSchema.optional().describe('Goal type'),
+			priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Goal priority'),
+			labels: z.array(z.string()).optional().describe('Labels for future goal tasks'),
+			metrics: goalMetricsSchema.optional().describe('Structured measurement state'),
+			summary: z.string().optional().describe('Rolling summary of current goal state'),
+			progress: z.number().int().min(0).max(100).optional().describe('Progress percentage 0-100'),
+			next_steps: z.array(z.string()).optional().describe('Rolling list of next steps'),
+			preferred_workflow_id: z
+				.string()
+				.nullable()
+				.optional()
+				.describe('Preferred workflow ID for future goal tasks'),
+			auto_trigger_next: z
+				.boolean()
+				.optional()
+				.describe(
+					'Queue one follow-up run when trigger is called while another goal task is active'
+				),
+		};
+
+		tools.push(
+			tool(
+				'list_goals',
+				'List long-horizon goals in this space. Use this before changing goal progress or creating goal tasks.',
+				{ status: goalStatusSchema.optional().describe('Filter by goal status') },
+				(args) => handlers.list_goals(args)
+			),
+			tool(
+				'get_goal',
+				'Get one goal with rolling state, active task pointers, next check-in, metrics, and next steps.',
+				{ goal_id: z.string().describe('Goal ID') },
+				(args) => handlers.get_goal(args)
+			),
+			tool(
+				'create_goal',
+				'Create a long-horizon goal in this space. Optionally schedule recurring check-ins or trigger the first task immediately.',
+				{
+					title: z.string().min(1).describe('Goal title'),
+					description: z.string().optional().describe('Goal description'),
+					type: goalTypeSchema.optional().describe('Goal type'),
+					priority: z
+						.enum(['low', 'normal', 'high', 'urgent'])
+						.optional()
+						.describe('Goal priority'),
+					labels: z.array(z.string()).optional().describe('Labels for future goal tasks'),
+					metrics: goalMetricsSchema.optional().describe('Initial structured metric state'),
+					summary: z.string().optional().describe('Initial rolling summary'),
+					progress: z.number().int().min(0).max(100).optional().describe('Initial progress 0-100'),
+					next_steps: z.array(z.string()).optional().describe('Initial next steps'),
+					preferred_workflow_id: z
+						.string()
+						.nullable()
+						.optional()
+						.describe('Preferred workflow ID for goal tasks'),
+					auto_trigger_next: z
+						.boolean()
+						.optional()
+						.describe('Queue one follow-up run when a trigger happens while active task exists'),
+					check_in_cron_expression: z
+						.string()
+						.optional()
+						.describe('Cron expression for recurring check-in task creation'),
+					check_in_timezone: z.string().optional().describe('IANA timezone for check-ins'),
+					trigger_immediately: z
+						.boolean()
+						.optional()
+						.describe('Create first goal task immediately'),
+				},
+				(args) => handlers.create_goal(args)
+			),
+			tool(
+				'update_goal',
+				'Update public goal fields and rolling state. Use summary/progress/metrics/next_steps to keep long-horizon state current; internal fields like activeTaskId and taskScheduleId are not writable.',
+				{ goal_id: z.string().describe('Goal ID'), ...goalUpdateShape },
+				(args) => handlers.update_goal(args)
+			),
+			tool(
+				'pause_goal',
+				'Pause an active goal and its linked check-in schedule if present.',
+				{ goal_id: z.string().describe('Goal ID') },
+				(args) => handlers.pause_goal(args)
+			),
+			tool(
+				'resume_goal',
+				'Resume a paused goal and re-enable its linked check-in schedule if present.',
+				{ goal_id: z.string().describe('Goal ID') },
+				(args) => handlers.resume_goal(args)
+			),
+			tool(
+				'trigger_goal_task',
+				'Create an immediate task for a goal. If another goal task is active and auto_trigger_next is true, queues one follow-up instead of overlapping work.',
+				{ goal_id: z.string().describe('Goal ID') },
+				(args) => handlers.trigger_goal_task(args)
+			),
+			tool(
+				'list_goal_tasks',
+				'List tasks linked to a goal in this space, optionally filtered by status.',
+				{
+					goal_id: z.string().describe('Goal ID'),
+					status: z
+						.enum([
+							'draft',
+							'open',
+							'in_progress',
+							'review',
+							'approved',
+							'done',
+							'blocked',
+							'cancelled',
+							'archived',
+						])
+						.optional()
+						.describe('Filter by linked task status'),
+				},
+				(args) => handlers.list_goal_tasks(args)
+			)
+		);
+	}
 
 	// Schedule management tools — only registered when scheduleService is provided.
 	if (config.scheduleService) {

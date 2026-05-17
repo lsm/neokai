@@ -120,7 +120,34 @@ export type SubmitForApprovalInput = z.infer<typeof SubmitForApprovalSchema>;
  * Takes no arguments — the task is implicit from the calling session's
  * context. Strict schema so future fields fail fast until explicitly added.
  */
-export const MarkCompleteSchema = z.object({}).strict();
+export const GoalUpdateSchema = z
+	.object({
+		summary: z.string().describe('Updated rolling summary for the linked goal').optional(),
+		progress: z
+			.number()
+			.int()
+			.min(0)
+			.max(100)
+			.describe('Updated goal progress percentage from 0 to 100')
+			.optional(),
+		metrics: z
+			.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+			.describe('Updated structured metric state for the linked goal')
+			.optional(),
+		nextSteps: z
+			.array(z.string())
+			.describe('Updated list of next steps for the linked goal')
+			.optional(),
+	})
+	.strict();
+
+export const MarkCompleteSchema = z
+	.object({
+		goal_update: GoalUpdateSchema.describe(
+			"Optional rolling-state update for the task's linked goal. Provide this when completed work changes long-horizon goal state."
+		).optional(),
+	})
+	.strict();
 
 export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
 
