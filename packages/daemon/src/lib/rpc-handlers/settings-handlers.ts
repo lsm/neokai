@@ -62,19 +62,42 @@ export function registerSettingsHandlers(
 	messageHub.onRequest(
 		'settings.global.update',
 		async (data: { updates: Partial<GlobalSettings> }) => {
-			const updated = settingsManager.updateGlobalSettings(data.updates);
-			if (data.updates.providerModelAllowlists !== undefined) {
-				await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
-			}
-			// Emit event for StateManager to broadcast (global event)
-			internalEventBus.publishAsync('settings.updated', {
-				namespaceId: 'global',
-				settings: updated,
-			});
+			const touchesCustomEndpoints = data.updates.customEndpoints !== undefined;
+			// Always serialise through the customEndpoints lock. Even when the
+			// update payload omits `customEndpoints`, `updateGlobalSettings`
+			// performs a full read-merge-write of the settings row that includes
+			// the customEndpoints field — without the lock a concurrent
+			// `customEndpoints.add/update/remove` could persist a stale snapshot
+			// and silently drop the other mutation.
+			const run = async () => {
+				if (touchesCustomEndpoints) {
+					const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+					validateCustomEndpoints(data.updates.customEndpoints);
+				}
+				const updated = settingsManager.updateGlobalSettings(data.updates);
+				if (data.updates.providerModelAllowlists !== undefined) {
+					await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
+				}
+				if (touchesCustomEndpoints) {
+					const { syncCustomEndpointProviders } = await import('../providers/factory.js');
+					await syncCustomEndpointProviders(data.updates.customEndpoints);
+					// Stale model cache would still list removed custom models and
+					// miss newly added ones until the TTL expires.
+					const { clearModelsCache } = await import('../model-service');
+					clearModelsCache();
+				}
+				// Emit event for StateManager to broadcast (global event)
+				internalEventBus.publishAsync('settings.updated', {
+					namespaceId: 'global',
+					settings: updated,
+				});
 
-			// Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
+				// Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
 
-			return { success: true, settings: updated };
+				return { success: true, settings: updated };
+			};
+			const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
+			return withCustomEndpointsLock(run);
 		}
 	);
 
@@ -82,16 +105,53 @@ export function registerSettingsHandlers(
 	 * Save global settings (full replace)
 	 */
 	messageHub.onRequest('settings.global.save', async (data: { settings: GlobalSettings }) => {
-		settingsManager.saveGlobalSettings(data.settings);
-		if (data.settings.providerModelAllowlists !== undefined) {
-			await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
-		}
-		// Emit event for StateManager to broadcast (global event)
-		internalEventBus.publishAsync('settings.updated', {
-			namespaceId: 'global',
-			settings: data.settings,
-		});
-		return { success: true };
+		// `customEndpoints` is optional in GlobalSettings, so a legacy caller
+		// that sends a partial payload would otherwise unregister every custom
+		// endpoint at runtime (and overwrite persisted state) just by omitting
+		// the field. Only touch the registry when the payload actually
+		// declares the key, even if its value is `[]` (explicit clear).
+		const customEndpointsProvided = Object.prototype.hasOwnProperty.call(
+			data.settings,
+			'customEndpoints'
+		);
+		const run = async () => {
+			if (customEndpointsProvided) {
+				const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+				validateCustomEndpoints(data.settings.customEndpoints);
+			}
+			// When the payload omits the field, merge the currently-persisted
+			// list back into what we write to disk. Snapshot INSIDE the lock so
+			// a concurrent customEndpoints.add/update/remove cannot land between
+			// the snapshot and the saveGlobalSettings call — otherwise that
+			// mutation would be overwritten by this stale copy.
+			const settingsToPersist: GlobalSettings = customEndpointsProvided
+				? data.settings
+				: {
+						...data.settings,
+						customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
+					};
+			settingsManager.saveGlobalSettings(settingsToPersist);
+			if (data.settings.providerModelAllowlists !== undefined) {
+				await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
+			}
+			if (customEndpointsProvided) {
+				const { syncCustomEndpointProviders } = await import('../providers/factory.js');
+				await syncCustomEndpointProviders(data.settings.customEndpoints);
+				const { clearModelsCache } = await import('../model-service');
+				clearModelsCache();
+			}
+			// Emit event for StateManager to broadcast (global event)
+			internalEventBus.publishAsync('settings.updated', {
+				namespaceId: 'global',
+				settings: settingsToPersist,
+			});
+			return { success: true };
+		};
+		// Always serialise through the customEndpoints lock — even when the
+		// payload omits the field we read+merge the persisted list inside `run`,
+		// and that read-modify-write must be ordered with concurrent CRUD RPCs.
+		const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
+		return withCustomEndpointsLock(run);
 	});
 
 	/**

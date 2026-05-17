@@ -212,6 +212,19 @@ export interface Provider {
 	 * call re-fetches from the API instead of returning stale cached data.
 	 */
 	clearModelCache?(): void;
+
+	/**
+	 * Optional: Return the thinking mode supported by a specific model, when
+	 * the provider exposes models with heterogeneous thinking capability.
+	 * Used by the query-options builder to skip emitting `thinking` payloads
+	 * for models that don't support extended thinking, even when the
+	 * provider-level aggregate capability advertises `on`/`granular`.
+	 *
+	 * Returning `undefined` means "fall back to the provider-level
+	 * `capabilities.thinkingModes`". Returning `'off'` explicitly suppresses
+	 * thinking for this model.
+	 */
+	getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
 }
 
 /**

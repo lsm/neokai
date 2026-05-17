@@ -320,6 +320,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		description:
 			'Recurring (cron) and one-shot (at) task schedule templates with trigger config, status, and last-run tracking.',
 	},
+	{
+		tableName: 'space_agent_memory',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Persistent agent-written Space memories with keys, content, tags, and access metadata.',
+	},
 	// ── Main-DB tables exposed with space-scoped filtering via session ID prefix ──
 	{
 		tableName: 'sessions',
@@ -402,6 +409,12 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'space_external_event_source_configs',
 	'space_external_events',
 	'space_external_event_deliveries',
+	// FTS5 shadow tables for space_agent_memory — query through space_agent_memory instead.
+	'space_agent_memory_fts',
+	'space_agent_memory_fts_config',
+	'space_agent_memory_fts_data',
+	'space_agent_memory_fts_docsize',
+	'space_agent_memory_fts_idx',
 	// Dropped tables (no longer exist in schema)
 	'space_session_groups',
 	'space_session_group_members',
