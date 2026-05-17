@@ -11,9 +11,10 @@ interface SpacePageHeaderProps {
 export function SpacePageHeader({ spaceName, pageTitle, actions }: SpacePageHeaderProps) {
 	return (
 		<div
-			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[65px] flex items-center`}
+			data-tauri-drag-region
+			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[52px] flex items-center`}
 		>
-			<div class="flex-1 flex items-center gap-3">
+			<div class="flex-1 flex items-center gap-3" data-tauri-drag-region>
 				<button
 					onClick={() => (contextPanelOpenSignal.value = true)}
 					class="md:hidden p-1.5 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
@@ -29,9 +30,13 @@ export function SpacePageHeader({ spaceName, pageTitle, actions }: SpacePageHead
 						/>
 					</svg>
 				</button>
-				<div class="flex-1 min-w-0">
-					<div class="text-xs text-gray-500 truncate">{spaceName}</div>
-					<h2 class="text-sm font-semibold text-gray-100 truncate">{pageTitle}</h2>
+				<div class="flex-1 min-w-0" data-tauri-drag-region>
+					<div class="text-xs text-gray-500 truncate" data-tauri-drag-region>
+						{spaceName}
+					</div>
+					<h2 class="text-sm font-semibold text-gray-100 truncate" data-tauri-drag-region>
+						{pageTitle}
+					</h2>
 				</div>
 			</div>
 			{actions && <div class="flex items-center gap-2 flex-shrink-0">{actions}</div>}

@@ -346,7 +346,7 @@ export function ContextPanel() {
 				{/* Space-detail header — back / name / configure (desktop) */}
 				{isSpaceDetail && (
 					<div
-						class={`hidden md:flex px-4 h-[57px] items-center gap-1 border-b ${borderColors.ui.default}`}
+						class={`hidden md:flex px-4 h-[52px] items-center gap-1 border-b ${borderColors.ui.default}`}
 					>
 						<button
 							type="button"

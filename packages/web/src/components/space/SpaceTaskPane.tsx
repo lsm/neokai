@@ -810,9 +810,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-900">
 			<div
-				class={`px-3 sm:px-4 min-h-[65px] flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default}`}
+				data-tauri-drag-region
+				class={`px-3 sm:px-4 h-[52px] flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default}`}
 			>
-				<div class="flex min-h-[64px] items-center gap-2 sm:gap-3">
+				<div class="flex h-full items-center gap-2 sm:gap-3" data-tauri-drag-region>
 					{onClose && (
 						<button
 							type="button"
@@ -831,16 +832,20 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							</svg>
 						</button>
 					)}
-					<div class="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
-						<div class="flex items-center gap-2 min-w-0 sm:flex-1">
-							<h2 class="text-sm sm:text-base font-semibold text-gray-100 min-w-0 leading-5 flex-1 overflow-hidden break-words [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]">
+					<div class="min-w-0 flex flex-1 items-center gap-2 sm:gap-3" data-tauri-drag-region>
+						<div class="flex items-center gap-2 min-w-0 flex-1" data-tauri-drag-region>
+							<h2
+								class="text-sm font-semibold text-gray-100 min-w-0 leading-5 flex-1 truncate"
+								title={task.title}
+								data-tauri-drag-region
+							>
 								{task.title}
 							</h2>
 							<span class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0">
 								#{task.taskNumber}
 							</span>
 						</div>
-						<div class="mt-1 flex items-center gap-1.5 overflow-hidden sm:mt-0 sm:flex-shrink-0">
+						<div class="flex items-center gap-1.5 overflow-hidden flex-shrink-0">
 							{showHeaderStatusBadge && (
 								<TaskMetaBadge class={cn(STATUS_BADGE_CLASSES[task.status])}>
 									<span data-testid="task-status-label">{activitySummary}</span>
