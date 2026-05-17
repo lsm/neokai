@@ -144,7 +144,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 			closePalette();
 			navSectionSignal.value = 'settings';
 			settingsSectionSignal.value = 'providers';
-			navigateToSettings();
+			navigateToSettings('providers');
 		},
 	},
 	{
@@ -156,7 +156,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 			closePalette();
 			navSectionSignal.value = 'settings';
 			settingsSectionSignal.value = 'models';
-			navigateToSettings();
+			navigateToSettings('models');
 		},
 	},
 	{
@@ -168,7 +168,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 			closePalette();
 			navSectionSignal.value = 'settings';
 			settingsSectionSignal.value = 'skills';
-			navigateToSettings();
+			navigateToSettings('skills');
 		},
 	},
 	{
@@ -180,7 +180,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 			closePalette();
 			navSectionSignal.value = 'settings';
 			settingsSectionSignal.value = 'shortcuts';
-			navigateToSettings();
+			navigateToSettings('shortcuts');
 		},
 	},
 	{
