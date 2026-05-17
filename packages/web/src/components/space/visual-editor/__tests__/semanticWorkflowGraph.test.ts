@@ -1,19 +1,9 @@
 import type { Gate, WorkflowChannel } from '@neokai/shared';
-import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { describe, expect, it } from 'vitest';
 import { buildSemanticWorkflowEdges } from '../semanticWorkflowGraph';
 import type { VisualNode } from '../serialization';
 
 const NODES: VisualNode[] = [
-	{
-		step: {
-			localId: TASK_AGENT_NODE_ID,
-			id: TASK_AGENT_NODE_ID,
-			name: 'Task Agent',
-			agentId: '',
-		},
-		position: { x: 50, y: 20 },
-	},
 	{
 		step: {
 			localId: 'plan',
@@ -122,9 +112,9 @@ describe('buildSemanticWorkflowEdges', () => {
 		]);
 	});
 
-	it('ignores task-agent and intra-node channels for the semantic canvas graph', () => {
+	it('ignores unresolved and intra-node channels for the semantic canvas graph', () => {
 		const channels: WorkflowChannel[] = [
-			{ from: 'task-agent', to: 'Planning' },
+			{ from: 'Unknown', to: 'Planning' },
 			{ from: 'Reviewer 1', to: 'Reviewer 2' },
 			{ from: 'Code Review', to: 'QA', gateId: 'g1' },
 		];

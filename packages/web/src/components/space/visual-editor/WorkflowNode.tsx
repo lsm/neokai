@@ -16,13 +16,11 @@
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceAgent, WorkflowChannel } from '@neokai/shared';
-import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
 import type { AnchorSide } from './semanticWorkflowGraph';
 import { getVisualNodeDimensions } from './nodeMetrics';
-import { useIsMobileCanvas } from '../../../hooks/useIsMobileCanvas';
 
 // ============================================================================
 // Props
@@ -170,13 +168,7 @@ export function WorkflowNode({
 	draggable = true,
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
-	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
-	const isMobileCanvas = useIsMobileCanvas();
-	const baseDimensions = getVisualNodeDimensions(step);
-	// Compact Task Agent on mobile: narrower + shorter to keep the pinned node
-	// from dominating the canvas. Regular nodes keep their normal dimensions so
-	// edge routing / port positions remain stable across breakpoints.
-	const dimensions = isTaskAgent && isMobileCanvas ? { width: 112, height: 36 } : baseDimensions;
+	const dimensions = getVisualNodeDimensions(step);
 
 	const multi = isMultiAgentNode(step);
 	const singleSlot =
@@ -215,8 +207,6 @@ export function WorkflowNode({
 
 	// ---- Window-level listeners (always registered, guard on dragState) ----
 	// Mirrors the pattern used by VisualCanvas for its spacebar+drag pan.
-	// For the Task Agent node, dragState.current is never set (handleMouseDown
-	// returns early), so both handlers short-circuit immediately — they are no-ops.
 	useEffect(() => {
 		const onMouseMove = (e: MouseEvent) => {
 			if (!dragState.current) return;
@@ -242,12 +232,7 @@ export function WorkflowNode({
 			if (!dragState.current) return;
 			dragState.current = null;
 			if (nodeRef.current) {
-				// Only reset to 'grab' for draggable nodes — Task Agent uses 'default'
-				// and dragState.current can never be set for it, so this branch is
-				// unreachable for Task Agent. Guard here for defence-in-depth.
-				if (!isTaskAgent) {
-					nodeRef.current.style.cursor = 'grab';
-				}
+				nodeRef.current.style.cursor = 'grab';
 				nodeRef.current.style.boxShadow = '';
 			}
 		};
@@ -260,14 +245,9 @@ export function WorkflowNode({
 		};
 	}, [stepId]);
 
-	// ---- Card body mousedown — starts drag (disabled for Task Agent or when draggable=false) ----
+	// ---- Card body mousedown — starts drag (disabled when draggable=false) ----
 	const handleMouseDown = useCallback(
 		(e: MouseEvent) => {
-			// Task Agent is pinned — it cannot be dragged
-			if (isTaskAgent) {
-				e.stopPropagation();
-				return;
-			}
 			// Read-only mode: no drag affordances, but still stop propagation so
 			// the canvas pan handler cannot capture the mousedown event.
 			if (!draggable) {
@@ -293,7 +273,7 @@ export function WorkflowNode({
 				nodeRef.current.style.boxShadow = '0 8px 24px rgba(0,0,0,0.4)';
 			}
 		},
-		[isTaskAgent, draggable, position.x, position.y]
+		[draggable, position.x, position.y]
 	);
 
 	// ---- Card click — for selection (suppressed after drag) ----
@@ -339,15 +319,13 @@ export function WorkflowNode({
 	}, [onPortMouseLeave, stepId]);
 
 	// ---- Styles ----
-	const borderClass = isTaskAgent
-		? 'border-amber-400'
-		: isStartNode
-			? 'border-green-500'
-			: isSelected
-				? 'border-blue-500'
-				: 'border-gray-700';
+	const borderClass = isStartNode
+		? 'border-green-500'
+		: isSelected
+			? 'border-blue-500'
+			: 'border-gray-700';
 
-	const bgClass = isTaskAgent ? 'bg-amber-950' : 'bg-gray-800';
+	const bgClass = 'bg-gray-800';
 
 	const inputPortBg = isDropTarget ? '#22c55e' : '#6b7280';
 	const inputPortBorder = isDropTarget ? '#16a34a' : '#374151';
@@ -357,69 +335,6 @@ export function WorkflowNode({
 	const hasActiveExecution = nodeTaskStates?.some((s) => s.status === 'in_progress') ?? false;
 	const pulseClass = hasActiveExecution ? 'animate-pulse' : '';
 	const activeAnchorSideSet = new Set(activeAnchorSides);
-
-	// Task Agent: render a visually distinct pinned node with no ports.
-	//
-	// Mobile (< Tailwind md breakpoint): render a compact variant. The visible
-	// "Task Agent" header badge is oversized on small viewports, so we hide it
-	// visually with `sr-only` (keeping it for screen readers) and shrink the
-	// step-name text + padding. The card itself also uses smaller dimensions.
-	// The `aria-label` on the card provides redundant context so focused users
-	// always hear "Task Agent" regardless of the step name.
-	if (isTaskAgent) {
-		const rootPadding = isMobileCanvas ? 'px-2 py-1' : 'px-3 py-2';
-		const badgeClass = isMobileCanvas
-			? 'sr-only'
-			: 'text-xs font-bold text-amber-400 uppercase tracking-wider';
-		const nameClass = isMobileCanvas
-			? 'text-[11px] font-medium text-amber-100 truncate leading-tight'
-			: 'text-sm font-medium text-amber-100 truncate';
-		const nameMaxWidth = isMobileCanvas ? 96 : 180;
-
-		return (
-			<div
-				ref={nodeRef}
-				data-testid={`workflow-node-${stepId}`}
-				data-step-id={stepId}
-				data-task-agent="true"
-				data-task-agent-compact={isMobileCanvas ? 'true' : 'false'}
-				data-pan-canvas="true"
-				aria-label="Task Agent"
-				style={{
-					position: 'absolute',
-					left: position.x,
-					top: position.y,
-					width: dimensions.width,
-					minHeight: dimensions.height,
-					cursor: 'grab',
-					userSelect: 'none',
-					zIndex: 10,
-				}}
-				class={`rounded-lg border-2 ${bgClass} ${borderClass}`}
-				onMouseDown={handleMouseDown}
-			>
-				<div class={rootPadding}>
-					{/* Header row: Task Agent badge — visible on desktop/tablet,
-					    sr-only on mobile so screen readers still announce it. */}
-					{isMobileCanvas ? (
-						<span data-testid="task-agent-badge" class={badgeClass}>
-							Task Agent
-						</span>
-					) : (
-						<div class="flex items-center justify-between mb-1">
-							<span data-testid="task-agent-badge" class={badgeClass}>
-								Task Agent
-							</span>
-						</div>
-					)}
-					{/* Name */}
-					<p data-testid="step-name" class={nameClass} style={{ maxWidth: nameMaxWidth }}>
-						{step.name || 'Task Agent'}
-					</p>
-				</div>
-			</div>
-		);
-	}
 
 	return (
 		<div
@@ -474,7 +389,7 @@ export function WorkflowNode({
 
 			{/* Card content */}
 			<div class="px-3 py-2">
-				{/* Header row: step badge + optional START badge */}
+				{/* Header row: step badge + optional workflow state badges */}
 				<div class="flex items-center justify-between mb-1">
 					<span
 						data-testid="step-badge"
@@ -482,22 +397,33 @@ export function WorkflowNode({
 					>
 						{stepIndex + 1}
 					</span>
-					{isStartNode && (
-						<span
-							data-testid="start-badge"
-							class="text-xs font-bold text-green-400 uppercase tracking-wider"
-						>
-							START
-						</span>
-					)}
-					{isEndNode && (
-						<span
-							data-testid="end-badge"
-							class="text-xs font-bold text-purple-400 uppercase tracking-wider"
-						>
-							END
-						</span>
-					)}
+					<div class="flex min-w-0 items-center gap-1">
+						{isStartNode && (
+							<span
+								data-testid="start-badge"
+								class="text-xs font-bold text-green-400 uppercase tracking-wider"
+							>
+								START
+							</span>
+						)}
+						{isEndNode && (
+							<span
+								data-testid="end-badge"
+								class="text-xs font-bold text-purple-400 uppercase tracking-wider"
+							>
+								END
+							</span>
+						)}
+						{step.postApproval && (
+							<span
+								data-testid="post-approval-badge"
+								title="Post-approval instruction configured"
+								class="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-300"
+							>
+								Post
+							</span>
+						)}
+					</div>
 				</div>
 
 				{/* Step name */}

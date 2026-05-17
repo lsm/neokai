@@ -83,8 +83,7 @@ async function setupWorkflowWithScriptGate(
 
 	// Add step 1 (auto-designated as start node)
 	await editor.getByTestId('add-step-button').click();
-	const regularNodes = () =>
-		editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+	const regularNodes = () => editor.locator('[data-testid^="workflow-node-"]');
 	await expect(regularNodes()).toHaveCount(1, { timeout: 3000 });
 
 	// Name step 1
@@ -241,8 +240,7 @@ test.describe('Script Gate Configuration', () => {
 		await expect(reopenedBadge).toContainText('\u26A1');
 
 		// ── Verify gate configuration by opening the gate editor ───────────────
-		const regularNodes = () =>
-			reopenedEditor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+		const regularNodes = () => reopenedEditor.locator('[data-testid^="workflow-node-"]');
 		const step1 = regularNodes().first();
 		await step1.click();
 

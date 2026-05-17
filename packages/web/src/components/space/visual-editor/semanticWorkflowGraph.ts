@@ -1,5 +1,4 @@
 import type { Gate, WorkflowChannel } from '@neokai/shared';
-import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { getVisualNodeDimensions } from './nodeMetrics';
 import type { VisualNode } from './serialization';
 
@@ -110,8 +109,6 @@ function buildEndpointNodeLookup(nodes: VisualNode[]): Map<string, string> {
 	const lookup = new Map<string, string>();
 
 	for (const node of nodes) {
-		if (node.step.localId === TASK_AGENT_NODE_ID || node.step.id === TASK_AGENT_NODE_ID) continue;
-
 		if (node.step.agentId) {
 			lookup.set(node.step.agentId, node.step.localId);
 		}
@@ -145,14 +142,14 @@ export function buildSemanticWorkflowEdges(
 	const gateLookup = new Map(gates.map((gate) => [gate.id, gate]));
 
 	for (const [channelIndex, channel] of channels.entries()) {
-		if (channel.from === 'task-agent' || channel.from === '*') continue;
+		if (channel.from === '*') continue;
 
 		const fromStepId = endpointLookup.get(channel.from);
 		if (!fromStepId) continue;
 
 		const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
 		for (const rawTarget of targets) {
-			if (rawTarget === 'task-agent' || rawTarget === '*') continue;
+			if (rawTarget === '*') continue;
 
 			const toStepId = endpointLookup.get(rawTarget);
 			if (!toStepId || toStepId === fromStepId) continue;

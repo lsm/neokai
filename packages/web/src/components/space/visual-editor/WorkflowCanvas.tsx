@@ -22,7 +22,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import type { ComponentChildren, JSX, RefObject } from 'preact';
 
-import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { VisualCanvas } from './VisualCanvas';
 import { WorkflowNode } from './WorkflowNode';
 import type { WorkflowNodeProps, PortType } from './WorkflowNode';
@@ -57,7 +56,7 @@ export interface WorkflowCanvasProps {
 	onViewportChange: (state: ViewportState) => void;
 	/** Edges to render between nodes. Also used for duplicate detection during connection drag. */
 	transitions?: VisualTransition[];
-	/** Channel edges to render between nodes (Task Agent channels and regular channels). */
+	/** Channel edges to render between nodes. */
 	channels?: ResolvedWorkflowChannel[];
 	/**
 	 * Explicit node positions including width/height for edge port computation.
@@ -146,12 +145,10 @@ function GhostEdge({ from, to }: { from: Point; to: Point }): JSX.Element | null
  * channel endpoints to node IDs:
  * - Intra-node channels (agents within the same node) are skipped - they don't
  *   need cross-node edges since all agents in a node share the same canvas space.
- * - Inter-node channels (including Task Agent channels) are resolved to
- *   actual node IDs and returned as ResolvedWorkflowChannel objects.
- *
- * Task Agent channels use 'task-agent' as the special source identifier.
- * Other channels resolve agent roles to their containing node IDs using the
- * SpaceAgent.agents array which has slot name information.
+ * - Inter-node channels are resolved to actual node IDs and returned as
+ *   ResolvedWorkflowChannel objects.
+ * - Channels resolve agent roles to their containing node IDs using the
+ *   SpaceAgent.agents array, which has slot name information.
  */
 export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflowChannel[] {
 	const result: ResolvedWorkflowChannel[] = [];
@@ -180,9 +177,7 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
 			let fromNodeId: string | null = null;
 
 			// Resolve 'from' endpoint
-			if (channel.from === 'task-agent') {
-				fromNodeId = 'task-agent';
-			} else if (channel.from === '*') {
+			if (channel.from === '*') {
 				// Wildcard: from the node itself
 				fromNodeId = node.step.localId;
 			} else {
@@ -210,28 +205,11 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
 				if (seenEdges.has(edgeKey)) continue;
 				seenEdges.add(edgeKey);
 
-				// For task-agent channels, we always render from task-agent to the other node
-				if (fromNodeId === 'task-agent' && toNodeId !== 'task-agent') {
-					result.push({
-						fromStepId: 'task-agent',
-						toStepId: toNodeId,
-						direction: 'one-way' as const,
-					});
-				} else if (toNodeId === 'task-agent' && fromNodeId !== 'task-agent') {
-					// Also add edge when task-agent is the target (channel is defined on another node)
-					result.push({
-						fromStepId: fromNodeId,
-						toStepId: 'task-agent',
-						direction: 'one-way' as const,
-					});
-				} else if (fromNodeId !== 'task-agent' && toNodeId !== 'task-agent') {
-					// Regular inter-node channel between two non-task-agent nodes
-					result.push({
-						fromStepId: fromNodeId,
-						toStepId: toNodeId,
-						direction: 'one-way' as const,
-					});
-				}
+				result.push({
+					fromStepId: fromNodeId,
+					toStepId: toNodeId,
+					direction: 'one-way' as const,
+				});
 			}
 		}
 	}
@@ -247,9 +225,6 @@ function resolveToTarget(
 	node: WorkflowNodeData,
 	agentSlotNameToNodeId: Map<string, string>
 ): string | null {
-	if (toValue === 'task-agent') {
-		return 'task-agent';
-	}
 	if (toValue === '*') {
 		// Wildcard: to the node itself
 		return node.step.localId;
@@ -351,9 +326,6 @@ export function WorkflowCanvas({
 	// Selecting a node clears the edge selection (mutually exclusive).
 	const handleNodeSelect = useCallback(
 		(stepId: string) => {
-			// Task Agent is a virtual node — skip selection so it never gets a
-			// visual highlight ring or enters the keyboard-Delete path.
-			if (stepId === TASK_AGENT_NODE_ID) return;
 			setSelectedNodeId(stepId);
 			onNodeSelect?.(stepId);
 			// Clear edge selection to prevent dual Delete handlers from both firing

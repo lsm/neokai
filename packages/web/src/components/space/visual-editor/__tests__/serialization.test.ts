@@ -16,7 +16,6 @@ import {
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
 import type { SpaceWorkflow, WorkflowNode } from '@neokai/shared';
-import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 // ---------------------------------------------------------------------------
 // Stable UUID counter so tests are deterministic
 // ---------------------------------------------------------------------------
@@ -62,15 +61,13 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 // ---------------------------------------------------------------------------
 
 describe('workflowToVisualState', () => {
-	it('creates one node per step (plus Task Agent virtual node)', () => {
+	it('creates one node per workflow step', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
-		// Task Agent virtual node is always injected as the first node
-		expect(state.nodes).toHaveLength(3);
-		expect(state.nodes[0].step.id).toBe('__task_agent__');
+		expect(state.nodes).toHaveLength(2);
 		expect(state.nodes.find((n) => n.step.id === 's1')?.step.id).toBe('s1');
 		expect(state.nodes.find((n) => n.step.id === 's2')?.step.id).toBe('s2');
 	});
@@ -202,28 +199,28 @@ describe('workflowToVisualState', () => {
 		});
 	});
 
-	it('passes postApproval through', () => {
+	it('migrates legacy workflow postApproval onto the end node', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1')],
 			startNodeId: 's1',
+			endNodeId: 's1',
 			postApproval: { targetAgent: 'reviewer', instructions: 'Merge PR {{pr_url}}.' },
 		});
 		const state = workflowToVisualState(wf);
-		expect(state.postApproval).toEqual({
+		expect(state.nodes.find((node) => node.step.id === 's1')?.step.postApproval).toEqual({
 			targetAgent: 'reviewer',
 			instructions: 'Merge PR {{pr_url}}.',
 		});
 	});
 
-	it('assigns fresh localIds to each node (including Task Agent)', () => {
+	it('assigns fresh localIds to each node', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		const localIds = state.nodes.map((n) => n.step.localId);
-		// Task Agent + 2 regular nodes = 3 unique localIds
-		expect(new Set(localIds).size).toBe(3);
+		expect(new Set(localIds).size).toBe(2);
 	});
 
 	it('passes endNodeId through when set', () => {
@@ -421,15 +418,30 @@ describe('visualStateToCreateParams', () => {
 		expect(params.endNodeId).toBe('s2');
 	});
 
-	it('passes postApproval through to create params', () => {
+	it('passes node postApproval through to create params', () => {
 		const state = makeState({
-			postApproval: { targetAgent: 'reviewer', instructions: 'Merge PR {{pr_url}}.' },
+			nodes: [
+				{
+					step: {
+						localId: 'local-1',
+						id: 's1',
+						name: 'Step 1',
+						agentId: 'a1',
+						postApproval: {
+							targetAgent: 'reviewer',
+							instructions: 'Merge PR {{pr_url}}.',
+						},
+					},
+					position: { x: 50, y: 50 },
+				},
+			],
 		});
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.postApproval).toEqual({
-			targetAgent: 'reviewer',
+		expect(params.nodes?.[0].postApproval).toEqual({
+			targetAgent: 'step-1',
 			instructions: 'Merge PR {{pr_url}}.',
 		});
+		expect(params.postApproval).toBeUndefined();
 	});
 
 	it('endNodeId is undefined when not set on state', () => {
@@ -622,11 +634,20 @@ describe('visualStateToUpdateParams', () => {
 		expect(params.endNodeId).toBe('s2');
 	});
 
-	it('passes postApproval through to update params', () => {
+	it('passes node postApproval through to update params and clears legacy workflow route', () => {
 		const state: VisualEditorState = {
 			nodes: [
 				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a' },
+					step: {
+						localId: 'l1',
+						id: 's1',
+						name: 'S1',
+						agentId: 'a',
+						postApproval: {
+							targetAgent: 'reviewer',
+							instructions: 'Publish release.',
+						},
+					},
 					position: { x: 0, y: 0 },
 				},
 			],
@@ -635,13 +656,13 @@ describe('visualStateToUpdateParams', () => {
 			tags: [],
 			channels: [],
 			gates: [],
-			postApproval: { targetAgent: 'task-agent', instructions: 'Publish release.' },
 		};
 		const params = visualStateToUpdateParams(state);
-		expect(params.postApproval).toEqual({
-			targetAgent: 'task-agent',
+		expect(params.nodes?.[0].postApproval).toEqual({
+			targetAgent: 's1',
 			instructions: 'Publish release.',
 		});
+		expect(params.postApproval).toBeNull();
 	});
 
 	it('endNodeId is null when not set on state', () => {
@@ -686,7 +707,6 @@ describe('multi-agent step serialization', () => {
 			],
 		});
 		const state = workflowToVisualState(workflow);
-		// Use find() — Task Agent virtual node is injected at index 0
 		const step = state.nodes.find((n) => n.step.id === 's1')!.step;
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
@@ -844,7 +864,6 @@ describe('multi-agent step serialization', () => {
 			nodes: [makeStep('s1', 'Code', 'agent-coder')],
 		});
 		const state = workflowToVisualState(workflow);
-		// Use find() — Task Agent virtual node is injected at index 0
 		const s1Node = state.nodes.find((n) => n.step.id === 's1')!;
 		// workflowToVisualState sets agentId to '' and stores the agent in agents array
 		expect(s1Node.step.agents).toHaveLength(1);
@@ -900,113 +919,6 @@ describe('multi-agent step serialization', () => {
 			from: 'reviewer',
 			to: ['coder', 'qa'],
 		});
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Task Agent virtual node — serialization / deserialization
-// ---------------------------------------------------------------------------
-
-describe('Task Agent virtual node', () => {
-	it('workflowToVisualState always injects Task Agent as first node', () => {
-		const wf = makeWorkflow({ nodes: [makeStep('s1')], startNodeId: 's1' });
-		const state = workflowToVisualState(wf);
-		expect(state.nodes[0].step.id).toBe(TASK_AGENT_NODE_ID);
-		expect(state.nodes[0].step.localId).toBe(TASK_AGENT_NODE_ID);
-		expect(state.nodes[0].step.name).toBe('Task Agent');
-	});
-
-	it('Task Agent node is present even for empty workflow', () => {
-		const wf = makeWorkflow({ nodes: [], startNodeId: '' });
-		const state = workflowToVisualState(wf);
-		expect(state.nodes).toHaveLength(1);
-		expect(state.nodes[0].step.id).toBe(TASK_AGENT_NODE_ID);
-	});
-
-	it('Task Agent is positioned above regular nodes (lower y value)', () => {
-		const wf = makeWorkflow({
-			nodes: [makeStep('s1'), makeStep('s2')],
-			startNodeId: 's1',
-			layout: { s1: { x: 300, y: 200 }, s2: { x: 300, y: 400 } },
-		});
-		const state = workflowToVisualState(wf);
-		const taskAgentPos = state.nodes[0].position;
-		const s1Pos = state.nodes.find((n) => n.step.id === 's1')!.position;
-		expect(taskAgentPos.y).toBeLessThan(s1Pos.y);
-	});
-
-	it('visualStateToCreateParams strips Task Agent node from persisted nodes', () => {
-		const wf = makeWorkflow({ nodes: [makeStep('s1'), makeStep('s2')], startNodeId: 's1' });
-		const state = workflowToVisualState(wf);
-
-		// Task Agent must be in the visual state
-		expect(state.nodes.some((n) => n.step.id === TASK_AGENT_NODE_ID)).toBe(true);
-
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		// Task Agent must NOT be in the persisted nodes
-		expect(params.nodes!.every((n) => n.id !== TASK_AGENT_NODE_ID)).toBe(true);
-		expect(params.nodes).toHaveLength(2);
-	});
-
-	it('visualStateToUpdateParams strips Task Agent node from persisted nodes', () => {
-		const wf = makeWorkflow({ nodes: [makeStep('s1')], startNodeId: 's1' });
-		const state = workflowToVisualState(wf);
-
-		const params = visualStateToUpdateParams(state);
-		expect(params.nodes!.every((n) => n.id !== TASK_AGENT_NODE_ID)).toBe(true);
-		expect(params.nodes).toHaveLength(1);
-	});
-
-	it('Task Agent is excluded from the persisted layout', () => {
-		const wf = makeWorkflow({ nodes: [makeStep('s1')], startNodeId: 's1' });
-		const state = workflowToVisualState(wf);
-
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(Object.keys(params.layout!)).not.toContain(TASK_AGENT_NODE_ID);
-	});
-
-	it('serialization round-trip preserves regular nodes and excludes Task Agent', () => {
-		const wf = makeWorkflow({
-			nodes: [makeStep('s1', 'Coder', 'agent-coder'), makeStep('s2', 'Reviewer', 'agent-reviewer')],
-			startNodeId: 's1',
-		});
-		const state = workflowToVisualState(wf);
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-
-		// Regular nodes preserved
-		const s1Node = params.nodes!.find((n) => n.id === 's1')!;
-		expect(s1Node.name).toBe('Coder');
-		expect(s1Node.agents[0].agentId).toBe('agent-coder');
-		const s2Node = params.nodes!.find((n) => n.id === 's2')!;
-		expect(s2Node.name).toBe('Reviewer');
-		expect(s2Node.agents[0].agentId).toBe('agent-reviewer');
-		// Task Agent not present
-		expect(params.nodes!.some((n) => n.id === TASK_AGENT_NODE_ID)).toBe(false);
-	});
-
-	it('Task Agent node in state does not affect startNodeId resolution', () => {
-		const wf = makeWorkflow({
-			nodes: [makeStep('s1'), makeStep('s2')],
-			startNodeId: 's2',
-		});
-		const state = workflowToVisualState(wf);
-		expect(state.startNodeId).toBe('s2');
-
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.startNodeId).toBe('s2');
-	});
-
-	it('Task Agent node in state does not appear in serialized nodes', () => {
-		const wf = makeWorkflow({
-			nodes: [makeStep('s1'), makeStep('s2')],
-			startNodeId: 's1',
-		});
-		const state = workflowToVisualState(wf);
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-
-		// Task Agent virtual node must not be serialized to the backend
-		expect(params.nodes!.some((n) => n.id === TASK_AGENT_NODE_ID)).toBe(false);
-		expect(params.nodes).toHaveLength(2);
 	});
 });
 
@@ -1167,7 +1079,7 @@ describe('per-slot agent overrides round-trip', () => {
 					agents: [{ agentId: 'a1', name: 'coder' }],
 				},
 			],
-			channels: [{ from: 'task-agent', to: 'coder' }],
+			channels: [{ from: 'planner', to: 'coder' }],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -1184,7 +1096,7 @@ describe('per-slot agent overrides round-trip', () => {
 		// Workflow-level channels are preserved through serialization
 		expect(params.channels).toHaveLength(1);
 		expect(params.channels![0]).toMatchObject({
-			from: 'task-agent',
+			from: 'planner',
 			to: 'coder',
 		});
 	});

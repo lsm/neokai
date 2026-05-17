@@ -21,7 +21,7 @@
  *   same state and expect the generated IDs to match.
  */
 
-import { generateUUID, TASK_AGENT_NODE_ID, normalizeThinkingLevel } from '@neokai/shared';
+import { generateUUID, normalizeThinkingLevel } from '@neokai/shared';
 import type {
 	SpaceWorkflow,
 	CreateSpaceWorkflowParams,
@@ -30,7 +30,6 @@ import type {
 	WorkflowChannel,
 	Gate,
 	SpaceAutonomyLevel,
-	PostApprovalRoute,
 } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { Point, WorkflowCondition } from './types';
@@ -96,8 +95,6 @@ export interface VisualEditorState {
 	 * human approval at each completion gate. Defaults to 3 when not set.
 	 */
 	completionAutonomyLevel?: SpaceAutonomyLevel;
-	/** Optional post-approval route configured on the workflow. */
-	postApproval?: PostApprovalRoute;
 	/** When true, the workflow is disabled and cannot be selected for new tasks. */
 	disabled?: boolean;
 }
@@ -113,8 +110,6 @@ export interface VisualEditorState {
  *   exactly from the stored layout. Steps missing from a partial layout fall back
  *   to `autoLayout` positions (autoLayout is only invoked when needed).
  * - All `WorkflowCondition` fields are preserved verbatim on the edges.
- * - The Task Agent virtual node is kept in editor state for compatibility, but
- *   is rendered outside the transformed canvas and excluded from layout bounds.
  */
 export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorState {
 	// Determine whether auto-layout is needed (any step missing from layout)
@@ -144,21 +139,11 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 					? normalizeThinkingLevel(agent.thinkingLevel)
 					: undefined,
 			})),
+			postApproval:
+				s.postApproval ?? (s.id === workflow.endNodeId ? workflow.postApproval : undefined),
 		};
 		return { step, position };
 	});
-
-	// Always inject the Task Agent virtual node at the top-center of the canvas.
-	// Its position is computed relative to the layout so it sits above all other nodes.
-	const taskAgentNode: VisualNode = {
-		step: {
-			localId: TASK_AGENT_NODE_ID,
-			id: TASK_AGENT_NODE_ID,
-			name: 'Task Agent',
-			agentId: '',
-		},
-		position: { x: 0, y: 0 },
-	};
 
 	// Transitions have been removed from SpaceWorkflow; edges start empty.
 	const edges: VisualEdge[] = [];
@@ -175,8 +160,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		: undefined;
 
 	return {
-		// Task Agent node is always first — pinned to the top of the canvas.
-		nodes: [taskAgentNode, ...nodes],
+		nodes,
 		edges,
 		startNodeId: startKey,
 		endNodeId: endKey,
@@ -188,7 +172,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		})),
 		gates: workflow.gates ?? [],
 		completionAutonomyLevel: workflow.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel),
-		postApproval: workflow.postApproval ? { ...workflow.postApproval } : undefined,
 		disabled: workflow.disabled,
 	};
 }
@@ -205,6 +188,7 @@ interface BuiltWorkflowFields {
 		id: string;
 		name: string;
 		agents: WorkflowNodeAgent[];
+		postApproval?: import('@neokai/shared').PostApprovalRoute;
 	}>;
 	startNodeId: string;
 	endNodeId?: string;
@@ -246,6 +230,11 @@ function deriveSingleAgentRoleName(node: VisualNode, fallbackIndex: number): str
 	return fromSingleSlot?.trim() || fromNodeName || `agent-${fallbackIndex + 1}`;
 }
 
+function derivePostApprovalTargetAgent(agents: WorkflowNodeAgent[], fallbackIndex: number): string {
+	const namedAgent = agents.find((agent) => agent.name?.trim());
+	return namedAgent?.name.trim() || `agent-${fallbackIndex + 1}`;
+}
+
 /**
  * Build the serialized workflow fields from a VisualEditorState.
  * Shared between create and update serialisation.
@@ -257,11 +246,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 } {
 	const generatedIds = new Map<string, string>();
 
-	// Strip the Task Agent virtual node — it is never persisted to the backend.
-	// Edges referencing TASK_AGENT_NODE_ID are also dropped (dangling edge logic below).
-	const persistableNodes = state.nodes.filter(
-		(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-	);
+	const persistableNodes = state.nodes;
 
 	// Assign persisted IDs to all nodes
 	const nodeMap = new Map<string, { node: VisualNode; persistedId: string }>();
@@ -288,7 +273,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 		keyToPersistedId.set(entry.node.step.localId, entry.persistedId);
 	}
 
-	// Build steps (Task Agent virtual node already excluded in persistableNodes)
 	const nodes = persistableNodes.map((node, i) => {
 		const key = node.step.id ?? node.step.localId;
 		const persistedId = nodeMap.get(key)!.persistedId;
@@ -315,14 +299,21 @@ function buildWorkflowFields(state: VisualEditorState): {
 						},
 					]
 				: [];
+		const postApproval = node.step.postApproval
+			? {
+					targetAgent: derivePostApprovalTargetAgent(agents, i),
+					instructions: node.step.postApproval.instructions,
+				}
+			: undefined;
 		return {
 			id: persistedId,
 			name: node.step.name || `Step ${i + 1}`,
 			agents,
+			...(postApproval ? { postApproval } : {}),
 		};
 	});
 
-	// Build layout (Task Agent virtual node excluded — not persisted)
+	// Build layout
 	const layout: Record<string, { x: number; y: number }> = {};
 	for (const node of persistableNodes) {
 		const key = node.step.id ?? node.step.localId;
@@ -396,7 +387,6 @@ export function visualStateToCreateParams(
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
 		gates: fields.gates && fields.gates.length > 0 ? fields.gates : undefined,
 		completionAutonomyLevel: state.completionAutonomyLevel,
-		postApproval: state.postApproval,
 		disabled: state.disabled,
 	};
 }
@@ -423,7 +413,7 @@ export function visualStateToUpdateParams(
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
 		gates: fields.gates && fields.gates.length > 0 ? fields.gates : null,
 		completionAutonomyLevel: state.completionAutonomyLevel,
-		postApproval: state.postApproval ?? null,
+		postApproval: null,
 		disabled: state.disabled ?? null,
 	};
 }

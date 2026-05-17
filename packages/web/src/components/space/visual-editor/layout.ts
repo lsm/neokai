@@ -70,13 +70,13 @@ function buildForwardLayoutEdges(
 	}
 
 	for (const channel of channels) {
-		if (channel.from === 'task-agent' || channel.from === '*') continue;
+		if (channel.from === '*') continue;
 		const fromNodeId = endpointLookup.get(channel.from);
 		if (!fromNodeId) continue;
 
 		const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
 		for (const target of targets) {
-			if (target === 'task-agent' || target === '*') continue;
+			if (target === '*') continue;
 			const toNodeId = endpointLookup.get(target);
 			if (!toNodeId) continue;
 			addEdge(fromNodeId, toNodeId);

@@ -122,8 +122,7 @@ test.describe('Multi-Agent Step Editor', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill('Multi-Agent Badges Test');
 
-		// Add one step — Task Agent is shown as an overlay (data-testid="task-agent-overlay"),
-		// not as a workflow-node-* element, so we get 1 node in the canvas after clicking Add Step.
+		// Add one step, so we get one workflow-node-* element in the canvas.
 		await editor.getByTestId('add-step-button').click();
 		const nodes = editor.locator('[data-testid^="workflow-node-"]');
 		await expect(nodes).toHaveCount(1, { timeout: 3000 });
@@ -152,8 +151,6 @@ test.describe('Multi-Agent Step Editor', () => {
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
 		// Get a fresh node locator after panel closes (the previous nodes locator may be stale).
-		// Task Agent is rendered as a separate overlay (not a workflow-node-* element), so the
-		// regular node is the only workflow-node-* and sits at index 0.
 		const freshNodes = editor.locator('[data-testid^="workflow-node-"]');
 		const regularNode = freshNodes.nth(0);
 		const agentBadges = regularNode.getByTestId('agent-badges');
@@ -178,9 +175,7 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Add two steps with multi-agent config
 		await editor.getByTestId('add-step-button').click();
-		let regularNodes = editor.locator(
-			'[data-testid^="workflow-node-"]:not([data-task-agent="true"])'
-		);
+		let regularNodes = editor.locator('[data-testid^="workflow-node-"]');
 		await expect(regularNodes).toHaveCount(1, { timeout: 3000 });
 		await regularNodes.first().click();
 		let panel = editor.getByTestId('node-config-panel');
@@ -191,7 +186,7 @@ test.describe('Multi-Agent Step Editor', () => {
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
 		await editor.getByTestId('add-step-button').click();
-		regularNodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+		regularNodes = editor.locator('[data-testid^="workflow-node-"]');
 		await expect(regularNodes).toHaveCount(2, { timeout: 3000 });
 		await regularNodes.nth(1).click();
 		panel = editor.getByTestId('node-config-panel');
@@ -233,9 +228,7 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Add two steps with multi-agent config
 		await editor.getByTestId('add-step-button').click();
-		let regularNodes = editor.locator(
-			'[data-testid^="workflow-node-"]:not([data-task-agent="true"])'
-		);
+		let regularNodes = editor.locator('[data-testid^="workflow-node-"]');
 		await expect(regularNodes).toHaveCount(1, { timeout: 3000 });
 		await regularNodes.first().click();
 		let panel = editor.getByTestId('node-config-panel');
@@ -246,7 +239,7 @@ test.describe('Multi-Agent Step Editor', () => {
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
 		await editor.getByTestId('add-step-button').click();
-		regularNodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+		regularNodes = editor.locator('[data-testid^="workflow-node-"]');
 		await expect(regularNodes).toHaveCount(2, { timeout: 3000 });
 		await regularNodes.nth(1).click();
 		panel = editor.getByTestId('node-config-panel');
@@ -262,7 +255,7 @@ test.describe('Multi-Agent Step Editor', () => {
 		await channelEdge.waitFor({ state: 'attached', timeout: 5000 });
 
 		// Reopen Step A's config panel to remove an agent
-		regularNodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+		regularNodes = editor.locator('[data-testid^="workflow-node-"]');
 		await regularNodes.first().click();
 		const reopenedPanel = editor.getByTestId('node-config-panel');
 		await expect(reopenedPanel).toBeVisible({ timeout: 3000 });
@@ -306,7 +299,6 @@ test.describe('Multi-Agent Step Editor', () => {
 		// Add step (simplified - no multi-agent to isolate save issue)
 		await editor.getByTestId('add-step-button').click();
 		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		// Task Agent is an overlay (not a workflow-node-*), so the regular node is at index 0
 		await nodes.nth(0).click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
@@ -329,13 +321,11 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		const editorReopen = page.getByTestId('visual-workflow-editor');
 		const reopenedNodes = editorReopen.locator('[data-testid^="workflow-node-"]');
-		// 1 regular node + Task Agent = 2 total
-		await expect(reopenedNodes).toHaveCount(2, { timeout: 5000 });
+		await expect(reopenedNodes).toHaveCount(1, { timeout: 5000 });
 
 		// ── Verify the regular node was restored ─────────────────────────────────
 
-		// Task Agent is at index 0, regular node at index 1
-		const regularNode = reopenedNodes.nth(1);
+		const regularNode = reopenedNodes.nth(0);
 		const agentName = regularNode.getByTestId('agent-name');
 		await expect(agentName).toBeVisible({ timeout: 3000 });
 	});
