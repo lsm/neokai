@@ -47,7 +47,7 @@
     },
     "packages/desktop": {
       "name": "@neokai/desktop",
-      "version": "0.1.0",
+      "version": "0.26.0",
     },
     "packages/e2e": {
       "name": "@neokai/e2e",
