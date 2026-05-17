@@ -12,7 +12,12 @@ import type { CustomEndpointConfig } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 
-function validateEndpoint(config: CustomEndpointConfig): void {
+/**
+ * Validate a single endpoint. Exported for callers (e.g. the generic
+ * `settings.global.update`/`save` RPCs) that need to reject invalid configs
+ * before persisting and syncing the provider registry.
+ */
+export function validateCustomEndpoint(config: CustomEndpointConfig): void {
 	if (!config?.id || typeof config.id !== 'string')
 		throw new Error('Custom endpoint id is required');
 	if (!/^[a-z0-9][a-z0-9._-]*$/i.test(config.id))
@@ -50,6 +55,22 @@ function validateEndpoint(config: CustomEndpointConfig): void {
 	}
 }
 
+/**
+ * Validate a list of endpoints, rejecting on duplicate ids in addition to all
+ * per-entry checks. Used by the generic settings RPCs to keep stored settings
+ * in sync with what the provider registry will accept.
+ */
+export function validateCustomEndpoints(configs: CustomEndpointConfig[] | undefined): void {
+	if (!configs) return;
+	if (!Array.isArray(configs)) throw new Error('customEndpoints must be an array');
+	const ids = new Set<string>();
+	for (const config of configs) {
+		validateCustomEndpoint(config);
+		if (ids.has(config.id)) throw new Error(`Duplicate custom endpoint id '${config.id}'`);
+		ids.add(config.id);
+	}
+}
+
 async function persistAndSync(
 	settingsManager: SettingsManager,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
@@ -58,10 +79,33 @@ async function persistAndSync(
 	const updated = settingsManager.updateGlobalSettings({ customEndpoints: endpoints });
 	const { syncCustomEndpointProviders } = await import('../providers/factory.js');
 	await syncCustomEndpointProviders(endpoints);
+	// Invalidate the cached global model list so newly added/removed custom
+	// models become discoverable immediately instead of waiting for the TTL
+	// to expire. Without this, model resolution can keep using stale defaults
+	// until the next refresh.
+	const { clearModelsCache } = await import('../model-service.js');
+	clearModelsCache();
 	internalEventBus.publishAsync('settings.updated', {
 		namespaceId: 'global',
 		settings: updated,
 	});
+}
+
+/**
+ * Serialise add/update/remove mutations on `settings.customEndpoints`.
+ *
+ * Each handler performs a read-modify-write on the JSON array; without a
+ * lock two concurrent mutations would both read the same pre-update array
+ * and whichever wrote last would overwrite the other, dropping changes.
+ * A single in-process promise chain is sufficient since all RPC traffic
+ * goes through one MessageHub on the daemon side.
+ */
+let mutationQueue: Promise<unknown> = Promise.resolve();
+function withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+	const run = mutationQueue.then(fn, fn);
+	// Swallow errors on the queue tail so one failure doesn't poison the chain.
+	mutationQueue = run.catch(() => {});
+	return run;
 }
 
 export function registerCustomEndpointHandlers(
@@ -76,38 +120,44 @@ export function registerCustomEndpointHandlers(
 
 	/** Add a new custom endpoint. Rejects when the id already exists. */
 	messageHub.onRequest('customEndpoints.add', async (data: { endpoint: CustomEndpointConfig }) => {
-		validateEndpoint(data.endpoint);
-		const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
-		if (current.some((e) => e.id === data.endpoint.id)) {
-			throw new Error(`Custom endpoint '${data.endpoint.id}' already exists`);
-		}
-		const next = [...current, data.endpoint];
-		await persistAndSync(settingsManager, internalEventBus, next);
-		return { success: true, endpoint: data.endpoint };
+		return withMutationLock(async () => {
+			validateCustomEndpoint(data.endpoint);
+			const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
+			if (current.some((e) => e.id === data.endpoint.id)) {
+				throw new Error(`Custom endpoint '${data.endpoint.id}' already exists`);
+			}
+			const next = [...current, data.endpoint];
+			await persistAndSync(settingsManager, internalEventBus, next);
+			return { success: true, endpoint: data.endpoint };
+		});
 	});
 
 	/** Update an existing custom endpoint. Replaces the entry by id. */
 	messageHub.onRequest(
 		'customEndpoints.update',
 		async (data: { endpoint: CustomEndpointConfig }) => {
-			validateEndpoint(data.endpoint);
-			const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
-			const index = current.findIndex((e) => e.id === data.endpoint.id);
-			if (index === -1) throw new Error(`Custom endpoint '${data.endpoint.id}' not found`);
-			const next = [...current.slice(0, index), data.endpoint, ...current.slice(index + 1)];
-			await persistAndSync(settingsManager, internalEventBus, next);
-			return { success: true, endpoint: data.endpoint };
+			return withMutationLock(async () => {
+				validateCustomEndpoint(data.endpoint);
+				const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
+				const index = current.findIndex((e) => e.id === data.endpoint.id);
+				if (index === -1) throw new Error(`Custom endpoint '${data.endpoint.id}' not found`);
+				const next = [...current.slice(0, index), data.endpoint, ...current.slice(index + 1)];
+				await persistAndSync(settingsManager, internalEventBus, next);
+				return { success: true, endpoint: data.endpoint };
+			});
 		}
 	);
 
 	/** Remove a custom endpoint by id. */
 	messageHub.onRequest('customEndpoints.remove', async (data: { id: string }) => {
-		const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
-		const next = current.filter((e) => e.id !== data.id);
-		if (next.length === current.length) {
-			throw new Error(`Custom endpoint '${data.id}' not found`);
-		}
-		await persistAndSync(settingsManager, internalEventBus, next);
-		return { success: true };
+		return withMutationLock(async () => {
+			const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
+			const next = current.filter((e) => e.id !== data.id);
+			if (next.length === current.length) {
+				throw new Error(`Custom endpoint '${data.id}' not found`);
+			}
+			await persistAndSync(settingsManager, internalEventBus, next);
+			return { success: true };
+		});
 	});
 }

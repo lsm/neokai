@@ -24,6 +24,14 @@ mock.module('../../../../src/lib/providers/factory', () => ({
 	}),
 }));
 
+// Track model-cache invalidations so we can assert mutations clear stale data.
+const clearModelsCacheCalls: Array<string | undefined> = [];
+mock.module('../../../../src/lib/model-service', () => ({
+	clearModelsCache: mock((cacheKey?: string) => {
+		clearModelsCacheCalls.push(cacheKey);
+	}),
+}));
+
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
 function createMockMessageHub(): { hub: MessageHub; handlers: Map<string, RequestHandler> } {
@@ -68,6 +76,7 @@ describe('Custom Endpoint RPC handlers', () => {
 
 	beforeEach(() => {
 		syncCalls.splice(0);
+		clearModelsCacheCalls.splice(0);
 		hubData = createMockMessageHub();
 		settings = createMockSettings();
 		eventBus = {
@@ -181,6 +190,37 @@ describe('Custom Endpoint RPC handlers', () => {
 		it('rejects removal of unknown ids', async () => {
 			const handler = hubData.handlers.get('customEndpoints.remove')!;
 			await expect(handler({ id: 'missing' }, {})).rejects.toThrow(/not found/);
+		});
+	});
+
+	describe('cache invalidation', () => {
+		it('clears the global models cache after each successful mutation', async () => {
+			const add = hubData.handlers.get('customEndpoints.add')!;
+			await add({ endpoint: validEndpoint }, {});
+			const cacheCountAfterAdd = clearModelsCacheCalls.length;
+			expect(cacheCountAfterAdd).toBeGreaterThanOrEqual(1);
+
+			const update = hubData.handlers.get('customEndpoints.update')!;
+			await update({ endpoint: { ...validEndpoint, name: 'Renamed' } }, {});
+			expect(clearModelsCacheCalls.length).toBeGreaterThan(cacheCountAfterAdd);
+
+			const remove = hubData.handlers.get('customEndpoints.remove')!;
+			await remove({ id: validEndpoint.id }, {});
+			expect(clearModelsCacheCalls.length).toBeGreaterThan(cacheCountAfterAdd + 1);
+		});
+	});
+
+	describe('concurrent mutation safety', () => {
+		it('serialises concurrent add calls so no entry is lost', async () => {
+			const add = hubData.handlers.get('customEndpoints.add')!;
+			const a = { ...validEndpoint, id: 'a', name: 'A' };
+			const b = { ...validEndpoint, id: 'b', name: 'B' };
+			// Fire both adds without awaiting between them. Without locking the
+			// second add would read the same pre-update array as the first and
+			// overwrite it on persist.
+			await Promise.all([add({ endpoint: a }, {}), add({ endpoint: b }, {})]);
+			const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
+			expect(ids).toEqual(['a', 'b']);
 		});
 	});
 });

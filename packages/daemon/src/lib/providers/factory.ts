@@ -101,6 +101,12 @@ export function initializeProviders(): ProviderRegistry {
  * adds/removes/updates a custom endpoint via the RPC handlers. Existing
  * `CustomEndpointProvider` instances whose config is no longer present are
  * shut down and unregistered.
+ *
+ * Providers whose **effective config is unchanged** are left in place. Only
+ * removed or modified endpoints trigger a tear-down. This matters because
+ * `CustomEndpointProvider.shutdown()` stops embedded bridge servers with
+ * forced-close semantics, which would otherwise drop in-flight streams for
+ * unrelated endpoints whenever any one endpoint is edited.
  */
 export async function syncCustomEndpointProviders(
 	configs: CustomEndpointConfig[] | undefined
@@ -127,12 +133,17 @@ export async function syncCustomEndpointProviders(
 			}
 		}
 		registry.unregister(id);
+		lastSyncedConfigByProviderId.delete(id);
 	}
 
 	for (const [providerId, config] of wanted) {
 		const existing = registry.get(providerId);
+		const fingerprint = fingerprintCustomEndpointConfig(config);
+		if (existing && lastSyncedConfigByProviderId.get(providerId) === fingerprint) {
+			// Unchanged — leave the live provider (and its bridges) alone.
+			continue;
+		}
 		if (existing) {
-			// Replace with fresh instance so changes (baseUrl, models, apiKey) take effect.
 			if (existing.shutdown) {
 				try {
 					await existing.shutdown();
@@ -144,11 +155,25 @@ export async function syncCustomEndpointProviders(
 		}
 		try {
 			registry.register(new CustomEndpointProvider(config));
+			lastSyncedConfigByProviderId.set(providerId, fingerprint);
 		} catch (err) {
 			logger.warn(`Skipping invalid custom endpoint '${config.id}': ${err}`);
+			lastSyncedConfigByProviderId.delete(providerId);
 		}
 	}
 }
+
+/**
+ * Stable, deterministic fingerprint of a custom endpoint config for change
+ * detection. Object key order is normalised so two semantically identical
+ * configs with shuffled keys compare equal.
+ */
+function fingerprintCustomEndpointConfig(config: CustomEndpointConfig): string {
+	return JSON.stringify(config, Object.keys(config).sort());
+}
+
+/** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
+const lastSyncedConfigByProviderId = new Map<string, string>();
 
 /**
  * Get the provider context manager
@@ -172,6 +197,7 @@ export function getProviderContextManager(): ProviderContextManager {
  */
 export function resetProviderFactory(): void {
 	initialized = false;
+	lastSyncedConfigByProviderId.clear();
 }
 
 // Re-export types from shared package
