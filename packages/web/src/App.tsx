@@ -1,14 +1,17 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
 import { useViewportSafety } from './hooks/useViewportSafety.ts';
+import { useGlobalShortcuts } from './hooks/useGlobalShortcuts.ts';
 
 import { NavRail } from './islands/NavRail.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
+import { CommandPalette } from './islands/CommandPalette.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
+import { registerDefaultCommands } from './lib/default-commands.ts';
 import {
 	currentSessionIdSignal,
 	currentSpaceIdSignal,
@@ -52,7 +55,12 @@ export function App() {
 	// Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
 	useViewportSafety();
 
+	// Cmd+K command palette + any other registered shortcuts.
+	useGlobalShortcuts();
+
 	useEffect(() => {
+		// Register the default command set once on mount.
+		registerDefaultCommands();
 		// STEP 1: Initialize URL-based router BEFORE any state management
 		// This ensures we read the session ID from URL on page load
 		const initialSessionId = initializeRouter();
@@ -208,6 +216,9 @@ export function App() {
 
 			{/* Global Toast Container */}
 			<ToastContainer />
+
+			{/* Command palette (Cmd+K) */}
+			<CommandPalette />
 
 			{/* Connection Overlay - blocks UI when disconnected */}
 			<ConnectionOverlay />

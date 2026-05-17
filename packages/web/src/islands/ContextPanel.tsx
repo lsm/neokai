@@ -50,6 +50,7 @@ const SETTINGS_SECTIONS: Array<{
 	{ id: 'skills', label: 'Skills', icon: 'skills' },
 	{ id: 'models', label: 'Models', icon: 'swap' },
 	{ id: 'usage', label: 'Usage', icon: 'chart' },
+	{ id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' },
 	{ id: 'about', label: 'About', icon: 'info' },
 ];
 
@@ -136,6 +137,17 @@ function SectionIcon({ type }: { type: string }) {
 						stroke-linejoin="round"
 						stroke-width={2}
 						d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"
+					/>
+				</svg>
+			);
+		case 'keyboard':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M3 8a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8zm4 2h.01M11 10h.01M15 10h.01M7 14h10"
 					/>
 				</svg>
 			);
