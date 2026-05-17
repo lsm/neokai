@@ -198,6 +198,9 @@ export class SessionLifecycle {
 				);
 				// Continue without worktree - fallback to base workspace
 			}
+			if (explicitWorktreeMode === 'worktree' && !worktreeMetadata) {
+				throw new Error('Failed to create worktree for the selected project');
+			}
 		}
 
 		// Determine session status based on worktree choice needed
@@ -272,7 +275,8 @@ export class SessionLifecycle {
 							status: 'pending',
 							createdAt: new Date().toISOString(),
 						}
-					: explicitWorktreeMode
+					: explicitWorktreeMode === 'direct' ||
+							(explicitWorktreeMode === 'worktree' && worktreeMetadata)
 						? {
 								status: 'completed',
 								choice: explicitWorktreeMode,
@@ -395,6 +399,9 @@ export class SessionLifecycle {
 				branchName,
 				'HEAD'
 			);
+			if (!worktreeMetadata) {
+				throw new Error(`Failed to create worktree for session ${sessionId}`);
+			}
 
 			this.logger.info(
 				`[SessionLifecycle] Worktree choice completed: created worktree for session ${sessionId}`
@@ -512,6 +519,9 @@ export class SessionLifecycle {
 				branchName,
 				'HEAD'
 			);
+			if (!worktreeMetadata) {
+				throw new Error(`Failed to create worktree for session ${sessionId}`);
+			}
 		} else if (worktreeMode === 'direct') {
 			// Detect current branch if git repo
 			try {

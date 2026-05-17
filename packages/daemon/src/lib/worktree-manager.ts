@@ -382,14 +382,16 @@ export class WorktreeManager {
 					: await this.getFilePatch(git, ['HEAD', '--', file.path]);
 			const existing = reviewFiles.get(file.path);
 
+			const combinedPatch = this.combinePatches(existing?.patch ?? null, patchResult.patch);
 			reviewFiles.set(file.path, {
 				path: file.path,
 				oldPath: file.oldPath ?? existing?.oldPath,
 				status: file.status !== 'other' ? file.status : (existing?.status ?? file.status),
 				additions: (existing?.additions ?? 0) + stat.additions,
 				deletions: (existing?.deletions ?? 0) + stat.deletions,
-				patch: this.combinePatches(existing?.patch ?? null, patchResult.patch),
-				patchTruncated: (existing?.patchTruncated ?? false) || patchResult.truncated,
+				patch: combinedPatch.patch,
+				patchTruncated:
+					(existing?.patchTruncated ?? false) || patchResult.truncated || combinedPatch.truncated,
 				source: existing ? 'both' : 'working_tree',
 			});
 		}
@@ -442,11 +444,15 @@ export class WorktreeManager {
 		}
 	}
 
-	private combinePatches(first: string | null, second: string | null): string | null {
-		if (!first) return second;
-		if (!second) return first;
+	private combinePatches(
+		first: string | null,
+		second: string | null
+	): { patch: string | null; truncated: boolean } {
+		if (!first) return { patch: second, truncated: false };
+		if (!second) return { patch: first, truncated: false };
 		const combined = `${first.trimEnd()}\n\n${second}`;
-		return combined.length <= MAX_PATCH_CHARS ? combined : combined.slice(0, MAX_PATCH_CHARS);
+		if (combined.length <= MAX_PATCH_CHARS) return { patch: combined, truncated: false };
+		return { patch: combined.slice(0, MAX_PATCH_CHARS), truncated: true };
 	}
 
 	private async getGitHubReviewSummary(repoPath: string): Promise<{

@@ -66,7 +66,7 @@ export function WorkspaceSelector({
 		try {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
-				if (!nativeFolderPickerAvailable) setShowCustomInput(true);
+				setShowCustomInput(true);
 				setError('Not connected to server. Please wait...');
 				return;
 			}
@@ -85,10 +85,12 @@ export function WorkspaceSelector({
 				setShowCustomInput(false);
 				setError(null);
 			} else {
-				if (!nativeFolderPickerAvailable) setShowCustomInput(true);
+				setShowCustomInput(true);
+				setError('Enter a path manually if the folder picker is unavailable.');
 			}
 		} catch {
-			if (!nativeFolderPickerAvailable) setShowCustomInput(true);
+			setShowCustomInput(true);
+			setError('Enter a path manually if the folder picker is unavailable.');
 		}
 	};
 

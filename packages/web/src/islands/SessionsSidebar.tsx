@@ -157,12 +157,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 	const handleBrowseProject = async () => {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
-			if (nativeFolderPickerAvailable) {
-				toast.error('Not connected to server. Please wait...');
-			} else {
-				setAddProjectOpen(true);
-				setAddProjectError('Not connected to server. Please wait...');
-			}
+			setAddProjectOpen(true);
+			setAddProjectError('Not connected to server. Please wait...');
 			return;
 		}
 		try {
@@ -170,16 +166,14 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 				timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 			});
 			if (!picked?.path) {
+				setAddProjectOpen(true);
+				setAddProjectError('Enter a path manually if the folder picker is unavailable.');
 				return;
 			}
 			await addProjectFromPath(picked.path);
 		} catch (err) {
-			if (nativeFolderPickerAvailable) {
-				toast.error(err instanceof Error ? err.message : 'Failed to add project');
-			} else {
-				setAddProjectOpen(true);
-				setAddProjectError(err instanceof Error ? err.message : 'Failed to add project');
-			}
+			setAddProjectOpen(true);
+			setAddProjectError(err instanceof Error ? err.message : 'Failed to add project');
 		}
 	};
 
@@ -313,7 +307,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 								</svg>
 							</button>
 						</div>
-						{addProjectOpen && !nativeFolderPickerAvailable && (
+						{addProjectOpen && (
 							<form
 								data-testid="add-project-form"
 								onSubmit={handleAddProjectSubmit}

@@ -170,6 +170,17 @@ export function SessionsPage() {
 		selectedModel ? selectedModel.id : defaultModelId
 	);
 
+	useEffect(() => {
+		if (!selectedModel || !selectedModelInfo) return;
+		if (
+			selectedModel.id === selectedModelInfo.id &&
+			selectedModel.provider === selectedModelInfo.provider
+		) {
+			return;
+		}
+		setSelectedModel({ id: selectedModelInfo.id, provider: selectedModelInfo.provider });
+	}, [selectedModel, selectedModelInfo]);
+
 	// Load registered workspace-history folders for the project picker.
 	useEffect(() => {
 		getWorkspaceHistory()
@@ -251,15 +262,15 @@ export function SessionsPage() {
 		}
 	};
 
+	const openManualProjectFallback = (message?: string) => {
+		setManualProjectOpen(true);
+		setManualProjectError(message ?? null);
+	};
+
 	const handleBrowse = async () => {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
-			if (nativeFolderPickerAvailable) {
-				toast.error('Not connected to server. Please wait...');
-			} else {
-				setManualProjectOpen(true);
-				setManualProjectError('Not connected to server. Please wait...');
-			}
+			openManualProjectFallback('Not connected to server. Please wait...');
 			return;
 		}
 		try {
@@ -267,17 +278,12 @@ export function SessionsPage() {
 				timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 			});
 			if (!picked?.path) {
-				if (!nativeFolderPickerAvailable) setManualProjectOpen(true);
+				openManualProjectFallback('Enter a path manually if the folder picker is unavailable.');
 				return;
 			}
 			await addProjectFromPath(picked.path);
 		} catch (err) {
-			if (nativeFolderPickerAvailable) {
-				toast.error(err instanceof Error ? err.message : 'Failed to add project');
-			} else {
-				setManualProjectOpen(true);
-				setManualProjectError(err instanceof Error ? err.message : 'Failed to add project');
-			}
+			openManualProjectFallback(err instanceof Error ? err.message : 'Failed to add project');
 		}
 	};
 
@@ -301,10 +307,10 @@ export function SessionsPage() {
 		let createdSessionId: string | null = null;
 		try {
 			const req: CreateSessionRequest = {};
-			if (selectedModel) {
+			if (selectedModel && selectedModelInfo) {
 				req.config = {
-					model: selectedModel.id,
-					provider: selectedModel.provider as Provider,
+					model: selectedModelInfo.id,
+					provider: selectedModelInfo.provider as Provider,
 				};
 			}
 			if (project) {
@@ -351,7 +357,7 @@ export function SessionsPage() {
 	};
 
 	return (
-		<div class="relative flex-1 flex flex-col bg-dark-900 overflow-hidden">
+		<div class="relative flex-1 flex flex-col bg-app-content overflow-hidden">
 			<div class="desktop-empty-drag-strip" data-tauri-drag-region />
 
 			{/* Mobile: open the sidebar drawer */}
