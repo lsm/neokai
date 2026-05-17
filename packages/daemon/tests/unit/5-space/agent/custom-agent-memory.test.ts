@@ -81,4 +81,28 @@ describe('buildCustomAgentTaskMessage memory injection', () => {
 			message.indexOf('## Project Context')
 		);
 	});
+
+	test('truncates long memory content in prompt', () => {
+		const message = buildCustomAgentTaskMessage({
+			customAgent: agent,
+			task,
+			workflowRun: null,
+			workflow: null,
+			space,
+			sessionId: 'session-1',
+			workspacePath: '/tmp/space-1',
+			relevantMemories: [
+				{
+					rank: -1,
+					memory: {
+						...memories[0].memory,
+						content: 'x'.repeat(600),
+					},
+				},
+			],
+		});
+
+		expect(message).toContain(`${'x'.repeat(500)}…`);
+		expect(message).not.toContain('x'.repeat(501));
+	});
 });

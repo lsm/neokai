@@ -45,6 +45,7 @@ const CLAUDE_CODE_BUILTIN_TOOLS = [
  * logged so future prompt bloat is caught during development. Never fails.
  */
 const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
+const MEMORY_PROMPT_CONTENT_LIMIT = 500;
 
 const log = new Logger('custom-agent');
 
@@ -289,7 +290,9 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		sections.push('');
 		for (const result of relevantMemories) {
 			const tags = result.memory.tags.length > 0 ? ` [${result.memory.tags.join(', ')}]` : '';
-			sections.push(`- ${result.memory.key}${tags}: ${result.memory.content}`);
+			sections.push(
+				`- ${result.memory.key}${tags}: ${truncateMemoryPromptContent(result.memory.content)}`
+			);
 		}
 	}
 
@@ -345,6 +348,11 @@ function derivePrUrlFromGateData(gateData: GateDataSnapshot[] | undefined): stri
 		}
 	}
 	return undefined;
+}
+
+function truncateMemoryPromptContent(content: string): string {
+	if (content.length <= MEMORY_PROMPT_CONTENT_LIMIT) return content;
+	return `${content.slice(0, MEMORY_PROMPT_CONTENT_LIMIT)}…`;
 }
 
 /**

@@ -86,6 +86,16 @@ describe('AgentMemoryRepository', () => {
 		expect(repo.read('space-a', 'release.process')?.tags).toEqual(['release notes', 'phase 1']);
 	});
 
+	test('rejects oversized memory content', () => {
+		expect(() =>
+			repo.write({
+				spaceId: 'space-a',
+				key: 'oversized',
+				content: 'x'.repeat(10_001),
+			})
+		).toThrow('Memory content must be 10000 characters or fewer.');
+	});
+
 	test('filtered list honors limit and offset above search limit', () => {
 		for (let index = 0; index < 25; index++) {
 			repo.write({

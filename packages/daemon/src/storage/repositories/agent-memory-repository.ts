@@ -34,6 +34,8 @@ interface AgentMemorySearchRow extends AgentMemoryRow {
 	rank: number;
 }
 
+const MEMORY_CONTENT_MAX_LENGTH = 10_000;
+
 export class AgentMemoryRepository {
 	constructor(
 		private db: BunDatabase,
@@ -207,6 +209,9 @@ function normalizeKey(key: string): string {
 function normalizeContent(content: string): string {
 	const trimmed = content.trim();
 	if (!trimmed) throw new Error('Memory content must be a non-empty string.');
+	if (trimmed.length > MEMORY_CONTENT_MAX_LENGTH) {
+		throw new Error(`Memory content must be ${MEMORY_CONTENT_MAX_LENGTH} characters or fewer.`);
+	}
 	return trimmed;
 }
 
@@ -242,6 +247,7 @@ function buildFtsQuery(query: string): string | null {
 		.toLowerCase()
 		.split(/\s+/)
 		.map((term) => term.replace(/[^\p{L}\p{N}_.-]/gu, ''))
+		// Trigram FTS cannot match terms shorter than three characters.
 		.filter((term) => term.length >= 3);
 	if (terms.length === 0) return null;
 	return terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(' ');
