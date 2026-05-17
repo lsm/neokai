@@ -239,6 +239,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
 	applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
+	// Register user-defined OpenAI-compatible endpoints (LM Studio, vLLM, LiteLLM, etc.)
+	// stored under `settings.customEndpoints`. Synchronous failure is non-fatal — bad
+	// endpoint configs are logged and skipped rather than blocking daemon startup.
+	{
+		const { syncCustomEndpointProviders } = await import('./lib/providers/factory.js');
+		await syncCustomEndpointProviders(settingsManager.getGlobalSettings().customEndpoints);
+	}
+
 	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
 

@@ -7,6 +7,7 @@
  */
 
 import type { ThinkingLevel } from '../types.ts';
+import type { CustomEndpointConfig } from './custom-endpoint.ts';
 
 export type SettingSource = 'user' | 'project' | 'local';
 
@@ -158,6 +159,13 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 	 * Values are ordered fallback chains, same format as `fallbackModels`.
 	 */
 	modelFallbackMap?: Record<string, FallbackModelEntry[]>;
+
+	/**
+	 * User-defined OpenAI-compatible API endpoints. Each entry registers a
+	 * provider with id `custom:<endpoint.id>` at daemon startup. See
+	 * `CustomEndpointConfig` and `CustomEndpointProvider`.
+	 */
+	customEndpoints?: CustomEndpointConfig[];
 }
 
 /**
