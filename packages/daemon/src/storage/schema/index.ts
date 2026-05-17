@@ -99,6 +99,8 @@ export { runMigration128 } from './migrations';
 export { runMigration129 } from './migrations';
 // knip-ignore-next-line
 export { runMigration131 } from './migrations';
+// knip-ignore-next-line
+export { runMigration132 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -624,8 +626,61 @@ export function createTables(db: BunDatabase): void {
 	      )
 	    `);
 
+	createAgentMemoryTables(db);
+
 	// Create indexes
 	createIndexes(db);
+}
+
+function createAgentMemoryTables(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_memory (
+			rowid INTEGER PRIMARY KEY,
+			key TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '',
+			created_by_session TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			access_count INTEGER NOT NULL DEFAULT 0,
+			last_accessed_at INTEGER,
+			UNIQUE(space_id, key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS space_agent_memory_fts USING fts5(
+			content,
+			tags,
+			content='space_agent_memory',
+			content_rowid='rowid',
+			tokenize='trigram'
+		)
+	`);
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
+		AFTER INSERT ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(rowid, content, tags)
+			VALUES (new.rowid, new.content, new.tags);
+		END
+	`);
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
+		AFTER DELETE ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, content, tags)
+			VALUES ('delete', old.rowid, old.content, old.tags);
+		END
+	`);
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
+		AFTER UPDATE ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, content, tags)
+			VALUES ('delete', old.rowid, old.content, old.tags);
+			INSERT INTO space_agent_memory_fts(rowid, content, tags)
+			VALUES (new.rowid, new.content, new.tags);
+		END
+	`);
 }
 
 /**
@@ -661,6 +716,17 @@ function createIndexes(db: BunDatabase): void {
 
 	// Legacy `task_session_map` indexes no longer exist — see the
 	// `sdk_messages.task_id` column above for the replacement.
+
+	// Agent memory indexes
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_updated ON space_agent_memory(space_id, updated_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
+	);
 
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);

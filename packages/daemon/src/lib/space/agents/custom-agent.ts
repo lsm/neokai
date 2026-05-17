@@ -21,6 +21,7 @@ import type {
 } from '@neokai/shared';
 import type { SkillEnablementOverride } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
+import type { AgentMemorySearchResult } from '../../../storage/repositories/agent-memory-repository';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
@@ -155,6 +156,8 @@ export interface CustomAgentConfig {
 	 * Absent when running outside a workflow or when no data has been written.
 	 */
 	gateData?: GateDataSnapshot[];
+	/** Relevant persistent memories to inject into the task prompt. */
+	relevantMemories?: AgentMemorySearchResult[];
 }
 
 /**
@@ -240,6 +243,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		nodeId,
 		agentSlotName,
 		gateData,
+		relevantMemories,
 	} = config;
 
 	const sections: string[] = [];
@@ -278,7 +282,18 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
-	// 5. Project context from the Space.
+	// 5. Relevant persistent memories.
+	if (relevantMemories && relevantMemories.length > 0) {
+		sections.push('');
+		sections.push('## Relevant Memories');
+		sections.push('');
+		for (const result of relevantMemories) {
+			const tags = result.memory.tags.length > 0 ? ` [${result.memory.tags.join(', ')}]` : '';
+			sections.push(`- ${result.memory.key}${tags}: ${result.memory.content}`);
+		}
+	}
+
+	// 6. Project context from the Space.
 	if (space.backgroundContext) {
 		sections.push('');
 		sections.push('## Project Context');
@@ -286,7 +301,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		sections.push(space.backgroundContext);
 	}
 
-	// 6. Standing instructions — space + workflow combined under one heading.
+	// 7. Standing instructions — space + workflow combined under one heading.
 	const standingLines: string[] = [];
 	if (space.instructions?.trim()) standingLines.push(space.instructions.trim());
 	if (workflow?.instructions?.trim()) standingLines.push(workflow.instructions.trim());

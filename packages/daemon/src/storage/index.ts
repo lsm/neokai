@@ -41,6 +41,7 @@ import { TaskRepository } from './repositories/task-repository';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 import { SkillRepository } from './repositories/skill-repository';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
+import { AgentMemoryRepository } from './repositories/agent-memory-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -66,6 +67,11 @@ export { AppMcpServerRepository } from './repositories/app-mcp-server-repository
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 export { SkillRepository } from './repositories/skill-repository';
 export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
+export { AgentMemoryRepository } from './repositories/agent-memory-repository';
+export type {
+	AgentMemoryEntry,
+	AgentMemorySearchResult,
+} from './repositories/agent-memory-repository';
 export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository';
 
 /**
@@ -88,6 +94,7 @@ export class Database {
 	private mcpEnablementRepo!: McpEnablementRepository;
 	private skillRepo!: SkillRepository;
 	private workspaceHistoryRepo!: WorkspaceHistoryRepository;
+	private agentMemoryRepo!: AgentMemoryRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -113,6 +120,7 @@ export class Database {
 		this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
 		this.skillRepo = new SkillRepository(db, reactiveDb);
 		this.workspaceHistoryRepo = new WorkspaceHistoryRepository(db);
+		this.agentMemoryRepo = new AgentMemoryRepository(db, reactiveDb);
 	}
 
 	// ============================================================================
@@ -519,6 +527,10 @@ export class Database {
 	 */
 	get workspaceHistory(): WorkspaceHistoryRepository {
 		return this.workspaceHistoryRepo;
+	}
+
+	get agentMemory(): AgentMemoryRepository {
+		return this.agentMemoryRepo;
 	}
 
 	close(): void {

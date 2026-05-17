@@ -626,6 +626,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 131: Remove global Neo prototype schema surface.
 	runMigration131(db);
+
+	// Migration 132: Add per-space persistent agent memory with FTS5 search.
+	runMigration132(db);
 }
 
 /**
@@ -9011,6 +9014,74 @@ function migrateNeoSessions(db: BunDatabase): void {
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}
+}
+
+export function runMigration132(db: BunDatabase): void {
+	createAgentMemoryTables(db);
+}
+
+function createAgentMemoryTables(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_memory (
+			rowid INTEGER PRIMARY KEY,
+			key TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '',
+			created_by_session TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			access_count INTEGER NOT NULL DEFAULT 0,
+			last_accessed_at INTEGER,
+			UNIQUE(space_id, key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS space_agent_memory_fts USING fts5(
+			content,
+			tags,
+			content='space_agent_memory',
+			content_rowid='rowid',
+			tokenize='trigram'
+		)
+	`);
+
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
+		AFTER INSERT ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(rowid, content, tags)
+			VALUES (new.rowid, new.content, new.tags);
+		END
+	`);
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
+		AFTER DELETE ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, content, tags)
+			VALUES ('delete', old.rowid, old.content, old.tags);
+		END
+	`);
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
+		AFTER UPDATE ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, content, tags)
+			VALUES ('delete', old.rowid, old.content, old.tags);
+			INSERT INTO space_agent_memory_fts(rowid, content, tags)
+			VALUES (new.rowid, new.content, new.tags);
+		END
+	`);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_updated ON space_agent_memory(space_id, updated_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
+	);
+	db.exec(`INSERT INTO space_agent_memory_fts(space_agent_memory_fts) VALUES ('rebuild')`);
 }
 
 function migrateNeoMessageOrigins(db: BunDatabase): void {

@@ -96,6 +96,8 @@ import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { AgentMessageRouter } from './agent-message-router';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
+import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
@@ -257,6 +259,8 @@ export interface TaskAgentManagerConfig {
 	 * Shared between space-agent-tools (register) and task/node-agent-tools (lookup).
 	 */
 	replyRoutingRegistry?: ReplyRoutingRegistry;
+	/** Persistent per-space agent memory repository. */
+	memoryRepo?: AgentMemoryRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -629,6 +633,15 @@ export class TaskAgentManager {
 				mcpServers: {
 					...init.mcpServers,
 					'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+					...(this.config.memoryRepo
+						? {
+								'agent-memory': createAgentMemoryMcpServer({
+									spaceId: space.id,
+									memoryRepo: this.config.memoryRepo,
+									mySessionId: sessionId,
+								}) as unknown as McpServerConfig,
+							}
+						: {}),
 				},
 			};
 
@@ -712,6 +725,10 @@ export class TaskAgentManager {
 					.listByRun(workflowRun.id)
 					.map((record) => ({ gateId: record.gateId, data: record.data }));
 
+				const memoryQuery = `${task.title}\n${task.description}`;
+				const relevantMemories = this.config.memoryRepo
+					? this.config.memoryRepo.search(space.id, memoryQuery, 5)
+					: [];
 				const initialMessage = buildCustomAgentTaskMessage({
 					customAgent: customAgent!,
 					task,
@@ -724,6 +741,7 @@ export class TaskAgentManager {
 					nodeId: execution.workflowNodeId,
 					agentSlotName: execution.agentName,
 					gateData: gateDataSnapshot,
+					relevantMemories,
 				});
 				const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution, space);
 				const kickoffMessage = runtimeContract
