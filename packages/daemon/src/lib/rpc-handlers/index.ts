@@ -280,6 +280,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceRepo,
 		scheduleService,
 		db: deps.db.getDatabase(),
+		eventHub: {
+			publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
+		},
 	});
 
 	// When a space is resumed/started, re-seed any of its active schedules
