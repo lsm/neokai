@@ -96,6 +96,17 @@ describe('AgentMemoryRepository', () => {
 		).toThrow('Memory content must be 10000 characters or fewer.');
 	});
 
+	test('rejects oversized memory tags', () => {
+		expect(() =>
+			repo.write({
+				spaceId: 'space-a',
+				key: 'oversized.tag',
+				content: 'Tag length must be bounded for prompt safety.',
+				tags: ['x'.repeat(51)],
+			})
+		).toThrow('Memory tags must be 50 characters or fewer.');
+	});
+
 	test('preserves existing tags when update omits tags', () => {
 		repo.write({
 			spaceId: 'space-a',

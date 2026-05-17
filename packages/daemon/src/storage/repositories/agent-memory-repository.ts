@@ -35,6 +35,8 @@ interface AgentMemorySearchRow extends AgentMemoryRow {
 }
 
 const MEMORY_CONTENT_MAX_LENGTH = 10_000;
+const MEMORY_TAG_MAX_LENGTH = 50;
+const MEMORY_TAG_MAX_COUNT = 50;
 
 export class AgentMemoryRepository {
 	constructor(
@@ -220,7 +222,19 @@ function normalizeContent(content: string): string {
 }
 
 function normalizeTags(tags: string[]): string[] {
-	return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].slice(0, 50);
+	const normalized: string[] = [];
+	for (const raw of tags) {
+		const tag = raw.trim();
+		if (!tag) continue;
+		// Tags are rendered verbatim into agent prompts via `tags.join(', ')`, so a
+		// single oversized tag would balloon the prompt past the memory-content cap.
+		// Bound per-tag length here to keep the prompt-size budget enforceable.
+		if (tag.length > MEMORY_TAG_MAX_LENGTH) {
+			throw new Error(`Memory tags must be ${MEMORY_TAG_MAX_LENGTH} characters or fewer.`);
+		}
+		normalized.push(tag);
+	}
+	return [...new Set(normalized)].slice(0, MEMORY_TAG_MAX_COUNT);
 }
 
 function serializeTags(tags: string[]): string {
