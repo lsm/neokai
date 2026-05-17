@@ -3069,10 +3069,7 @@ export class TaskAgentManager {
 	 *   Without this the Coder→Reviewer handoff dies silently with "No such tool
 	 *   available" (PR #1535 failure mode).
 	 */
-	private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = [
-		'node-agent',
-		'agent-memory',
-	] as const;
+	private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = ['node-agent'] as const;
 
 	/**
 	 * Verify that a workflow node sub-session has its required MCP server
@@ -3100,6 +3097,12 @@ export class TaskAgentManager {
 	 * existing callers and tests; `ensureRequiredMcpServersAttached` is the
 	 * preferred alias for new code.
 	 */
+	requiredWorkflowSubSessionMcpServers(): string[] {
+		return this.config.memoryRepo
+			? [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS, 'agent-memory']
+			: [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS];
+	}
+
 	async ensureNodeAgentAttached(
 		session: AgentSession,
 		ctx: {
@@ -3118,7 +3121,7 @@ export class TaskAgentManager {
 		const currentMcpServers =
 			(session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined) ?? {};
 
-		const required = TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS;
+		const required = this.requiredWorkflowSubSessionMcpServers();
 		const missing = required.filter((name) => !currentMcpServers[name]);
 
 		if (missing.length === 0) {

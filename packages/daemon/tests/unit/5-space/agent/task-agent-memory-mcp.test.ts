@@ -23,4 +23,12 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
 
 		expect(servers).toEqual({});
 	});
+
+	test('requires agent-memory only when memory repo is configured', () => {
+		expect(makeManager().requiredWorkflowSubSessionMcpServers()).toEqual(['node-agent']);
+		expect(makeManager({}).requiredWorkflowSubSessionMcpServers()).toEqual([
+			'node-agent',
+			'agent-memory',
+		]);
+	});
 });
