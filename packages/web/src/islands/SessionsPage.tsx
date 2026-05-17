@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type {
 	CreateSessionRequest,
 	GitBranchesResponse,
+	ModelInfo,
+	Provider,
 	WorkspaceHistoryEntry,
 } from '@neokai/shared';
-import { connectionState, sessions } from '../lib/state.ts';
+import { connectionState, globalSettings, sessions } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
 import {
 	createSession,
@@ -17,15 +19,27 @@ import { toast } from '../lib/toast.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { isUserSession } from '../lib/session-utils.ts';
 import { listProjectPaths } from '../lib/projects.ts';
+import {
+	hasNativeFolderPicker,
+	NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+} from '../lib/runtime-capabilities.ts';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
+import { NewChatModelPicker } from '../components/NewChatModelPicker.tsx';
+import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 
 type NewChatWorktreeMode = 'worktree' | 'direct';
+
+interface NewChatModelSelection {
+	id: string;
+	provider: string;
+}
 
 interface NewChatSelection {
 	project: string | null;
 	mode: NewChatWorktreeMode;
 	baseBranch: string | null;
+	model: NewChatModelSelection | null;
 }
 
 const NEW_CHAT_SELECTION_KEY = 'neokai_new_chat_selection';
@@ -33,6 +47,7 @@ const DEFAULT_NEW_CHAT_SELECTION: NewChatSelection = {
 	project: null,
 	mode: 'worktree',
 	baseBranch: null,
+	model: null,
 };
 
 function loadNewChatSelection(): NewChatSelection {
@@ -47,6 +62,15 @@ function loadNewChatSelection(): NewChatSelection {
 			project: typeof value.project === 'string' ? value.project : null,
 			mode,
 			baseBranch: typeof value.baseBranch === 'string' ? value.baseBranch : null,
+			model:
+				value.model &&
+				typeof value.model === 'object' &&
+				'id' in value.model &&
+				'provider' in value.model &&
+				typeof value.model.id === 'string' &&
+				typeof value.model.provider === 'string'
+					? { id: value.model.id, provider: value.model.provider }
+					: null,
 		};
 	} catch {
 		return DEFAULT_NEW_CHAT_SELECTION;
@@ -69,6 +93,33 @@ function getKnownBranches(info: GitBranchesResponse): Set<string> {
 	);
 }
 
+function findModelInfo(
+	models: ModelInfo[],
+	selection: NewChatModelSelection | null
+): ModelInfo | null {
+	if (!selection) return null;
+	return (
+		models.find((model) => model.id === selection.id && model.provider === selection.provider) ??
+		models.find((model) => model.id === selection.id) ??
+		null
+	);
+}
+
+function findDefaultModelInfo(models: ModelInfo[], modelId: string | undefined): ModelInfo | null {
+	if (!modelId) return null;
+	return (
+		models.find((model) => model.id === modelId || model.alias === modelId) ??
+		models.find((model) => model.id.includes(modelId) || model.alias?.includes(modelId)) ??
+		null
+	);
+}
+
+function getModelLabel(modelInfo: ModelInfo | null, fallbackModelId: string | undefined): string {
+	if (modelInfo) return modelInfo.name;
+	if (fallbackModelId) return fallbackModelId.replace(/-/g, ' ');
+	return 'Model';
+}
+
 /**
  * Codex-style landing for `/sessions` when no session is selected: a centered
  * prompt, a starter input, and a project / worktree / branch context row.
@@ -79,6 +130,7 @@ export function SessionsPage() {
 	const [text, setText] = useState('');
 	const [submitting, setSubmitting] = useState(false);
 	const [initialSelection] = useState<NewChatSelection>(() => loadNewChatSelection());
+	const { availableModels, loading: modelLoading } = useModelSwitcher(null);
 
 	const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
 	const [project, setProject] = useState<string | null>(initialSelection.project);
@@ -90,6 +142,10 @@ export function SessionsPage() {
 	const [manualProjectPath, setManualProjectPath] = useState('');
 	const [manualProjectError, setManualProjectError] = useState<string | null>(null);
 	const [manualProjectBusy, setManualProjectBusy] = useState(false);
+	const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
+	const [selectedModel, setSelectedModel] = useState<NewChatModelSelection | null>(
+		initialSelection.model
+	);
 
 	// Session creation only needs a live connection — auth is exercised later by
 	// the message send, which surfaces its own error.
@@ -99,6 +155,20 @@ export function SessionsPage() {
 	// Project folders shown in the picker — same set as the sidebar: folders
 	// with sessions, merged with registered workspace-history folders.
 	const projectPaths = listProjectPaths(sessions.value.filter(isUserSession), history);
+	const defaultModelId = globalSettings.value?.model ?? 'sonnet';
+	const selectedModelInfo = useMemo(
+		() => findModelInfo(availableModels, selectedModel),
+		[availableModels, selectedModel]
+	);
+	const defaultModelInfo = useMemo(
+		() => findDefaultModelInfo(availableModels, defaultModelId),
+		[availableModels, defaultModelId]
+	);
+	const activeModelInfo = selectedModelInfo ?? defaultModelInfo;
+	const activeModelLabel = getModelLabel(
+		activeModelInfo,
+		selectedModel ? selectedModel.id : defaultModelId
+	);
 
 	// Load registered workspace-history folders for the project picker.
 	useEffect(() => {
@@ -110,8 +180,8 @@ export function SessionsPage() {
 	}, []);
 
 	useEffect(() => {
-		saveNewChatSelection({ project, mode, baseBranch });
-	}, [project, mode, baseBranch]);
+		saveNewChatSelection({ project, mode, baseBranch, model: selectedModel });
+	}, [project, mode, baseBranch, selectedModel]);
 
 	// Fetch git context whenever the selected project changes.
 	useEffect(() => {
@@ -162,7 +232,7 @@ export function SessionsPage() {
 	const addProjectFromPath = async (path: string) => {
 		const trimmed = path.trim();
 		if (!trimmed) {
-			setManualProjectError('Enter a path on the daemon machine.');
+			setManualProjectError('Enter an absolute project path.');
 			return;
 		}
 		setManualProjectBusy(true);
@@ -184,20 +254,30 @@ export function SessionsPage() {
 	const handleBrowse = async () => {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
-			setManualProjectOpen(true);
-			setManualProjectError('Not connected to server. Please wait...');
+			if (nativeFolderPickerAvailable) {
+				toast.error('Not connected to server. Please wait...');
+			} else {
+				setManualProjectOpen(true);
+				setManualProjectError('Not connected to server. Please wait...');
+			}
 			return;
 		}
 		try {
-			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder');
+			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder', undefined, {
+				timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+			});
 			if (!picked?.path) {
-				setManualProjectOpen(true);
+				if (!nativeFolderPickerAvailable) setManualProjectOpen(true);
 				return;
 			}
 			await addProjectFromPath(picked.path);
 		} catch (err) {
-			setManualProjectOpen(true);
-			setManualProjectError(err instanceof Error ? err.message : 'Failed to add project');
+			if (nativeFolderPickerAvailable) {
+				toast.error(err instanceof Error ? err.message : 'Failed to add project');
+			} else {
+				setManualProjectOpen(true);
+				setManualProjectError(err instanceof Error ? err.message : 'Failed to add project');
+			}
 		}
 	};
 
@@ -221,6 +301,12 @@ export function SessionsPage() {
 		let createdSessionId: string | null = null;
 		try {
 			const req: CreateSessionRequest = {};
+			if (selectedModel) {
+				req.config = {
+					model: selectedModel.id,
+					provider: selectedModel.provider as Provider,
+				};
+			}
 			if (project) {
 				req.workspacePath = project;
 				// Worktree mode is only meaningful for a git repo.
@@ -291,7 +377,20 @@ export function SessionsPage() {
 							autoFocus
 							class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-gray-100 placeholder-gray-500 focus:outline-none disabled:opacity-60"
 						/>
-						<div class="flex items-center justify-end pt-1">
+						<div class="flex items-center justify-between gap-2 pt-1">
+							<NewChatModelPicker
+								activeModelInfo={activeModelInfo}
+								activeModelLabel={activeModelLabel}
+								availableModels={availableModels}
+								loading={modelLoading}
+								onSelectModel={(model) => {
+									if (!model.provider) {
+										toast.error('Model provider information is missing');
+										return;
+									}
+									setSelectedModel({ id: model.id, provider: model.provider });
+								}}
+							/>
 							<button
 								type="button"
 								data-testid="landing-send"
@@ -346,6 +445,7 @@ export function SessionsPage() {
 								setManualProjectOpen(true);
 								setManualProjectError(null);
 							}}
+							nativeFolderPickerAvailable={nativeFolderPickerAvailable}
 							onSelectMode={setMode}
 							onSelectBranch={setBaseBranch}
 						/>
@@ -362,7 +462,7 @@ export function SessionsPage() {
 											setManualProjectPath((e.currentTarget as HTMLInputElement).value);
 											setManualProjectError(null);
 										}}
-										placeholder="Path on daemon machine"
+										placeholder="Project path"
 										autoFocus
 										class="min-w-0 flex-1 rounded-lg border border-dark-700 bg-dark-900 px-3 py-2 text-xs text-gray-100 placeholder-gray-600 focus:border-dark-600 focus:outline-none"
 									/>
@@ -375,7 +475,7 @@ export function SessionsPage() {
 									</button>
 								</div>
 								<p class="mt-1.5 text-[11px] leading-4 text-gray-600">
-									Use a path on the machine running the NeoKai daemon.
+									Use an absolute path accessible to NeoKai.
 								</p>
 								{manualProjectError && (
 									<p class="mt-1.5 text-[11px] leading-4 text-red-400">{manualProjectError}</p>

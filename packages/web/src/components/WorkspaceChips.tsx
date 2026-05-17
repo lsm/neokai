@@ -23,6 +23,7 @@ interface WorkspaceChipsProps {
 	onSelectProject: (path: string | null) => void;
 	onBrowse: () => void;
 	onEnterPath: () => void;
+	nativeFolderPickerAvailable: boolean;
 	onSelectMode: (mode: 'worktree' | 'direct') => void;
 	onSelectBranch: (branch: string) => void;
 }
@@ -83,6 +84,7 @@ export function WorkspaceChips({
 	onSelectProject,
 	onBrowse,
 	onEnterPath,
+	nativeFolderPickerAvailable,
 	onSelectMode,
 	onSelectBranch,
 }: WorkspaceChipsProps) {
@@ -97,8 +99,9 @@ export function WorkspaceChips({
 			onClick: () => onSelectProject(path),
 		})),
 		{ type: 'divider' as const },
-		{ label: 'Enter daemon path…', onClick: onEnterPath },
-		{ label: 'Browse on daemon…', onClick: onBrowse },
+		nativeFolderPickerAvailable
+			? { label: 'Browse on this computer…', onClick: onBrowse }
+			: { label: 'Enter project path…', onClick: onEnterPath },
 	];
 
 	const isGit = !!selectedProject && !!gitInfo?.isGitRepo;

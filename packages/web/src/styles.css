@@ -659,8 +659,8 @@ a:focus-visible {
 
 	html.tauri-desktop .desktop-titlebar-row {
 		display: flex;
-		height: 48px;
-		flex: 0 0 48px;
+		height: 52px;
+		flex: 0 0 52px;
 		align-items: center;
 		gap: 8px;
 		padding: 0 12px 0 0;
@@ -681,7 +681,7 @@ a:focus-visible {
 		inset: 0 0 auto;
 		z-index: 20;
 		display: block;
-		height: 48px;
+		height: 52px;
 	}
 }
 

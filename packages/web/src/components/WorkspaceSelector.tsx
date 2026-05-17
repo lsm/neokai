@@ -4,7 +4,7 @@
  * Centered panel shown in the ChatContainer empty state for worker sessions
  * that were created without a workspace. Allows users to:
  * - Select from recent workspace history (pre-selected: most recent)
- * - Enter a daemon-machine path, optionally assisted by a native folder picker
+ * - Enter a project path in browser mode, or use a native folder picker in desktop
  * - Choose worktree vs direct mode
  * - Skip workspace selection entirely
  *
@@ -21,6 +21,10 @@ import {
 	setSessionWorkspace,
 } from '../lib/api-helpers';
 import { addRecentPath } from '../lib/recent-paths';
+import {
+	hasNativeFolderPicker,
+	NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+} from '../lib/runtime-capabilities';
 
 interface WorkspaceSelectorProps {
 	sessionId: string;
@@ -40,6 +44,7 @@ export function WorkspaceSelector({
 	const [worktreeMode, setWorktreeMode] = useState<'worktree' | 'direct'>('worktree');
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
 
 	useEffect(() => {
 		getWorkspaceHistory()
@@ -61,20 +66,29 @@ export function WorkspaceSelector({
 		try {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
-				setShowCustomInput(true);
+				if (!nativeFolderPickerAvailable) setShowCustomInput(true);
 				setError('Not connected to server. Please wait...');
 				return;
 			}
-			const response = await hub.request<{ path: string | null }>('dialog.pickFolder');
-			if (response.path) {
-				setCustomPath(response.path);
-				setShowCustomInput(true);
-				setSelectedPath('');
+			const response = await hub.request<{ path: string | null }>('dialog.pickFolder', undefined, {
+				timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+			});
+			const pickedPath = response.path;
+			if (pickedPath) {
+				setHistory((entries) =>
+					entries.some((entry) => entry.path === pickedPath)
+						? entries
+						: [{ path: pickedPath, lastUsedAt: Date.now(), useCount: 0 }, ...entries]
+				);
+				setSelectedPath(pickedPath);
+				setCustomPath('');
+				setShowCustomInput(false);
+				setError(null);
 			} else {
-				setShowCustomInput(true);
+				if (!nativeFolderPickerAvailable) setShowCustomInput(true);
 			}
 		} catch {
-			setShowCustomInput(true);
+			if (!nativeFolderPickerAvailable) setShowCustomInput(true);
 		}
 	};
 
@@ -167,23 +181,27 @@ export function WorkspaceSelector({
 											</option>
 										))
 									)}
-									<option value="__manual__">Enter daemon path...</option>
+									{!nativeFolderPickerAvailable && (
+										<option value="__manual__">Enter project path...</option>
+									)}
 								</select>
-								<button
-									type="button"
-									onClick={handleBrowse}
-									title="Browse for folder"
-									class="p-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors shrink-0"
-								>
-									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-										/>
-									</svg>
-								</button>
+								{nativeFolderPickerAvailable && (
+									<button
+										type="button"
+										onClick={handleBrowse}
+										title="Browse on this computer"
+										class="p-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors shrink-0"
+									>
+										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={2}
+												d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+											/>
+										</svg>
+									</button>
+								)}
 							</div>
 						</div>
 					) : (
@@ -194,25 +212,10 @@ export function WorkspaceSelector({
 									type="text"
 									value={customPath}
 									onInput={(e) => setCustomPath((e.target as HTMLInputElement).value)}
-									placeholder="Path on daemon machine"
+									placeholder="Project path"
 									autoFocus
 									class="flex-1 bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
 								/>
-								<button
-									type="button"
-									onClick={handleBrowse}
-									title="Browse for folder"
-									class="p-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors shrink-0"
-								>
-									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-										/>
-									</svg>
-								</button>
 								{history.length > 0 && (
 									<button
 										type="button"
@@ -235,7 +238,7 @@ export function WorkspaceSelector({
 								)}
 							</div>
 							<p class="mt-1.5 text-[11px] leading-4 text-gray-600">
-								Use a path on the machine running the NeoKai daemon.
+								Use an absolute path accessible to NeoKai.
 							</p>
 						</div>
 					)}

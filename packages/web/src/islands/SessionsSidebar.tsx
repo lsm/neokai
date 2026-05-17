@@ -13,6 +13,10 @@ import { toast } from '../lib/toast.ts';
 import { isUserSession } from '../lib/session-utils.ts';
 import { getCollapsedProjects, setCollapsedProjects } from '../lib/sidebar-prefs.ts';
 import { projectRootOf, projectName } from '../lib/projects.ts';
+import {
+	hasNativeFolderPicker,
+	NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+} from '../lib/runtime-capabilities.ts';
 import SessionListItem from '../components/SessionListItem.tsx';
 import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
@@ -98,6 +102,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 	const [addProjectPath, setAddProjectPath] = useState('');
 	const [addProjectError, setAddProjectError] = useState<string | null>(null);
 	const [addProjectBusy, setAddProjectBusy] = useState(false);
+	const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
 
 	// Load workspace history once so explicitly-added (empty) projects show.
 	useEffect(() => {
@@ -131,7 +136,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 	const addProjectFromPath = async (path: string) => {
 		const trimmed = path.trim();
 		if (!trimmed) {
-			setAddProjectError('Enter a path on the daemon machine.');
+			setAddProjectError('Enter an absolute project path.');
 			return;
 		}
 		setAddProjectBusy(true);
@@ -152,20 +157,29 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 	const handleBrowseProject = async () => {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
-			setAddProjectOpen(true);
-			setAddProjectError('Not connected to server. Please wait...');
+			if (nativeFolderPickerAvailable) {
+				toast.error('Not connected to server. Please wait...');
+			} else {
+				setAddProjectOpen(true);
+				setAddProjectError('Not connected to server. Please wait...');
+			}
 			return;
 		}
 		try {
-			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder');
+			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder', undefined, {
+				timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+			});
 			if (!picked?.path) {
-				setAddProjectOpen(true);
 				return;
 			}
 			await addProjectFromPath(picked.path);
 		} catch (err) {
-			setAddProjectOpen(true);
-			setAddProjectError(err instanceof Error ? err.message : 'Failed to add project');
+			if (nativeFolderPickerAvailable) {
+				toast.error(err instanceof Error ? err.message : 'Failed to add project');
+			} else {
+				setAddProjectOpen(true);
+				setAddProjectError(err instanceof Error ? err.message : 'Failed to add project');
+			}
 		}
 	};
 
@@ -278,8 +292,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 								type="button"
 								data-testid="add-project-button"
 								onClick={() => {
-									setAddProjectOpen(true);
 									setAddProjectError(null);
+									if (nativeFolderPickerAvailable) {
+										void handleBrowseProject();
+									} else {
+										setAddProjectOpen(true);
+									}
 								}}
 								title="Add project"
 								aria-label="Add project"
@@ -295,7 +313,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 								</svg>
 							</button>
 						</div>
-						{addProjectOpen && (
+						{addProjectOpen && !nativeFolderPickerAvailable && (
 							<form
 								data-testid="add-project-form"
 								onSubmit={handleAddProjectSubmit}
@@ -310,27 +328,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 											setAddProjectPath((e.currentTarget as HTMLInputElement).value);
 											setAddProjectError(null);
 										}}
-										placeholder="Path on daemon machine"
+										placeholder="Project path"
 										autoFocus
 										class="min-w-0 flex-1 rounded-md border border-dark-700 bg-dark-900 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-dark-600 focus:outline-none"
 									/>
-									<button
-										type="button"
-										data-testid="add-project-browse-button"
-										onClick={handleBrowseProject}
-										title="Browse on daemon machine"
-										aria-label="Browse on daemon machine"
-										class="rounded-md border border-dark-700 bg-dark-900 p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
-									>
-										<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={1.75}
-												d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-											/>
-										</svg>
-									</button>
 									<button
 										type="submit"
 										disabled={addProjectBusy}
@@ -340,7 +341,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 									</button>
 								</div>
 								<p class="mt-1.5 text-[11px] leading-4 text-gray-600">
-									Use a path on the machine running the NeoKai daemon.
+									Use an absolute path accessible to NeoKai.
 								</p>
 								{addProjectError && (
 									<p class="mt-1.5 text-[11px] leading-4 text-red-400">{addProjectError}</p>

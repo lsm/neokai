@@ -193,7 +193,7 @@ export function ChatHeader({
 				rightPanelAvailable && !rightPanelOpen && 'pr-14'
 			)}
 		>
-			<div class="flex-1 min-w-0 flex items-center gap-3">
+			<div class="flex-1 min-w-0 flex items-center gap-3" data-tauri-drag-region>
 				{onBack ? (
 					<button
 						type="button"
@@ -216,10 +216,11 @@ export function ChatHeader({
 					<MobileMenuButton />
 				)}
 
-				<div class="flex flex-1 min-w-0 items-center gap-1.5">
+				<div class="flex flex-1 min-w-0 items-center gap-1.5" data-tauri-drag-region>
 					<h2
 						data-testid="chat-header-title"
 						class="min-w-0 truncate text-sm font-semibold text-gray-100"
+						data-tauri-drag-region
 					>
 						{session?.title || 'New Session'}
 					</h2>
