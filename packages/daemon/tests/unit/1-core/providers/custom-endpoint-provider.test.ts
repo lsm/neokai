@@ -282,4 +282,137 @@ describe('CustomEndpointProvider', () => {
 			apiKey: 'session-key',
 		});
 	});
+
+	describe('endpoint type matrix', () => {
+		it('defaults to openai-chat when type is omitted (legacy configs)', () => {
+			const fake = makeFakeBridge();
+			const p = new CustomEndpointProvider(baseConfig, {
+				bridgeFactories: { 'openai-chat': fake.factory },
+			});
+			expect(p.getType()).toBe('openai-chat');
+			p.buildSdkConfig('qwen2.5-7b');
+			expect(fake.configs).toHaveLength(1);
+			expect(fake.configs[0]).toMatchObject({
+				baseUrl: 'http://localhost:1234/v1',
+				toolUseSupported: true,
+			});
+		});
+
+		it('routes anthropic-messages endpoints through the anthropic bridge factory', () => {
+			const anthropicConfigs: Array<{ baseUrl: string; apiKey?: string }> = [];
+			const openaiFake = makeFakeBridge();
+			const p = new CustomEndpointProvider(
+				{
+					...baseConfig,
+					id: 'self-hosted-claude',
+					type: 'anthropic-messages',
+					baseUrl: 'https://claude.example.com',
+					models: [{ id: 'claude-sonnet-proxied' }],
+					defaultModelId: 'claude-sonnet-proxied',
+				},
+				{
+					bridgeFactories: {
+						'anthropic-messages': (config) => {
+							anthropicConfigs.push({ baseUrl: config.baseUrl, apiKey: config.apiKey });
+							return { port: 40500, stop: () => {} };
+						},
+						'openai-chat': openaiFake.factory,
+					},
+				}
+			);
+			p.buildSdkConfig('claude-sonnet-proxied');
+			// Must route to anthropic-messages factory, NOT openai-chat.
+			expect(anthropicConfigs).toHaveLength(1);
+			expect(openaiFake.configs).toHaveLength(0);
+			expect(anthropicConfigs[0].baseUrl).toBe('https://claude.example.com');
+		});
+
+		it('routes ollama-native endpoints through the ollama bridge factory with num_ctx', () => {
+			const ollamaConfigs: Array<{
+				baseUrl: string;
+				toolUseSupported?: boolean;
+				modelContextWindow?: number;
+				hostname?: string;
+			}> = [];
+			const p = new CustomEndpointProvider(
+				{
+					id: 'local-ollama',
+					name: 'Local Ollama',
+					type: 'ollama-native',
+					baseUrl: 'http://localhost:11434',
+					models: [
+						{
+							id: 'qwen2.5-coder:14b',
+							capabilities: { toolUse: true, maxContextTokens: 32768 },
+						},
+					],
+				},
+				{
+					bridgeFactories: {
+						'ollama-native': (config) => {
+							ollamaConfigs.push({
+								baseUrl: config.baseUrl,
+								toolUseSupported: config.toolUseSupported,
+								modelContextWindow: config.modelContextWindow,
+								hostname: config.hostname,
+							});
+							return { port: 40600, stop: () => {} };
+						},
+					},
+				}
+			);
+			p.buildSdkConfig('qwen2.5-coder:14b');
+			expect(ollamaConfigs).toHaveLength(1);
+			expect(ollamaConfigs[0]).toMatchObject({
+				baseUrl: 'http://localhost:11434',
+				toolUseSupported: true,
+				modelContextWindow: 32768,
+				// Must bind to loopback so other local users can't reach the bridge.
+				hostname: '127.0.0.1',
+			});
+		});
+
+		it('applies per-type capability defaults (ollama disables caching/thinking)', () => {
+			const ollama = new CustomEndpointProvider(
+				{
+					id: 'ollama-default-caps',
+					name: 'Ollama caps',
+					type: 'ollama-native',
+					baseUrl: 'http://localhost:11434',
+					models: [{ id: 'llama3.2' }],
+				},
+				{
+					bridgeFactories: {
+						'ollama-native': () => ({ port: 40700, stop: () => {} }),
+					},
+				}
+			);
+			const ollamaCaps = resolveModelCapabilities(ollama.getConfig().models[0], ollama.getType());
+			expect(ollamaCaps.caching).toBe(false);
+			expect(ollamaCaps.thinking).toBe(false);
+
+			const anthropic = new CustomEndpointProvider(
+				{
+					id: 'claude-default-caps',
+					name: 'Anthropic caps',
+					type: 'anthropic-messages',
+					baseUrl: 'https://claude.example.com',
+					models: [{ id: 'sonnet' }],
+				},
+				{
+					bridgeFactories: {
+						'anthropic-messages': () => ({ port: 40800, stop: () => {} }),
+					},
+				}
+			);
+			const anthropicCaps = resolveModelCapabilities(
+				anthropic.getConfig().models[0],
+				anthropic.getType()
+			);
+			// Anthropic upstream supports everything by default.
+			expect(anthropicCaps.caching).toBe(true);
+			expect(anthropicCaps.thinking).toBe(true);
+			expect(anthropicCaps.vision).toBe(true);
+		});
+	});
 });

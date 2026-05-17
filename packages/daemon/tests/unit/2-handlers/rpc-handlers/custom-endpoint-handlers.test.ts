@@ -144,6 +144,42 @@ describe('Custom Endpoint RPC handlers', () => {
 			);
 		});
 
+		it('rejects unknown endpoint type values', async () => {
+			const handler = hubData.handlers.get('customEndpoints.add')!;
+			await expect(
+				handler(
+					{
+						endpoint: {
+							...validEndpoint,
+							// `bedrock` isn't one of the three supported upstream surfaces;
+							// must be rejected before persistence or registry sync so we
+							// don't store a config the factory can't dispatch on.
+							type: 'bedrock' as unknown as 'openai-chat',
+						},
+					},
+					{}
+				)
+			).rejects.toThrow(/type 'bedrock' is invalid/);
+		});
+
+		it('accepts the three supported endpoint types', async () => {
+			const handler = hubData.handlers.get('customEndpoints.add')!;
+			await handler({ endpoint: { ...validEndpoint, id: 'a', type: 'openai-chat' } }, {});
+			await handler(
+				{
+					endpoint: {
+						...validEndpoint,
+						id: 'b',
+						type: 'anthropic-messages',
+					},
+				},
+				{}
+			);
+			await handler({ endpoint: { ...validEndpoint, id: 'c', type: 'ollama-native' } }, {});
+			const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
+			expect(ids).toEqual(['a', 'b', 'c']);
+		});
+
 		it('rejects defaultModelId that does not match any model', async () => {
 			const handler = hubData.handlers.get('customEndpoints.add')!;
 			await expect(
