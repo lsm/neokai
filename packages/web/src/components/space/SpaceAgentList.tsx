@@ -30,65 +30,53 @@ interface AgentCardProps {
 }
 
 function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentCardProps) {
+	const toolCount = agent.tools?.length ?? 0;
+
 	return (
-		<div class="bg-dark-850 border border-dark-700 rounded-lg p-4 hover:border-dark-600 transition-colors">
-			<div class="flex items-start justify-between gap-3">
-				<div class="flex-1 min-w-0">
-					<div class="flex items-center gap-2 flex-wrap">
-						<span class="text-sm font-medium text-gray-100">{agent.name}</span>
-						{agent.model && <span class="text-xs text-gray-500 font-mono">{agent.model}</span>}
+		<div class="group border-b border-white/10 py-3 last:border-b-0">
+			<div class="flex items-start justify-between gap-4">
+				<div class="min-w-0 flex-1">
+					<div class="flex min-w-0 items-center gap-2">
+						<span class="truncate text-sm font-medium text-gray-100">{agent.name}</span>
 						{drifted && (
 							<span
-								class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-amber-900/30 border border-amber-700/50 rounded text-amber-400"
+								class="inline-flex flex-shrink-0 items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
 								title={`This agent was seeded from the "${agent.templateName}" preset and has drifted from the current definition.`}
 							>
-								<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-									/>
-								</svg>
 								Out of sync
 							</span>
 						)}
 					</div>
 					{agent.description && (
-						<p class="text-xs text-gray-500 mt-1.5 line-clamp-2">{agent.description}</p>
+						<p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">{agent.description}</p>
 					)}
-					{agent.tools && agent.tools.length > 0 && (
-						<div class="flex gap-1 flex-wrap mt-2">
-							{agent.tools.slice(0, 4).map((tool) => (
-								<span
-									key={tool}
-									class="text-xs bg-dark-800 text-gray-500 px-1.5 py-0.5 rounded border border-dark-700"
-								>
-									{tool}
-								</span>
-							))}
-							{agent.tools.length > 4 && (
-								<span class="text-xs text-gray-600">+{agent.tools.length - 4} more</span>
-							)}
-						</div>
-					)}
+					<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-gray-600">
+						{agent.model && <span class="font-mono text-gray-500">{agent.model}</span>}
+						{agent.model && toolCount > 0 && <span>·</span>}
+						{toolCount > 0 && <span>{toolCount} tools</span>}
+						{agent.tools?.slice(0, 3).map((tool) => (
+							<span key={tool} class="rounded border border-white/10 px-1.5 py-0.5 text-gray-500">
+								{tool}
+							</span>
+						))}
+					</div>
 				</div>
-				<div class="flex items-center gap-1 flex-shrink-0">
+				<div class="flex flex-shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
 					{drifted && (
 						<button
 							type="button"
 							onClick={() => onSync(agent)}
 							disabled={syncing}
-							class="px-2.5 py-1 text-xs text-amber-400 hover:text-amber-200 bg-dark-800 hover:bg-dark-700 rounded border border-amber-700/50 hover:border-amber-600/70 transition-colors disabled:opacity-50"
+							class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200 disabled:opacity-50"
 							title="Sync from template (overwrites description, tools, and prompt)"
 						>
-							{syncing ? 'Syncing…' : 'Sync from template'}
+							{syncing ? 'Syncing…' : 'Sync'}
 						</button>
 					)}
 					<button
 						type="button"
 						onClick={() => onEdit(agent)}
-						class="p-1.5 rounded text-gray-500 hover:text-gray-300 hover:bg-dark-700 transition-colors"
+						class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-300"
 						aria-label={`Edit ${agent.name}`}
 					>
 						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -103,7 +91,7 @@ function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentC
 					<button
 						type="button"
 						onClick={() => onDelete(agent)}
-						class="p-1.5 rounded text-gray-500 hover:text-red-400 hover:bg-dark-700 transition-colors"
+						class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
 						aria-label={`Delete ${agent.name}`}
 					>
 						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -146,7 +134,6 @@ export function SpaceAgentList() {
 	const agents = spaceStore.agents.value;
 	const loading = spaceStore.loading.value;
 	const spaceId = spaceStore.spaceId.value;
-	const space = spaceStore.space.value;
 
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editingAgent, setEditingAgent] = useState<SpaceAgent | null>(null);
@@ -275,10 +262,19 @@ export function SpaceAgentList() {
 	}
 
 	return (
-		<div class="flex flex-col h-full">
-			{/* Header */}
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-sm font-semibold text-gray-200">Agents</h2>
+		<div class="flex h-full min-h-0 flex-col">
+			<div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3">
+				<div class="flex min-w-0 items-start gap-3">
+					<div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-blue-400/70" />
+					<div class="min-w-0">
+						<p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
+							{agents.length} configured {agents.length === 1 ? 'agent' : 'agents'}
+						</p>
+						<p class="mt-1 text-xs text-gray-500">
+							Reusable workers and reviewers available to this space.
+						</p>
+					</div>
+				</div>
 				<Button size="sm" onClick={handleCreate} icon={<PlusIcon />}>
 					Create Agent
 				</Button>
@@ -286,7 +282,7 @@ export function SpaceAgentList() {
 
 			{/* Agent list or empty state */}
 			{agents.length === 0 ? (
-				<div class="flex flex-col items-center justify-center flex-1 py-12 text-center">
+				<div class="flex flex-1 flex-col items-center justify-center py-12 text-center">
 					<div class="w-10 h-10 rounded-full bg-dark-800 flex items-center justify-center mb-3">
 						<AgentIcon />
 					</div>
@@ -299,13 +295,8 @@ export function SpaceAgentList() {
 					</div>
 				</div>
 			) : (
-				<div class="flex-1 overflow-y-auto">
-					<div class="min-h-[calc(100%+1px)] space-y-2">
-						{space && (
-							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-								Custom Agents
-							</h3>
-						)}
+				<div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto pr-3">
+					<div class="min-h-[calc(100%+1px)]">
 						{agents.map((agent) => (
 							<AgentCard
 								key={agent.id}

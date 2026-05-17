@@ -1,12 +1,8 @@
 /**
- * SpaceSettings — settings panel for a Space.
- *
- * Provides:
- * - Inline editing of name and description
- * - Export Bundle action
- * - Archive / Delete space (danger zone)
+ * SpaceSettings - settings panel for a Space.
  */
 
+import type { ComponentChildren } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@neokai/shared';
 import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@neokai/shared';
@@ -27,12 +23,48 @@ interface SpaceSettingsProps {
 	space: Space;
 }
 
+interface SettingsBlockProps {
+	title: string;
+	description: string;
+	children: ComponentChildren;
+	tone?: 'default' | 'danger';
+}
+
+function SettingsBlock({ title, description, children, tone = 'default' }: SettingsBlockProps) {
+	return (
+		<section
+			class={cn(
+				'grid gap-4 rounded-lg border p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6',
+				tone === 'danger' ? 'border-red-900/40 bg-red-950/10' : 'border-white/10 bg-white/[0.025]'
+			)}
+		>
+			<div>
+				<h3
+					class={cn(
+						'text-xs font-semibold uppercase tracking-wider',
+						tone === 'danger' ? 'text-red-400' : 'text-gray-400'
+					)}
+				>
+					{title}
+				</h3>
+				<p class="mt-1 text-xs leading-5 text-gray-600">{description}</p>
+			</div>
+			<div class="min-w-0">{children}</div>
+		</section>
+	);
+}
+
+const SETTING_SOURCE_OPTIONS: Array<[SettingSource, string, string]> = [
+	['user', 'User settings', '~/.claude/settings.json'],
+	['project', 'Project settings + CLAUDE.md', '.claude/settings.json'],
+	['local', 'Local settings', '.claude/settings.local.json'],
+];
+
 function getInheritedSettingSources(): SettingSource[] {
 	return globalSettings.value?.settingSources ?? ['user', 'project', 'local'];
 }
 
 export function SpaceSettings({ space }: SpaceSettingsProps) {
-	// Edit state
 	const [name, setName] = useState(space.name);
 	const [description, setDescription] = useState(space.description ?? '');
 	const [instructions, setInstructions] = useState(space.instructions ?? '');
@@ -52,7 +84,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [isArchiving, setIsArchiving] = useState(false);
 	const [isDeleting, setIsDeleting] = useState(false);
 
-	// Keep local state in sync when space prop changes (e.g. after save)
 	useEffect(() => {
 		setName(space.name);
 		setDescription(space.description ?? '');
@@ -88,6 +119,19 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 			JSON.stringify(space.settingSources ?? getInheritedSettingSources()) ||
 		clearSettingSources;
 
+	function resetChanges() {
+		setName(space.name);
+		setDescription(space.description ?? '');
+		setInstructions(space.instructions ?? '');
+		setBackgroundContext(space.backgroundContext ?? '');
+		setAutonomyLevel(space.autonomyLevel ?? 1);
+		setMaxConcurrentTasks(space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS);
+		setDefaultModel(space.defaultModel);
+		setSettingSources(space.settingSources ?? getInheritedSettingSources());
+		setClearSettingSources(false);
+		setSaveError(null);
+	}
+
 	async function handleSave(e: Event) {
 		e.preventDefault();
 		if (!name.trim()) {
@@ -117,8 +161,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 					? { settingSources: clearSettingSources ? null : settingSources }
 					: {}),
 			});
-			// Apply response directly to avoid stale-state from event spread-merge
-			// (undefined fields like defaultModel are dropped during JSON serialization)
+			// Apply response directly because undefined fields can be dropped during JSON serialization.
 			spaceStore.space.value = updated;
 			toast.success('Space updated');
 		} catch (err) {
@@ -196,419 +239,361 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	}
 
 	return (
-		<div class="flex flex-col h-full overflow-y-auto p-6">
-			<div class="min-h-[calc(100%+1px)] space-y-6">
-				{/* Edit name & description */}
-				<section class="space-y-4">
-					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">General</h3>
-
-					<form onSubmit={handleSave} class="space-y-3">
-						{saveError && (
-							<div class="bg-red-900/20 border border-red-800 rounded-lg px-4 py-2 text-red-400 text-sm">
-								{saveError}
-							</div>
-						)}
-
-						<div>
-							<label class="block text-xs font-medium text-gray-400 mb-1">Name</label>
-							<input
-								type="text"
-								value={name}
-								onInput={(e) => setName((e.target as HTMLInputElement).value)}
-								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
-								placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
-							/>
+		<div class="scrollbar-dark flex h-full min-h-0 flex-col overflow-y-auto py-4 pr-3">
+			<div class="min-h-[calc(100%+1px)] space-y-4">
+				<form onSubmit={handleSave} class="space-y-4">
+					{saveError && (
+						<div class="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-2 text-sm text-red-300">
+							{saveError}
 						</div>
+					)}
 
-						<div>
-							<label class="block text-xs font-medium text-gray-400 mb-1">
-								Description
-								<span class="text-gray-600 ml-1">(optional)</span>
-							</label>
-							<textarea
-								value={description}
-								onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
-								placeholder="Brief description of this space..."
-								rows={3}
-								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
-								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-none text-sm"
-							/>
-						</div>
-
-						<div>
-							<label class="block text-xs font-medium text-gray-400 mb-1">
-								Instructions
-								<span class="text-gray-600 ml-1">(optional)</span>
-							</label>
-							<p class="text-xs text-gray-500 mb-1">
-								Operator instructions for all agents in this space. Injected as{' '}
-								<code class="text-gray-400">## Space Instructions</code> in every agent's system
-								prompt.
-							</p>
-							<textarea
-								value={instructions}
-								onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
-								placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
-								rows={5}
-								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
-								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-y text-sm"
-							/>
-							<div class="text-xs text-gray-600 mt-0.5 text-right">
-								{instructions.length} characters
-							</div>
-						</div>
-
-						<div>
-							<label class="block text-xs font-medium text-gray-400 mb-1">
-								Background Context
-								<span class="text-gray-600 ml-1">(optional)</span>
-							</label>
-							<p class="text-xs text-gray-500 mb-1">
-								Project or codebase context. Injected as{' '}
-								<code class="text-gray-400">## Space Background</code> or{' '}
-								<code class="text-gray-400">## Project Context</code> in agent prompts.
-							</p>
-							<textarea
-								value={backgroundContext}
-								onInput={(e) => setBackgroundContext((e.target as HTMLTextAreaElement).value)}
-								placeholder="e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS..."
-								rows={5}
-								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
-								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-y text-sm"
-							/>
-							<div class="text-xs text-gray-600 mt-0.5 text-right">
-								{backgroundContext.length} characters
-							</div>
-						</div>
-
-						<div>
-							<label class="block text-xs font-medium text-gray-400 mb-1">Autonomy Level</label>
-							<p class="text-xs text-gray-500 mb-2">
-								Controls how much authority agents have. Higher levels auto-approve more actions;
-								lower levels require human sign-off.
-							</p>
-							<div class="space-y-1">
-								{AUTONOMY_LEVELS.map(({ level, label, description }) => (
-									<button
-										key={level}
-										type="button"
-										onClick={() => setAutonomyLevel(level)}
-										data-testid={`autonomy-level-${level}`}
-										class={cn(
-											'w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors',
-											autonomyLevel === level
-												? 'border-blue-500/60 bg-blue-500/10 text-gray-100'
-												: 'border-dark-700 bg-dark-800 text-gray-400 hover:border-dark-600 hover:text-gray-300'
-										)}
-									>
-										<span
-											class={cn(
-												'flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold',
-												autonomyLevel === level
-													? 'bg-blue-500/20 text-blue-400'
-													: 'bg-dark-700 text-gray-500'
-											)}
-										>
-											{level}
-										</span>
-										<div class="min-w-0">
-											<div class="text-sm font-medium">{label}</div>
-											<div class="text-xs text-gray-500">{description}</div>
-										</div>
-									</button>
-								))}
-							</div>
-							<AutonomyWorkflowSummary
-								level={autonomyLevel}
-								workflows={spaceStore.workflows.value}
-								class="mt-2"
-							/>
-						</div>
-
-						<div>
-							<label class="block text-xs font-medium text-gray-400 mb-1">Concurrent Tasks</label>
-							<p class="text-xs text-gray-500 mb-2">
-								Maximum number of Space tasks that may run simultaneously. Independent work runs in
-								parallel when set above 1. Dependencies still block regardless of available slots.
-							</p>
-							<div class="flex items-center gap-3">
-								<input
-									type="range"
-									min={MIN_SPACE_CONCURRENT_TASKS}
-									max={MAX_SPACE_CONCURRENT_TASKS}
-									step={1}
-									value={maxConcurrentTasks}
-									data-testid="concurrent-tasks-slider"
-									onInput={(e) =>
-										setMaxConcurrentTasks(Number((e.target as HTMLInputElement).value))
-									}
-									class="flex-1 h-2 rounded-full appearance-none cursor-pointer bg-dark-700 accent-blue-500"
-								/>
-								<span
-									class="text-sm font-mono text-gray-200 w-8 text-center tabular-nums"
-									data-testid="concurrent-tasks-value"
-								>
-									{maxConcurrentTasks}
-								</span>
-							</div>
-						</div>
-
-						<div>
-							<label class="block text-xs font-medium text-gray-400 mb-1">Default Model</label>
-							<p class="text-xs text-gray-500 mb-2">
-								Default model for agents and sessions in this Space. Falls back to the app-level
-								default when not set.
-							</p>
-							<WorkflowModelSelect
-								value={defaultModel}
-								onChange={(val) => setDefaultModel(val)}
-								testId="default-model-select"
-								className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
-							/>
-
+					<SettingsBlock
+						title="Basics"
+						description="Name the space, show where it runs, and choose the default model for new work."
+					>
+						<div class="grid gap-4 lg:grid-cols-2">
 							<div>
-								<label class="block text-xs font-medium text-gray-400 mb-1">Setting Sources</label>
-								<p class="text-xs text-gray-500 mb-2">
-									Which on-disk settings files agents in this Space load. Inherits the app-level
-									default when not set.
+								<label class="mb-1 block text-xs font-medium text-gray-400">Name</label>
+								<input
+									type="text"
+									value={name}
+									onInput={(e) => setName((e.target as HTMLInputElement).value)}
+									class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+								/>
+							</div>
+							<div>
+								<label class="mb-1 block text-xs font-medium text-gray-400">Default model</label>
+								<WorkflowModelSelect
+									value={defaultModel}
+									onChange={(val) => setDefaultModel(val)}
+									testId="default-model-select"
+									className="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+								/>
+							</div>
+							<div class="lg:col-span-2">
+								<label class="mb-1 block text-xs font-medium text-gray-400">Workspace path</label>
+								<p class="truncate rounded-lg border border-white/10 bg-dark-850 px-3 py-2 font-mono text-sm text-gray-500">
+									{space.workspacePath}
 								</p>
-								{hadExplicitSettingSources && !clearSettingSources && (
-									<button
-										type="button"
-										onClick={() => setClearSettingSources(true)}
-										class="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
-									>
-										Clear override — use inherited defaults
-									</button>
-								)}
-								{clearSettingSources && (
-									<div class="flex items-center gap-2 mb-1.5">
-										<span class="text-xs text-gray-400">
-											Will revert to inherited defaults on save.
-										</span>
-										<button
-											type="button"
-											onClick={() => setClearSettingSources(false)}
-											class="text-xs text-blue-400 hover:text-blue-300"
-										>
-											Cancel
-										</button>
-									</div>
-								)}
-								<div class="space-y-1.5">
-									<label class="flex items-center gap-2 cursor-pointer">
-										<input
-											type="checkbox"
-											checked={settingSources.includes('user')}
-											onChange={() => {
-												setSettingSources((prev) =>
-													prev.includes('user')
-														? prev.filter((s) => s !== 'user')
-														: [...prev, 'user']
-												);
-											}}
-											disabled={clearSettingSources}
-											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-										/>
-										<span class="text-sm text-gray-200">User settings</span>
-										<span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
-									</label>
-									<label class="flex items-center gap-2 cursor-pointer">
-										<input
-											type="checkbox"
-											checked={settingSources.includes('project')}
-											onChange={() => {
-												setSettingSources((prev) =>
-													prev.includes('project')
-														? prev.filter((s) => s !== 'project')
-														: [...prev, 'project']
-												);
-											}}
-											disabled={clearSettingSources}
-											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-										/>
-										<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
-										<span class="text-xs text-gray-500">(.claude/settings.json)</span>
-									</label>
-									<label class="flex items-center gap-2 cursor-pointer">
-										<input
-											type="checkbox"
-											checked={settingSources.includes('local')}
-											onChange={() => {
-												setSettingSources((prev) =>
-													prev.includes('local')
-														? prev.filter((s) => s !== 'local')
-														: [...prev, 'local']
-												);
-											}}
-											disabled={clearSettingSources}
-											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-										/>
-										<span class="text-sm text-gray-200">Local settings</span>
-										<span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
-									</label>
+							</div>
+							<div class="lg:col-span-2">
+								<label class="mb-1 block text-xs font-medium text-gray-400">
+									Description <span class="text-gray-600">(optional)</span>
+								</label>
+								<textarea
+									value={description}
+									onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
+									placeholder="Brief description of this space..."
+									rows={2}
+									class="w-full resize-none rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+								/>
+							</div>
+						</div>
+					</SettingsBlock>
+
+					<SettingsBlock
+						title="Instructions"
+						description="Persistent guidance that shapes every agent and task spawned from this space."
+					>
+						<div class="grid gap-4 xl:grid-cols-2">
+							<div>
+								<label class="mb-1 block text-xs font-medium text-gray-400">
+									Space instructions <span class="text-gray-600">(optional)</span>
+								</label>
+								<textarea
+									value={instructions}
+									onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
+									placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
+									rows={7}
+									class="w-full resize-y rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+								/>
+								<div class="mt-0.5 text-right text-xs text-gray-600">
+									{instructions.length} characters
+								</div>
+							</div>
+							<div>
+								<label class="mb-1 block text-xs font-medium text-gray-400">
+									Background context <span class="text-gray-600">(optional)</span>
+								</label>
+								<textarea
+									value={backgroundContext}
+									onInput={(e) => setBackgroundContext((e.target as HTMLTextAreaElement).value)}
+									placeholder="e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS..."
+									rows={7}
+									class="w-full resize-y rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+								/>
+								<div class="mt-0.5 text-right text-xs text-gray-600">
+									{backgroundContext.length} characters
 								</div>
 							</div>
 						</div>
+					</SettingsBlock>
 
-						{isDirty && (
-							<div class="flex gap-2 justify-end">
-								<Button
-									type="button"
-									variant="secondary"
-									size="sm"
-									onClick={() => {
-										setName(space.name);
-										setDescription(space.description ?? '');
-										setInstructions(space.instructions ?? '');
-										setBackgroundContext(space.backgroundContext ?? '');
-										setAutonomyLevel(space.autonomyLevel ?? 1);
-										setMaxConcurrentTasks(space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS);
-										setDefaultModel(space.defaultModel);
-										setSettingSources(space.settingSources ?? getInheritedSettingSources());
-										setClearSettingSources(false);
-										setSaveError(null);
-									}}
-								>
-									Discard
-								</Button>
-								<Button type="submit" size="sm" loading={saving}>
-									Save Changes
-								</Button>
-							</div>
-						)}
-					</form>
-
-					{/* Workspace path — read-only */}
-					<div>
-						<label class="block text-xs font-medium text-gray-400 mb-1">Workspace Path</label>
-						<p class="text-xs text-gray-500 font-mono break-all">{space.workspacePath}</p>
-					</div>
-				</section>
-
-				{/* MCP Servers — per-space overrides for the application MCP registry. */}
-				<SpaceMcpSettings spaceId={space.id} disabled={saving} />
-
-				<section class="space-y-3 border border-dark-700 rounded-lg p-4 bg-dark-900/40">
-					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-						GitHub watched repositories
-					</h3>
-					<p class="text-xs text-gray-500">
-						Configure owner/repo watches for this Space via the{' '}
-						<span class="font-mono">space.github.*</span> RPCs. Webhooks should point to{' '}
-						<span class="font-mono">/webhook/github/space</span> and include events:{' '}
-						<span class="font-mono">
-							issue_comment, pull_request_review, pull_request_review_comment, pull_request
-						</span>
-						. For local iMac development, expose the daemon with Tailscale Funnel or an equivalent
-						public HTTPS tunnel; GitHub cannot deliver webhooks to private Tailnet-only 100.x
-						addresses.
-					</p>
-					<div class="rounded bg-dark-800 border border-dark-700 p-3 text-xs text-gray-400 space-y-1">
-						<div>
-							Webhook URL:{' '}
-							<span class="font-mono text-gray-300">
-								https://&lt;public-host&gt;/webhook/github/space
-							</span>
-						</div>
-						<div>
-							Local example: <span class="font-mono text-gray-300">tailscale funnel 8383</span>{' '}
-							forwarding to the daemon webhook endpoint.
-						</div>
-						<div>
-							Security: signatures use per-repo webhook secrets and unwatched repos are rejected
-							before routing.
-						</div>
-					</div>
-				</section>
-
-				{/* Export section */}
-				<section class="space-y-3">
-					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Export</h3>
-					<p class="text-xs text-gray-500">
-						Download all agents and workflows as a portable{' '}
-						<span class="font-mono">.neokai.json</span> bundle.
-					</p>
-					<button
-						type="button"
-						onClick={exportBundle}
-						class="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded-lg transition-colors"
+					<SettingsBlock
+						title="Runtime"
+						description="Control how independent the space is and which local settings its agents inherit."
 					>
-						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-							/>
-						</svg>
-						Export Bundle
-					</button>
-				</section>
+						<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+							<div>
+								<label class="mb-1 block text-xs font-medium text-gray-400">Autonomy level</label>
+								<div class="space-y-1">
+									{AUTONOMY_LEVELS.map(({ level, label, description }) => (
+										<button
+											key={level}
+											type="button"
+											onClick={() => setAutonomyLevel(level)}
+											data-testid={`autonomy-level-${level}`}
+											class={cn(
+												'w-full rounded-lg px-3 py-2 text-left transition-colors',
+												autonomyLevel === level
+													? 'bg-white/10 text-gray-100'
+													: 'text-gray-400 hover:bg-white/5 hover:text-gray-300'
+											)}
+										>
+											<div class="flex items-center gap-3">
+												<span
+													class={cn(
+														'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold',
+														autonomyLevel === level
+															? 'bg-blue-500/20 text-blue-300'
+															: 'bg-white/5 text-gray-500'
+													)}
+												>
+													{level}
+												</span>
+												<div class="min-w-0">
+													<div class="text-sm font-medium">{label}</div>
+													<div class="text-xs text-gray-500">{description}</div>
+												</div>
+											</div>
+										</button>
+									))}
+								</div>
+								<AutonomyWorkflowSummary
+									level={autonomyLevel}
+									workflows={spaceStore.workflows.value}
+									class="mt-2"
+								/>
+							</div>
 
-				{/* Space metadata */}
-				<section class="space-y-2">
-					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Details</h3>
-					<dl class="space-y-1">
-						<div class="flex gap-2">
-							<dt class="text-xs text-gray-500 w-20 flex-shrink-0">Status</dt>
-							<dd class="text-xs text-gray-300 capitalize">{space.status}</dd>
+							<div class="space-y-5">
+								<div>
+									<label class="mb-1 block text-xs font-medium text-gray-400">
+										Concurrent tasks
+									</label>
+									<div class="flex items-center gap-3">
+										<input
+											type="range"
+											min={MIN_SPACE_CONCURRENT_TASKS}
+											max={MAX_SPACE_CONCURRENT_TASKS}
+											step={1}
+											value={maxConcurrentTasks}
+											data-testid="concurrent-tasks-slider"
+											onInput={(e) =>
+												setMaxConcurrentTasks(Number((e.target as HTMLInputElement).value))
+											}
+											class="h-2 flex-1 cursor-pointer appearance-none rounded-full bg-dark-700 accent-blue-500"
+										/>
+										<span
+											class="w-8 text-center font-mono text-sm tabular-nums text-gray-200"
+											data-testid="concurrent-tasks-value"
+										>
+											{maxConcurrentTasks}
+										</span>
+									</div>
+								</div>
+
+								<div>
+									<div class="flex items-start justify-between gap-3">
+										<div>
+											<label class="block text-xs font-medium text-gray-400">Setting sources</label>
+											<p class="mt-1 text-xs leading-5 text-gray-600">
+												Choose which on-disk settings files agents load.
+											</p>
+										</div>
+										{hadExplicitSettingSources && !clearSettingSources && (
+											<button
+												type="button"
+												onClick={() => setClearSettingSources(true)}
+												class="shrink-0 text-xs text-blue-400 hover:text-blue-300"
+											>
+												Use defaults
+											</button>
+										)}
+									</div>
+									{clearSettingSources && (
+										<div class="mt-2 flex items-center gap-2">
+											<span class="text-xs text-gray-400">
+												Will revert to inherited defaults on save.
+											</span>
+											<button
+												type="button"
+												onClick={() => setClearSettingSources(false)}
+												class="text-xs text-blue-400 hover:text-blue-300"
+											>
+												Cancel
+											</button>
+										</div>
+									)}
+									<div class="mt-3 space-y-1">
+										{SETTING_SOURCE_OPTIONS.map(([source, label, detail]) => (
+											<label
+												key={source}
+												class="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 text-sm text-gray-300 hover:bg-white/5"
+											>
+												<input
+													type="checkbox"
+													checked={settingSources.includes(source)}
+													onChange={() => {
+														setSettingSources((prev) =>
+															prev.includes(source)
+																? prev.filter((s) => s !== source)
+																: [...prev, source]
+														);
+													}}
+													disabled={clearSettingSources}
+													class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+												/>
+												<span class="min-w-0">
+													<span class="block">{label}</span>
+													<span class="block truncate text-xs text-gray-600">{detail}</span>
+												</span>
+											</label>
+										))}
+									</div>
+								</div>
+							</div>
 						</div>
-						<div class="flex gap-2">
-							<dt class="text-xs text-gray-500 w-20 flex-shrink-0">ID</dt>
-							<dd class="text-xs text-gray-500 font-mono truncate">{space.id}</dd>
+					</SettingsBlock>
+
+					{isDirty && (
+						<div class="sticky bottom-0 z-10 flex justify-end gap-2 rounded-lg border border-white/10 bg-dark-900/95 px-3 py-3 backdrop-blur">
+							<Button type="button" variant="secondary" size="sm" onClick={resetChanges}>
+								Discard
+							</Button>
+							<Button type="submit" size="sm" loading={saving}>
+								Save Changes
+							</Button>
 						</div>
-						<div class="flex gap-2">
-							<dt class="text-xs text-gray-500 w-20 flex-shrink-0">Created</dt>
-							<dd class="text-xs text-gray-300">
-								{new Date(space.createdAt).toLocaleDateString()}
-							</dd>
+					)}
+				</form>
+
+				<SettingsBlock
+					title="Tools"
+					description="Enable MCP servers and wire external events into this space."
+				>
+					<div class="space-y-5">
+						<SpaceMcpSettings spaceId={space.id} disabled={saving} />
+						<div class="border-t border-white/10 pt-4">
+							<h4 class="text-xs font-semibold uppercase tracking-wider text-gray-500">
+								GitHub watches
+							</h4>
+							<div class="mt-3 rounded-lg bg-dark-850 px-3 py-3 text-xs leading-5 text-gray-500">
+								<p>
+									Watches are configured through <span class="font-mono">space.github.*</span> RPCs.
+									Webhooks should point to{' '}
+									<span class="font-mono text-gray-400">/webhook/github/space</span> and include PR
+									and review events.
+								</p>
+								<p class="mt-2">
+									Local development needs a public HTTPS tunnel. Signatures use per-repo webhook
+									secrets, and unwatched repositories are rejected before routing.
+								</p>
+							</div>
+						</div>
+					</div>
+				</SettingsBlock>
+
+				<SettingsBlock
+					title="Export"
+					description="Download the space definition and inspect lightweight metadata."
+				>
+					<div class="flex flex-wrap items-start justify-between gap-4">
+						<div>
+							<p class="text-sm text-gray-300">Portable Space bundle</p>
+							<p class="mt-0.5 text-xs text-gray-500">
+								Download all agents and workflows as a <span class="font-mono">.neokai.json</span>{' '}
+								bundle.
+							</p>
+						</div>
+						<button
+							type="button"
+							onClick={exportBundle}
+							class="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-gray-100"
+						>
+							<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+								/>
+							</svg>
+							Export Bundle
+						</button>
+					</div>
+					<dl class="mt-4 grid gap-2 text-xs sm:grid-cols-3">
+						<div>
+							<dt class="text-gray-600">Status</dt>
+							<dd class="mt-0.5 capitalize text-gray-300">{space.status}</dd>
+						</div>
+						<div>
+							<dt class="text-gray-600">Created</dt>
+							<dd class="mt-0.5 text-gray-300">{new Date(space.createdAt).toLocaleDateString()}</dd>
+						</div>
+						<div class="min-w-0">
+							<dt class="text-gray-600">ID</dt>
+							<dd class="mt-0.5 truncate font-mono text-gray-500">{space.id}</dd>
 						</div>
 					</dl>
-				</section>
+				</SettingsBlock>
 
-				{/* Danger zone */}
-				<section class="space-y-3 border border-red-900/40 rounded-lg p-4">
-					<h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Danger Zone</h3>
-
-					<div class="flex items-center justify-between gap-4">
-						<div>
-							<p class="text-sm text-gray-300">Archive space</p>
-							<p class="text-xs text-gray-500 mt-0.5">
-								Hide from the main list. Can be restored later.
-							</p>
+				<SettingsBlock
+					title="Danger"
+					description="Destructive actions for this space. Archive is reversible; delete is permanent."
+					tone="danger"
+				>
+					<div class="divide-y divide-red-900/30 rounded-lg border border-red-900/30">
+						<div class="flex items-center justify-between gap-4 px-3 py-3">
+							<div>
+								<p class="text-sm text-gray-300">Archive space</p>
+								<p class="mt-0.5 text-xs text-gray-500">
+									Hide from the main list. Can be restored later.
+								</p>
+							</div>
+							<Button
+								type="button"
+								variant="secondary"
+								size="sm"
+								onClick={handleArchive}
+								disabled={space.status === 'archived' || isArchiving}
+								loading={isArchiving}
+							>
+								Archive
+							</Button>
 						</div>
-						<Button
-							type="button"
-							variant="secondary"
-							size="sm"
-							onClick={handleArchive}
-							disabled={space.status === 'archived' || isArchiving}
-							loading={isArchiving}
-						>
-							Archive
-						</Button>
-					</div>
 
-					<div class="border-t border-red-900/30 pt-3 flex items-center justify-between gap-4">
-						<div>
-							<p class="text-sm text-gray-300">Delete space</p>
-							<p class="text-xs text-gray-500 mt-0.5">
-								Permanently remove this space and all its data.
-							</p>
+						<div class="flex items-center justify-between gap-4 px-3 py-3">
+							<div>
+								<p class="text-sm text-gray-300">Delete space</p>
+								<p class="mt-0.5 text-xs text-gray-500">
+									Permanently remove this space and all its data.
+								</p>
+							</div>
+							<Button
+								type="button"
+								variant="danger"
+								size="sm"
+								onClick={handleDelete}
+								disabled={isDeleting}
+								loading={isDeleting}
+							>
+								Delete
+							</Button>
 						</div>
-						<Button
-							type="button"
-							variant="danger"
-							size="sm"
-							onClick={handleDelete}
-							disabled={isDeleting}
-							loading={isDeleting}
-						>
-							Delete
-						</Button>
 					</div>
-				</section>
+				</SettingsBlock>
 			</div>
 		</div>
 	);
