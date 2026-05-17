@@ -276,22 +276,24 @@ describe('ContextPanel', () => {
 		expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
 	});
 
-	it('clears the drawer state when hiding the panel on the spaces list', () => {
+	it('renders the spaces list when no space is selected', () => {
 		mockCurrentSpaceIdSignal.value = null;
 		mockContextPanelOpenSignal.value = true;
 
-		const { container } = render(<ContextPanel />);
-
-		expect(container.firstChild).toBeNull();
-		expect(mockContextPanelOpenSignal.value).toBe(false);
-	});
-
-	it('keeps global mobile navigation available in the in-space switcher', () => {
 		render(<ContextPanel />);
 
-		fireEvent.click(screen.getByLabelText('Spaces'));
-		fireEvent.click(screen.getByLabelText('Chats'));
-		fireEvent.click(screen.getByLabelText('Settings'));
+		expect(screen.getByTestId('space-switcher')).toBeTruthy();
+		expect(screen.getByText('Alpha')).toBeTruthy();
+		expect(screen.getByText('Beta')).toBeTruthy();
+		expect(mockContextPanelOpenSignal.value).toBe(true);
+	});
+
+	it('keeps global navigation available in the sidebar switcher', () => {
+		render(<ContextPanel />);
+
+		fireEvent.click(screen.getByRole('tab', { name: 'Spaces' }));
+		fireEvent.click(screen.getByRole('tab', { name: 'Chats' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
 
 		expect(mockNavigateToSpaces).toHaveBeenCalledTimes(1);
 		expect(mockNavigateToSessions).toHaveBeenCalledTimes(1);

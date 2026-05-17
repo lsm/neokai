@@ -2,8 +2,8 @@
 /**
  * Tests for SessionListItem Component
  *
- * Tests the session list item with status indicators, metadata display,
- * worktree badge, and archived status.
+ * Tests the compact session list item with status indicators, worktree badge,
+ * and archived status.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -68,10 +68,12 @@ describe('SessionListItem', () => {
 	};
 
 	const mockOnSessionClick = vi.fn(() => {});
+	const mockOnArchive = vi.fn(() => {});
 
 	beforeEach(() => {
 		cleanup();
 		mockOnSessionClick.mockClear();
+		mockOnArchive.mockClear();
 	});
 
 	afterEach(() => {
@@ -98,29 +100,14 @@ describe('SessionListItem', () => {
 			expect(title?.textContent).toBe('New Session');
 		});
 
-		it('should render message count', () => {
+		it('does not render metadata in the compact row', () => {
 			const { container } = render(
 				<SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
 			);
 
-			expect(container.textContent).toContain('10');
-		});
-
-		it('should render token count', () => {
-			const { container } = render(
-				<SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
-			);
-
-			// Should contain formatted token count (5.0k)
-			expect(container.textContent).toContain('5.0k');
-		});
-
-		it('should render cost', () => {
-			const { container } = render(
-				<SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
-			);
-
-			expect(container.textContent).toContain('$0.0500');
+			expect(container.textContent).not.toContain('10');
+			expect(container.textContent).not.toContain('5.0k');
+			expect(container.textContent).not.toContain('$0.0500');
 		});
 
 		it('should render relative time', () => {
@@ -183,9 +170,8 @@ describe('SessionListItem', () => {
 			);
 
 			const button = container.querySelector('button')!;
-			// Should have base styles
-			expect(button.className).toContain('transition-all');
-			expect(button.className).toContain('w-full');
+			expect(button.className).toContain('transition-colors');
+			expect(button.className).toContain('flex-1');
 		});
 
 		it('should have hover styling for inactive session', () => {
@@ -193,8 +179,8 @@ describe('SessionListItem', () => {
 				<SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
 			);
 
-			const button = container.querySelector('button')!;
-			expect(button.className).toContain('hover:bg-dark-900');
+			const row = container.querySelector('[data-testid="session-row"]')!;
+			expect(row.className).toContain('hover:bg-white/5');
 		});
 	});
 
@@ -211,8 +197,7 @@ describe('SessionListItem', () => {
 				<SessionListItem session={sessionWithWorktree} onSessionClick={mockOnSessionClick} />
 			);
 
-			// GitBranchIcon should be present
-			const worktreeIcon = container.querySelector('.text-purple-400');
+			const worktreeIcon = container.querySelector('.text-green-400');
 			expect(worktreeIcon).toBeTruthy();
 		});
 
@@ -221,7 +206,7 @@ describe('SessionListItem', () => {
 				<SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
 			);
 
-			const worktreeIcon = container.querySelector('.text-purple-400');
+			const worktreeIcon = container.querySelector('.text-green-400');
 			expect(worktreeIcon).toBeNull();
 		});
 
@@ -273,8 +258,8 @@ describe('SessionListItem', () => {
 		});
 	});
 
-	describe('Metadata Display', () => {
-		it('should handle zero message count', () => {
+	describe('Metadata Handling', () => {
+		it('should handle zero message count without rendering metadata', () => {
 			const sessionWithNoMessages = {
 				...mockSession,
 				metadata: { ...mockSession.metadata, messageCount: 0 },
@@ -283,11 +268,11 @@ describe('SessionListItem', () => {
 				<SessionListItem session={sessionWithNoMessages} onSessionClick={mockOnSessionClick} />
 			);
 
-			// Should render without error and show 0
-			expect(container.textContent).toContain('0');
+			expect(container.textContent).toContain('Test Session');
+			expect(container.textContent).not.toContain('0');
 		});
 
-		it('should handle zero token count', () => {
+		it('should handle zero token count without rendering metadata', () => {
 			const sessionWithNoTokens = {
 				...mockSession,
 				metadata: { ...mockSession.metadata, totalTokens: 0 },
@@ -296,11 +281,11 @@ describe('SessionListItem', () => {
 				<SessionListItem session={sessionWithNoTokens} onSessionClick={mockOnSessionClick} />
 			);
 
-			// Should render without error
-			expect(container.textContent).toContain('0');
+			expect(container.textContent).toContain('Test Session');
+			expect(container.textContent).not.toContain('0');
 		});
 
-		it('should handle zero cost', () => {
+		it('should handle zero cost without rendering metadata', () => {
 			const sessionWithNoCost = {
 				...mockSession,
 				metadata: { ...mockSession.metadata, totalCost: 0 },
@@ -309,10 +294,11 @@ describe('SessionListItem', () => {
 				<SessionListItem session={sessionWithNoCost} onSessionClick={mockOnSessionClick} />
 			);
 
-			expect(container.textContent).toContain('$0.0000');
+			expect(container.textContent).toContain('Test Session');
+			expect(container.textContent).not.toContain('$0.0000');
 		});
 
-		it('should handle large token counts', () => {
+		it('should handle large token counts without rendering metadata', () => {
 			const sessionWithLargeTokens = {
 				...mockSession,
 				metadata: { ...mockSession.metadata, totalTokens: 1500000 },
@@ -321,8 +307,8 @@ describe('SessionListItem', () => {
 				<SessionListItem session={sessionWithLargeTokens} onSessionClick={mockOnSessionClick} />
 			);
 
-			// Should contain formatted token count (1500.0k)
-			expect(container.textContent).toContain('1500.0k');
+			expect(container.textContent).toContain('Test Session');
+			expect(container.textContent).not.toContain('1500.0k');
 		});
 	});
 
@@ -496,9 +482,10 @@ describe('SessionListItem', () => {
 				<SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
 			);
 
-			const button = container.querySelector('button');
-			expect(button?.className).toContain('bg-dark-850');
-			expect(button?.className).toContain('border-l-blue-500');
+			const row = container.querySelector('[data-testid="session-row"]');
+			const button = container.querySelector('[data-testid="session-card"]');
+			expect(row?.className).toContain('bg-white/10');
+			expect(button?.className).toContain('text-gray-100');
 		});
 
 		it('should have inactive styling when not current session', () => {
@@ -508,9 +495,11 @@ describe('SessionListItem', () => {
 				<SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
 			);
 
-			const button = container.querySelector('button');
-			expect(button?.className).toContain('hover:bg-dark-900');
-			expect(button?.className).not.toContain('bg-dark-850');
+			const row = container.querySelector('[data-testid="session-row"]');
+			const button = container.querySelector('[data-testid="session-card"]');
+			expect(row?.className).toContain('hover:bg-white/5');
+			expect(row?.className).not.toContain('bg-white/10');
+			expect(button?.className).toContain('text-gray-400');
 		});
 	});
 });
