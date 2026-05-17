@@ -561,4 +561,34 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_goal_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			goal_id TEXT NOT NULL,
+			event_type TEXT NOT NULL
+				CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated')),
+			source TEXT NOT NULL
+				CHECK(source IN ('rpc', 'space_agent_tool', 'workflow_node_agent', 'scheduler', 'system')),
+			source_task_id TEXT,
+			source_session_id TEXT,
+			previous_state TEXT,
+			new_state TEXT,
+			diff TEXT,
+			note TEXT,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
+			FOREIGN KEY (source_task_id) REFERENCES space_tasks(id) ON DELETE SET NULL
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_goal_created ON space_goal_events(goal_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_space_created ON space_goal_events(space_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
+	);
 }

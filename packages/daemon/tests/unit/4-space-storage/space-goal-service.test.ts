@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite';
 import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
+import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
@@ -34,6 +35,7 @@ function createJobQueueTable(db: Database): void {
 describe('SpaceGoalService', () => {
 	let db: Database;
 	let goalRepo: SpaceGoalRepository;
+	let goalEventRepo: SpaceGoalEventRepository;
 	let taskRepo: SpaceTaskRepository;
 	let spaceRepo: SpaceRepository;
 	let scheduleRepo: TaskScheduleRepository;
@@ -46,6 +48,7 @@ describe('SpaceGoalService', () => {
 		createJobQueueTable(db);
 
 		goalRepo = new SpaceGoalRepository(db as never);
+		goalEventRepo = new SpaceGoalEventRepository(db as never);
 		taskRepo = new SpaceTaskRepository(db as never);
 		spaceRepo = new SpaceRepository(db as never);
 		scheduleRepo = new TaskScheduleRepository(db as never);
@@ -57,6 +60,7 @@ describe('SpaceGoalService', () => {
 		});
 		service = new SpaceGoalService({
 			goalRepo,
+			goalEventRepo,
 			taskRepo,
 			spaceRepo,
 			scheduleService,
@@ -109,10 +113,51 @@ describe('SpaceGoalService', () => {
 		expect(schedule?.labels).toEqual(['goal', `goal:${goal.id}`, 'product']);
 	});
 
+	it('records goal update, status, task, and schedule events', () => {
+		const goal = service.createGoal({ spaceId, title: 'Audit me', autoTriggerNext: true });
+		const createdEvents = goalEventRepo.listByGoal(goal.id);
+		expect(createdEvents).toHaveLength(1);
+		expect(createdEvents[0]?.eventType).toBe('created');
+		expect(createdEvents[0]?.newState?.title).toBe('Audit me');
+
+		const updated = service.updateGoal(
+			goal.id,
+			{ summary: 'Moved forward', progress: 50 },
+			{ source: 'space_agent_tool', sourceSessionId: 'session-1' }
+		);
+		expect(updated.progress).toBe(50);
+
+		const paused = service.pauseGoal(goal.id, { source: 'rpc' });
+		expect(paused.status).toBe('paused');
+		service.resumeGoal(goal.id, { source: 'rpc' });
+		service.updateScheduledCheckIn(goal.id, Date.now() + 60_000);
+
+		const first = service.createImmediateTask(goal.id);
+		service.createImmediateTask(goal.id);
+		taskRepo.updateTask(first.task!.id, { status: 'done' });
+		service.handleTaskTerminal(first.task!.id);
+
+		const events = goalEventRepo.listByGoal(goal.id, { limit: 20 });
+		expect(events.map((event) => event.eventType)).toContain('created');
+		expect(events.map((event) => event.eventType)).toContain('updated');
+		expect(events.map((event) => event.eventType)).toContain('status_changed');
+		expect(events.map((event) => event.eventType)).toContain('schedule_updated');
+		expect(events.map((event) => event.eventType)).toContain('task_triggered');
+		expect(events.map((event) => event.eventType)).toContain('task_queued');
+		expect(events.map((event) => event.eventType)).toContain('task_terminal');
+		const updateEvent = events.find((event) => event.eventType === 'updated');
+		expect(updateEvent?.source).toBe('space_agent_tool');
+		expect(updateEvent?.sourceSessionId).toBe('session-1');
+		expect(updateEvent?.diff?.progress).toEqual({ previous: 0, current: 50 });
+		const terminalEvent = events.find((event) => event.eventType === 'task_terminal');
+		expect(terminalEvent?.sourceTaskId).toBe(first.task?.id);
+	});
+
 	it('creates an immediate goal task and queues concurrent triggers', () => {
 		const events: Array<{ event: string; taskId?: string }> = [];
 		service = new SpaceGoalService({
 			goalRepo,
+			goalEventRepo,
 			taskRepo,
 			spaceRepo,
 			scheduleService: new ScheduleService({

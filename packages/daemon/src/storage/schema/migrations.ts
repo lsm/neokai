@@ -629,6 +629,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 132: Add per-space persistent agent memory with FTS5 search.
 	runMigration132(db);
+
+	// Migration 133: Add append-only Space goal event history.
+	runMigration133(db);
 }
 
 /**
@@ -8938,16 +8941,6 @@ export function runMigration130(db: BunDatabase): void {
 	db.exec(`CREATE INDEX idx_gate_open_state_run ON gate_open_state(run_id)`);
 }
 
-/**
- * Migration 131: Remove global Neo prototype schema surface + add Space-native goals.
- *
- * Drops the Neo activity log table, converts any legacy `neo` session rows to
- * archived workers so existing messages remain reachable, and removes `neo`
- * from persisted CHECK constraints.
- *
- * Also creates the `space_goals` table and adds `goal_id` columns to
- * `space_tasks` and `task_schedules` for goal-task-schedule linkage.
- */
 export function runMigration131(db: BunDatabase): void {
 	if (tableExists(db, 'neo_activity_log')) {
 		db.exec(`DROP TABLE neo_activity_log`);
@@ -9071,6 +9064,47 @@ function migrateNeoSessions(db: BunDatabase): void {
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}
+}
+
+/**
+ * Migration 133: Add append-only Space goal event history.
+ *
+ * Stores lifecycle and state-change events for Space goals so agents and
+ * humans can inspect why the current rolling goal state changed.
+ */
+export function runMigration133(db: BunDatabase): void {
+	if (!tableExists(db, 'space_goals')) return;
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_goal_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			goal_id TEXT NOT NULL,
+			event_type TEXT NOT NULL
+				CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated')),
+			source TEXT NOT NULL
+				CHECK(source IN ('rpc', 'space_agent_tool', 'workflow_node_agent', 'scheduler', 'system')),
+			source_task_id TEXT,
+			source_session_id TEXT,
+			previous_state TEXT,
+			new_state TEXT,
+			diff TEXT,
+			note TEXT,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
+			FOREIGN KEY (source_task_id) REFERENCES space_tasks(id) ON DELETE SET NULL
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_goal_created ON space_goal_events(goal_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_space_created ON space_goal_events(space_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
+	);
 }
 
 export function runMigration132(db: BunDatabase): void {

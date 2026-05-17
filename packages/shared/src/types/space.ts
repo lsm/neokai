@@ -274,6 +274,86 @@ export type SpaceGoalType = 'one_shot' | 'measurable' | 'recurring';
 
 export type SpaceGoalMetrics = Record<string, string | number | boolean | null>;
 
+export type SpaceGoalEventType =
+	| 'created'
+	| 'updated'
+	| 'status_changed'
+	| 'task_triggered'
+	| 'task_queued'
+	| 'task_terminal'
+	| 'schedule_updated';
+
+export type SpaceGoalEventSource =
+	| 'rpc'
+	| 'space_agent_tool'
+	| 'workflow_node_agent'
+	| 'scheduler'
+	| 'system';
+
+export type SpaceGoalEventSnapshot = Partial<{
+	title: string;
+	description: string;
+	status: SpaceGoalStatus;
+	type: SpaceGoalType;
+	priority: SpaceTaskPriority;
+	labels: string[];
+	metrics: SpaceGoalMetrics;
+	summary: string;
+	progress: number;
+	nextSteps: string[];
+	preferredWorkflowId: string | null;
+	taskScheduleId: string | null;
+	autoTriggerNext: boolean;
+	pendingNextRun: boolean;
+	activeTaskId: string | null;
+	lastTaskId: string | null;
+	lastCheckInAt: number | null;
+	nextCheckInAt: number | null;
+	completedAt: number | null;
+}>;
+
+export type SpaceGoalEventDiff = Record<
+	string,
+	{
+		previous: unknown;
+		current: unknown;
+	}
+>;
+
+export interface SpaceGoalEvent {
+	id: string;
+	spaceId: string;
+	goalId: string;
+	eventType: SpaceGoalEventType;
+	source: SpaceGoalEventSource;
+	sourceTaskId: string | null;
+	sourceSessionId: string | null;
+	previousState: SpaceGoalEventSnapshot | null;
+	newState: SpaceGoalEventSnapshot | null;
+	diff: SpaceGoalEventDiff | null;
+	note: string | null;
+	createdAt: number;
+}
+
+export interface CreateSpaceGoalEventParams {
+	spaceId: string;
+	goalId: string;
+	eventType: SpaceGoalEventType;
+	source: SpaceGoalEventSource;
+	sourceTaskId?: string | null;
+	sourceSessionId?: string | null;
+	previousState?: SpaceGoalEventSnapshot | null;
+	newState?: SpaceGoalEventSnapshot | null;
+	diff?: SpaceGoalEventDiff | null;
+	note?: string | null;
+	createdAt?: number;
+}
+
+export interface SpaceGoalEventListParams {
+	limit?: number;
+	before?: number;
+}
+
 export interface SpaceGoal {
 	id: string;
 	spaceId: string;

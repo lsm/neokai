@@ -27,7 +27,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
 	messageHub.onRequest('spaceGoal.create', async (data) => {
 		const params = data as Parameters<SpaceGoalService['createGoal']>[0];
 		await requireSpace(params.spaceId);
-		return { goal: goalService.createGoal(params) };
+		return { goal: goalService.createGoal(params, { source: 'rpc' }) };
 	});
 
 	messageHub.onRequest('spaceGoal.list', async (data) => {
@@ -68,27 +68,34 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
 			preferredWorkflowId: params.preferredWorkflowId,
 			autoTriggerNext: params.autoTriggerNext,
 		};
-		return { goal: goalService.updateGoal(params.goalId, updates) };
+		return { goal: goalService.updateGoal(params.goalId, updates, { source: 'rpc' }) };
 	});
 
 	messageHub.onRequest('spaceGoal.pause', async (data) => {
 		const params = data as { spaceId: string; goalId: string };
 		await requireSpace(params.spaceId);
 		requireGoalInSpace(params.goalId, params.spaceId);
-		return { goal: goalService.pauseGoal(params.goalId) };
+		return { goal: goalService.pauseGoal(params.goalId, { source: 'rpc' }) };
 	});
 
 	messageHub.onRequest('spaceGoal.resume', async (data) => {
 		const params = data as { spaceId: string; goalId: string };
 		await requireSpace(params.spaceId);
 		requireGoalInSpace(params.goalId, params.spaceId);
-		return { goal: goalService.resumeGoal(params.goalId) };
+		return { goal: goalService.resumeGoal(params.goalId, { source: 'rpc' }) };
 	});
 
 	messageHub.onRequest('spaceGoal.createImmediateTask', async (data) => {
 		const params = data as { spaceId: string; goalId: string };
 		await requireSpace(params.spaceId);
 		requireGoalInSpace(params.goalId, params.spaceId);
-		return goalService.createImmediateTask(params.goalId);
+		return goalService.createImmediateTask(params.goalId, { source: 'rpc' });
+	});
+
+	messageHub.onRequest('spaceGoal.listEvents', async (data) => {
+		const params = data as { spaceId: string; goalId: string; limit?: number; before?: number };
+		await requireSpace(params.spaceId);
+		requireGoalInSpace(params.goalId, params.spaceId);
+		return { events: goalService.listGoalEvents(params.goalId, params) };
 	});
 }

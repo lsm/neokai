@@ -103,6 +103,8 @@ export { runMigration130 } from './migrations';
 export { runMigration131 } from './migrations';
 // knip-ignore-next-line
 export { runMigration132 } from './migrations';
+// knip-ignore-next-line
+export { runMigration133 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -339,6 +341,28 @@ export function createTables(db: BunDatabase): void {
         FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
       )
     `);
+
+	db.exec(`
+	      CREATE TABLE IF NOT EXISTS space_goal_events (
+	        id TEXT PRIMARY KEY,
+	        space_id TEXT NOT NULL,
+	        goal_id TEXT NOT NULL,
+	        event_type TEXT NOT NULL
+	          CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated')),
+	        source TEXT NOT NULL
+	          CHECK(source IN ('rpc', 'space_agent_tool', 'workflow_node_agent', 'scheduler', 'system')),
+	        source_task_id TEXT,
+	        source_session_id TEXT,
+	        previous_state TEXT,
+	        new_state TEXT,
+	        diff TEXT,
+	        note TEXT,
+	        created_at INTEGER NOT NULL,
+	        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+	        FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
+	        FOREIGN KEY (source_task_id) REFERENCES space_tasks(id) ON DELETE SET NULL
+	      )
+	    `);
 
 	// Short ID counters — per-(entity_type, scope_id) monotonic counter for short ID allocation
 	db.exec(`
@@ -786,6 +810,16 @@ function createIndexes(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running ON mission_executions(goal_id) WHERE status = 'running'`
+	);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_goal_created ON space_goal_events(goal_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_space_created ON space_goal_events(space_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
 	);
 
 	// GitHub integration indexes

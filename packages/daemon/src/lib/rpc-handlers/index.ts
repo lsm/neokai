@@ -97,6 +97,7 @@ import { setupTaskScheduleHandlers } from './task-schedule-handlers';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers';
 import { setupSpaceGoalHandlers } from './space-goal-handlers';
 import { ScheduleService } from '../space/schedule/schedule-service';
+import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
 
@@ -274,8 +275,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space Goal service — goal lifecycle, terminal handling, schedule sync.
 	const spaceGoalRepo = new SpaceGoalRepository(deps.db.getDatabase(), deps.reactiveDb);
+	const spaceGoalEventRepo = new SpaceGoalEventRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const spaceGoalService = new SpaceGoalService({
 		goalRepo: spaceGoalRepo,
+		goalEventRepo: spaceGoalEventRepo,
 		taskRepo: spaceTaskRepo,
 		spaceRepo,
 		scheduleService,

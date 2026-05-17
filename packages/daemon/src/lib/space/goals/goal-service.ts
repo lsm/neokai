@@ -1,6 +1,12 @@
 import type {
 	CreateSpaceGoalParams,
 	SpaceGoal,
+	SpaceGoalEvent,
+	SpaceGoalEventDiff,
+	SpaceGoalEventListParams,
+	SpaceGoalEventSnapshot,
+	SpaceGoalEventSource,
+	SpaceGoalEventType,
 	SpaceGoalListParams,
 	SpaceTask,
 	UpdateSpaceGoalParams,
@@ -8,6 +14,7 @@ import type {
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
 
@@ -27,8 +34,16 @@ export type PublicSpaceGoalUpdateParams = Pick<
 	| 'autoTriggerNext'
 >;
 
+export interface SpaceGoalMutationContext {
+	source?: SpaceGoalEventSource;
+	sourceTaskId?: string | null;
+	sourceSessionId?: string | null;
+	note?: string | null;
+}
+
 export interface SpaceGoalServiceDeps {
 	goalRepo: SpaceGoalRepository;
+	goalEventRepo?: SpaceGoalEventRepository;
 	taskRepo: SpaceTaskRepository;
 	spaceRepo: SpaceRepository;
 	scheduleService: ScheduleService;
@@ -41,7 +56,7 @@ export interface SpaceGoalServiceDeps {
 export class SpaceGoalService {
 	constructor(private readonly deps: SpaceGoalServiceDeps) {}
 
-	createGoal(params: CreateSpaceGoalParams): SpaceGoal {
+	createGoal(params: CreateSpaceGoalParams, context?: SpaceGoalMutationContext): SpaceGoal {
 		this.validateCreate(params);
 		const space = this.deps.spaceRepo.getSpace(params.spaceId);
 		if (!space) throw new Error(`Space not found: ${params.spaceId}`);
@@ -51,6 +66,7 @@ export class SpaceGoalService {
 
 		return this.runAtomic(() => {
 			const goal = this.deps.goalRepo.create(params);
+			this.recordGoalEvent(goal, 'created', null, goal, context);
 			if (params.checkInCronExpression) {
 				const schedule = this.deps.scheduleService.createGoalSchedule({
 					spaceId: params.spaceId,
@@ -83,7 +99,11 @@ export class SpaceGoalService {
 		return this.deps.goalRepo.getById(goalId);
 	}
 
-	updateGoal(goalId: string, params: PublicSpaceGoalUpdateParams): SpaceGoal {
+	updateGoal(
+		goalId: string,
+		params: PublicSpaceGoalUpdateParams,
+		context?: SpaceGoalMutationContext
+	): SpaceGoal {
 		const existing = this.requireGoal(goalId);
 		if (
 			existing.status === 'archived' &&
@@ -109,19 +129,29 @@ export class SpaceGoalService {
 
 		const updated = this.deps.goalRepo.update(goalId, updateParams);
 		if (!updated) throw new Error(`Goal not found: ${goalId}`);
+		this.recordGoalEvent(
+			updated,
+			params.status !== undefined && params.status !== existing.status
+				? 'status_changed'
+				: 'updated',
+			existing,
+			updated,
+			context
+		);
 		return updated;
 	}
 
-	pauseGoal(goalId: string): SpaceGoal {
+	pauseGoal(goalId: string, context?: SpaceGoalMutationContext): SpaceGoal {
 		const goal = this.requireGoal(goalId);
 		if (goal.status !== 'active') throw new Error(`Goal is not active (current: ${goal.status})`);
 		if (goal.taskScheduleId) this.pauseLinkedScheduleOrClear(goal);
 		const updated = this.deps.goalRepo.update(goalId, { status: 'paused', nextCheckInAt: null });
 		if (!updated) throw new Error(`Goal not found: ${goalId}`);
+		this.recordGoalEvent(updated, 'status_changed', goal, updated, context);
 		return updated;
 	}
 
-	resumeGoal(goalId: string): SpaceGoal {
+	resumeGoal(goalId: string, context?: SpaceGoalMutationContext): SpaceGoal {
 		const goal = this.requireGoal(goalId);
 		if (goal.status !== 'paused') throw new Error(`Goal is not paused (current: ${goal.status})`);
 		let nextCheckInAt = goal.nextCheckInAt;
@@ -131,10 +161,14 @@ export class SpaceGoalService {
 		}
 		const updated = this.deps.goalRepo.update(goalId, { status: 'active', nextCheckInAt });
 		if (!updated) throw new Error(`Goal not found: ${goalId}`);
+		this.recordGoalEvent(updated, 'status_changed', goal, updated, context);
 		return updated;
 	}
 
-	createImmediateTask(goalId: string): {
+	createImmediateTask(
+		goalId: string,
+		context?: SpaceGoalMutationContext
+	): {
 		goal: SpaceGoal;
 		task: SpaceTask | null;
 		queued: boolean;
@@ -150,8 +184,10 @@ export class SpaceGoalService {
 				if (!goal.autoTriggerNext) {
 					throw new Error('Goal already has an active task and autoTriggerNext is disabled');
 				}
+				const queuedGoal = this.deps.goalRepo.queueNextRun(goal.id) as SpaceGoal;
+				this.recordGoalEvent(queuedGoal, 'task_queued', goal, queuedGoal, context);
 				return {
-					goal: this.deps.goalRepo.queueNextRun(goal.id) as SpaceGoal,
+					goal: queuedGoal,
 					task: null,
 					queued: true,
 				};
@@ -173,13 +209,19 @@ export class SpaceGoalService {
 			if (!goal.autoTriggerNext) {
 				throw new Error('Goal already has an active task and autoTriggerNext is disabled');
 			}
+			const queuedGoal = this.deps.goalRepo.queueNextRun(goal.id) as SpaceGoal;
+			this.recordGoalEvent(queuedGoal, 'task_queued', goal, queuedGoal, context);
 			return {
-				goal: this.deps.goalRepo.queueNextRun(goal.id) as SpaceGoal,
+				goal: queuedGoal,
 				task: null,
 				queued: true,
 			};
 		}
 		const updatedGoal = this.requireGoal(goal.id);
+		this.recordGoalEvent(updatedGoal, 'task_triggered', goal, updatedGoal, {
+			...context,
+			sourceTaskId: context?.sourceTaskId ?? task.id,
+		});
 		this.emitTaskCreated(task);
 		return { goal: updatedGoal, task, queued: false };
 	}
@@ -192,10 +234,15 @@ export class SpaceGoalService {
 		if (!goal || goal.spaceId !== task.spaceId) return null;
 		this.deps.goalRepo.clearActiveTaskIfMatches(goal.id, taskId);
 		const fresh = this.requireGoal(goal.id);
+		this.recordGoalEvent(fresh, 'task_terminal', goal, fresh, {
+			source: 'system',
+			sourceTaskId: taskId,
+			note: `Task reached terminal status: ${task.status}`,
+		});
 		if (!fresh.autoTriggerNext || !fresh.pendingNextRun || fresh.status !== 'active') {
 			return { goal: fresh, nextTask: null };
 		}
-		const created = this.createImmediateTask(fresh.id);
+		const created = this.createImmediateTask(fresh.id, { source: 'system' });
 		return { goal: created.goal, nextTask: created.task };
 	}
 
@@ -235,8 +282,25 @@ export class SpaceGoalService {
 		return { goal: updated, claimed };
 	}
 
-	updateScheduledCheckIn(goalId: string, nextCheckInAt: number | null): SpaceGoal | null {
-		return this.deps.goalRepo.update(goalId, { nextCheckInAt });
+	updateScheduledCheckIn(
+		goalId: string,
+		nextCheckInAt: number | null,
+		context?: SpaceGoalMutationContext
+	): SpaceGoal | null {
+		const previous = this.deps.goalRepo.getById(goalId);
+		const updated = this.deps.goalRepo.update(goalId, { nextCheckInAt });
+		if (previous && updated) {
+			this.recordGoalEvent(updated, 'schedule_updated', previous, updated, {
+				source: 'scheduler',
+				...context,
+			});
+		}
+		return updated;
+	}
+
+	listGoalEvents(goalId: string, params: SpaceGoalEventListParams = {}): SpaceGoalEvent[] {
+		this.requireGoal(goalId);
+		return this.deps.goalEventRepo?.listByGoal(goalId, params) ?? [];
 	}
 
 	private requireGoal(goalId: string): SpaceGoal {
@@ -337,6 +401,31 @@ export class SpaceGoalService {
 		this.deps.scheduleService.updateSchedule(schedule.id, scheduleUpdate);
 	}
 
+	private recordGoalEvent(
+		goal: SpaceGoal,
+		eventType: SpaceGoalEventType,
+		previous: SpaceGoal | null,
+		current: SpaceGoal,
+		context?: SpaceGoalMutationContext
+	): void {
+		if (!this.deps.goalEventRepo) return;
+		const previousState = previous ? snapshotGoal(previous) : null;
+		const newState = snapshotGoal(current);
+		const diff = previousState ? diffSnapshots(previousState, newState) : null;
+		this.deps.goalEventRepo.create({
+			spaceId: goal.spaceId,
+			goalId: goal.id,
+			eventType,
+			source: context?.source ?? 'system',
+			sourceTaskId: context?.sourceTaskId ?? null,
+			sourceSessionId: context?.sourceSessionId ?? null,
+			previousState,
+			newState,
+			diff,
+			note: context?.note ?? null,
+		});
+	}
+
 	private emitTaskCreated(task: SpaceTask): void {
 		if (!this.deps.eventHub) return;
 		this.deps.eventHub
@@ -371,6 +460,45 @@ export class SpaceGoalService {
 		].filter(Boolean);
 		return sections.join('\n\n');
 	}
+}
+
+function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
+	return {
+		title: goal.title,
+		description: goal.description,
+		status: goal.status,
+		type: goal.type,
+		priority: goal.priority,
+		labels: goal.labels,
+		metrics: goal.metrics,
+		summary: goal.summary,
+		progress: goal.progress,
+		nextSteps: goal.nextSteps,
+		preferredWorkflowId: goal.preferredWorkflowId,
+		taskScheduleId: goal.taskScheduleId,
+		autoTriggerNext: goal.autoTriggerNext,
+		pendingNextRun: goal.pendingNextRun,
+		activeTaskId: goal.activeTaskId,
+		lastTaskId: goal.lastTaskId,
+		lastCheckInAt: goal.lastCheckInAt,
+		nextCheckInAt: goal.nextCheckInAt,
+		completedAt: goal.completedAt,
+	};
+}
+
+function diffSnapshots(
+	previous: SpaceGoalEventSnapshot,
+	current: SpaceGoalEventSnapshot
+): SpaceGoalEventDiff {
+	const diff: SpaceGoalEventDiff = {};
+	for (const key of Object.keys(current) as Array<keyof SpaceGoalEventSnapshot>) {
+		const previousValue = previous[key];
+		const currentValue = current[key];
+		if (JSON.stringify(previousValue) !== JSON.stringify(currentValue)) {
+			diff[key] = { previous: previousValue, current: currentValue };
+		}
+	}
+	return diff;
 }
 
 function isActiveTaskStatus(status: SpaceTask['status']): boolean {

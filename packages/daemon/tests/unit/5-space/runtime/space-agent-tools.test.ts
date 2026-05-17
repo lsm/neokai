@@ -15,6 +15,7 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
@@ -171,6 +172,7 @@ function makeCtx(): TestCtx {
 	});
 	const goalService = new SpaceGoalService({
 		goalRepo: new SpaceGoalRepository(db),
+		goalEventRepo: new SpaceGoalEventRepository(db),
 		taskRepo,
 		spaceRepo,
 		scheduleService,
@@ -278,6 +280,7 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 		expect(names).toContain('update_goal');
 		expect(names).toContain('trigger_goal_task');
 		expect(names).toContain('list_goal_tasks');
+		expect(names).toContain('list_goal_events');
 	});
 });
 
@@ -348,6 +351,24 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
 		);
 		expect(tasks.total).toBe(1);
 		expect(tasks.tasks[0].id).toBe(triggered.task.id);
+
+		const events = JSON.parse(
+			(await handlers.list_goal_events({ goal_id: created.goal.id })).content[0].text
+		);
+		expect(events.success).toBe(true);
+		expect(events.total).toBeGreaterThanOrEqual(5);
+		expect(events.events.map((event: { eventType: string }) => event.eventType)).toContain(
+			'created'
+		);
+		expect(events.events.map((event: { eventType: string }) => event.eventType)).toContain(
+			'updated'
+		);
+		expect(events.events.map((event: { eventType: string }) => event.eventType)).toContain(
+			'status_changed'
+		);
+		expect(events.events.map((event: { eventType: string }) => event.eventType)).toContain(
+			'task_triggered'
+		);
 	});
 
 	test('rejects cross-space goal access', async () => {
@@ -361,10 +382,16 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
 			.prepare(`UPDATE space_goals SET space_id = ? WHERE id = ?`)
 			.run(otherSpaceId, otherGoal.id);
 
-		const out = await makeHandlers(ctx).get_goal({ goal_id: otherGoal.id });
+		const handlers = makeHandlers(ctx);
+		const out = await handlers.get_goal({ goal_id: otherGoal.id });
 		const parsed = JSON.parse(out.content[0].text);
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('Goal not found');
+
+		const eventsOut = await handlers.list_goal_events({ goal_id: otherGoal.id });
+		const events = JSON.parse(eventsOut.content[0].text);
+		expect(events.success).toBe(false);
+		expect(events.error).toContain('Goal not found');
 	});
 });
 

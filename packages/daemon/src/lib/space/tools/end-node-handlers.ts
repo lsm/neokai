@@ -159,12 +159,16 @@ export function createMarkCompleteHandler(
 			if (!goal || goal.spaceId !== task.spaceId) {
 				return jsonResult({ success: false, error: `Goal not found: ${task.goalId}` });
 			}
-			goalService.updateGoal(goal.id, {
-				summary: args.goal_update.summary,
-				progress: args.goal_update.progress,
-				metrics: args.goal_update.metrics,
-				nextSteps: args.goal_update.nextSteps,
-			});
+			goalService.updateGoal(
+				goal.id,
+				{
+					summary: args.goal_update.summary,
+					progress: args.goal_update.progress,
+					metrics: args.goal_update.metrics,
+					nextSteps: args.goal_update.nextSteps,
+				},
+				{ source: 'workflow_node_agent', sourceTaskId: taskId }
+			);
 		}
 
 		try {

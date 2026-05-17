@@ -281,6 +281,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		return goal;
 	}
 
+	const goalToolContext = {
+		source: 'space_agent_tool' as const,
+		sourceSessionId: mySessionId ?? null,
+	};
+
 	function emitTaskUpdated(task: SpaceTask): void {
 		if (!internalEventBus) return;
 		void internalEventBus
@@ -1482,23 +1487,26 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			trigger_immediately?: boolean;
 		}): Promise<ToolResult> {
 			try {
-				const goal = requireGoalService().createGoal({
-					spaceId,
-					title: args.title,
-					description: args.description,
-					type: args.type,
-					priority: args.priority,
-					labels: args.labels,
-					metrics: args.metrics,
-					summary: args.summary,
-					progress: args.progress,
-					nextSteps: args.next_steps,
-					preferredWorkflowId: args.preferred_workflow_id,
-					autoTriggerNext: args.auto_trigger_next,
-					checkInCronExpression: args.check_in_cron_expression,
-					checkInTimezone: args.check_in_timezone,
-					triggerImmediately: args.trigger_immediately,
-				});
+				const goal = requireGoalService().createGoal(
+					{
+						spaceId,
+						title: args.title,
+						description: args.description,
+						type: args.type,
+						priority: args.priority,
+						labels: args.labels,
+						metrics: args.metrics,
+						summary: args.summary,
+						progress: args.progress,
+						nextSteps: args.next_steps,
+						preferredWorkflowId: args.preferred_workflow_id,
+						autoTriggerNext: args.auto_trigger_next,
+						checkInCronExpression: args.check_in_cron_expression,
+						checkInTimezone: args.check_in_timezone,
+						triggerImmediately: args.trigger_immediately,
+					},
+					goalToolContext
+				);
 				logAudit('create_goal', {
 					title: args.title,
 					type: args.type,
@@ -1520,7 +1528,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			try {
 				requireGoalInSpace(args.goal_id);
 				const { goal_id: goalId, ...updates } = args;
-				const goal = requireGoalService().updateGoal(goalId, normalizeGoalUpdateArgs(updates));
+				const goal = requireGoalService().updateGoal(
+					goalId,
+					normalizeGoalUpdateArgs(updates),
+					goalToolContext
+				);
 				logAudit('update_goal', { goal_id: goalId, fields: Object.keys(updates) });
 				return jsonResult({ success: true, goal });
 			} catch (err) {
@@ -1532,7 +1544,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		async pause_goal(args: { goal_id: string }): Promise<ToolResult> {
 			try {
 				requireGoalInSpace(args.goal_id);
-				const goal = requireGoalService().pauseGoal(args.goal_id);
+				const goal = requireGoalService().pauseGoal(args.goal_id, goalToolContext);
 				logAudit('pause_goal', { goal_id: args.goal_id });
 				return jsonResult({ success: true, goal });
 			} catch (err) {
@@ -1544,7 +1556,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		async resume_goal(args: { goal_id: string }): Promise<ToolResult> {
 			try {
 				requireGoalInSpace(args.goal_id);
-				const goal = requireGoalService().resumeGoal(args.goal_id);
+				const goal = requireGoalService().resumeGoal(args.goal_id, goalToolContext);
 				logAudit('resume_goal', { goal_id: args.goal_id });
 				return jsonResult({ success: true, goal });
 			} catch (err) {
@@ -1556,7 +1568,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		async trigger_goal_task(args: { goal_id: string }): Promise<ToolResult> {
 			try {
 				requireGoalInSpace(args.goal_id);
-				const result = requireGoalService().createImmediateTask(args.goal_id);
+				const result = requireGoalService().createImmediateTask(args.goal_id, goalToolContext);
 				logAudit('trigger_goal_task', { goal_id: args.goal_id }, result.task?.id);
 				return jsonResult({ success: true, ...result });
 			} catch (err) {
@@ -1576,6 +1588,24 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					.filter((task) => task.goalId === args.goal_id)
 					.filter((task) => (args.status ? task.status === args.status : true));
 				return jsonResult({ success: true, total: tasks.length, tasks });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_goal_events(args: {
+			goal_id: string;
+			limit?: number;
+			before?: number;
+		}): Promise<ToolResult> {
+			try {
+				requireGoalInSpace(args.goal_id);
+				const events = requireGoalService().listGoalEvents(args.goal_id, {
+					limit: args.limit,
+					before: args.before,
+				});
+				return jsonResult({ success: true, total: events.length, events });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: message });
@@ -2170,6 +2200,16 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 						.describe('Filter by linked task status'),
 				},
 				(args) => handlers.list_goal_tasks(args)
+			),
+			tool(
+				'list_goal_events',
+				'List append-only history events for a goal. Use this to understand why the current rolling state changed before updating it.',
+				{
+					goal_id: z.string().describe('Goal ID'),
+					limit: z.number().int().min(1).max(100).optional().describe('Max events to return'),
+					before: z.number().int().optional().describe('Return events before this timestamp'),
+				},
+				(args) => handlers.list_goal_events(args)
 			)
 		);
 	}

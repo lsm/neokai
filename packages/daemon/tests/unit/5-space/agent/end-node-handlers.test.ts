@@ -14,6 +14,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
@@ -107,6 +108,7 @@ interface TestCtx {
 	spaceId: string;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
+	goalEventRepo: SpaceGoalEventRepository;
 	goalService: SpaceGoalService;
 }
 
@@ -117,6 +119,7 @@ function makeCtx(autonomyLevel = 1): TestCtx {
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceRepo = new SpaceRepository(db);
 	const scheduleRepo = new TaskScheduleRepository(db);
+	const goalEventRepo = new SpaceGoalEventRepository(db);
 	const scheduleService = new ScheduleService({
 		db,
 		scheduleRepo,
@@ -131,8 +134,10 @@ function makeCtx(autonomyLevel = 1): TestCtx {
 		// inside `submitTaskForReview` — exercises the same code path that the
 		// production wiring takes from `task-agent-manager.ts`.
 		taskManager: new SpaceTaskManager(db, spaceId),
+		goalEventRepo,
 		goalService: new SpaceGoalService({
 			goalRepo: new SpaceGoalRepository(db),
+			goalEventRepo,
 			taskRepo,
 			spaceRepo,
 			scheduleService,
@@ -211,6 +216,13 @@ describe('createMarkCompleteHandler', () => {
 		expect(updatedGoal?.progress).toBe(55);
 		expect(updatedGoal?.metrics).toEqual({ activated: 20 });
 		expect(updatedGoal?.nextSteps).toEqual(['Measure adoption']);
+
+		const updateEvent = ctx.goalEventRepo
+			.listByGoal(goal.id)
+			.find((event) => event.eventType === 'updated');
+		expect(updateEvent?.source).toBe('workflow_node_agent');
+		expect(updateEvent?.sourceTaskId).toBe(task.id);
+		expect(updateEvent?.diff?.progress).toEqual({ previous: 0, current: 55 });
 	});
 
 	test('rejects goal_update on a task without a linked goal', async () => {
