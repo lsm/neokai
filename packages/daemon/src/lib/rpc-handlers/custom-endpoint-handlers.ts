@@ -99,9 +99,14 @@ async function persistAndSync(
  * and whichever wrote last would overwrite the other, dropping changes.
  * A single in-process promise chain is sufficient since all RPC traffic
  * goes through one MessageHub on the daemon side.
+ *
+ * Exported so the generic `settings.global.update` / `settings.global.save`
+ * RPCs can route their `customEndpoints` writes through the same queue.
+ * Otherwise a concurrent settings-RPC write would race with an in-flight
+ * `customEndpoints.add` and last-writer-wins would drop one mutation.
  */
 let mutationQueue: Promise<unknown> = Promise.resolve();
-function withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+export function withCustomEndpointsLock<T>(fn: () => Promise<T>): Promise<T> {
 	const run = mutationQueue.then(fn, fn);
 	// Swallow errors on the queue tail so one failure doesn't poison the chain.
 	mutationQueue = run.catch(() => {});
@@ -120,7 +125,7 @@ export function registerCustomEndpointHandlers(
 
 	/** Add a new custom endpoint. Rejects when the id already exists. */
 	messageHub.onRequest('customEndpoints.add', async (data: { endpoint: CustomEndpointConfig }) => {
-		return withMutationLock(async () => {
+		return withCustomEndpointsLock(async () => {
 			validateCustomEndpoint(data.endpoint);
 			const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
 			if (current.some((e) => e.id === data.endpoint.id)) {
@@ -136,7 +141,7 @@ export function registerCustomEndpointHandlers(
 	messageHub.onRequest(
 		'customEndpoints.update',
 		async (data: { endpoint: CustomEndpointConfig }) => {
-			return withMutationLock(async () => {
+			return withCustomEndpointsLock(async () => {
 				validateCustomEndpoint(data.endpoint);
 				const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
 				const index = current.findIndex((e) => e.id === data.endpoint.id);
@@ -150,7 +155,7 @@ export function registerCustomEndpointHandlers(
 
 	/** Remove a custom endpoint by id. */
 	messageHub.onRequest('customEndpoints.remove', async (data: { id: string }) => {
-		return withMutationLock(async () => {
+		return withCustomEndpointsLock(async () => {
 			const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
 			const next = current.filter((e) => e.id !== data.id);
 			if (next.length === current.length) {

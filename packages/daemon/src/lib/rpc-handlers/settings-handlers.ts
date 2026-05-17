@@ -62,34 +62,43 @@ export function registerSettingsHandlers(
 	messageHub.onRequest(
 		'settings.global.update',
 		async (data: { updates: Partial<GlobalSettings> }) => {
-			// Validate customEndpoints BEFORE persisting so malformed/duplicate
-			// entries cannot reach disk via the generic settings RPC and leave
-			// stored settings out of sync with the active provider registry.
-			if (data.updates.customEndpoints !== undefined) {
-				const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
-				validateCustomEndpoints(data.updates.customEndpoints);
-			}
-			const updated = settingsManager.updateGlobalSettings(data.updates);
-			if (data.updates.providerModelAllowlists !== undefined) {
-				await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
-			}
-			if (data.updates.customEndpoints !== undefined) {
-				const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-				await syncCustomEndpointProviders(data.updates.customEndpoints);
-				// Stale model cache would still list removed custom models and
-				// miss newly added ones until the TTL expires.
-				const { clearModelsCache } = await import('../model-service');
-				clearModelsCache();
-			}
-			// Emit event for StateManager to broadcast (global event)
-			internalEventBus.publishAsync('settings.updated', {
-				namespaceId: 'global',
-				settings: updated,
-			});
+			const touchesCustomEndpoints = data.updates.customEndpoints !== undefined;
+			// Route customEndpoints-touching writes through the same in-process
+			// queue that customEndpoints.add/update/remove use, otherwise a
+			// concurrent settings RPC could interleave with a CRUD call and
+			// last-writer-wins would drop one mutation.
+			const run = async () => {
+				if (touchesCustomEndpoints) {
+					const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+					validateCustomEndpoints(data.updates.customEndpoints);
+				}
+				const updated = settingsManager.updateGlobalSettings(data.updates);
+				if (data.updates.providerModelAllowlists !== undefined) {
+					await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
+				}
+				if (touchesCustomEndpoints) {
+					const { syncCustomEndpointProviders } = await import('../providers/factory.js');
+					await syncCustomEndpointProviders(data.updates.customEndpoints);
+					// Stale model cache would still list removed custom models and
+					// miss newly added ones until the TTL expires.
+					const { clearModelsCache } = await import('../model-service');
+					clearModelsCache();
+				}
+				// Emit event for StateManager to broadcast (global event)
+				internalEventBus.publishAsync('settings.updated', {
+					namespaceId: 'global',
+					settings: updated,
+				});
 
-			// Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
+				// Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
 
-			return { success: true, settings: updated };
+				return { success: true, settings: updated };
+			};
+			if (touchesCustomEndpoints) {
+				const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
+				return withCustomEndpointsLock(run);
+			}
+			return run();
 		}
 	);
 
@@ -106,26 +115,35 @@ export function registerSettingsHandlers(
 			data.settings,
 			'customEndpoints'
 		);
+		const run = async () => {
+			if (customEndpointsProvided) {
+				const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+				validateCustomEndpoints(data.settings.customEndpoints);
+			}
+			settingsManager.saveGlobalSettings(data.settings);
+			if (data.settings.providerModelAllowlists !== undefined) {
+				await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
+			}
+			if (customEndpointsProvided) {
+				const { syncCustomEndpointProviders } = await import('../providers/factory.js');
+				await syncCustomEndpointProviders(data.settings.customEndpoints);
+				const { clearModelsCache } = await import('../model-service');
+				clearModelsCache();
+			}
+			// Emit event for StateManager to broadcast (global event)
+			internalEventBus.publishAsync('settings.updated', {
+				namespaceId: 'global',
+				settings: data.settings,
+			});
+			return { success: true };
+		};
+		// Same rationale as settings.global.update — keep all customEndpoints
+		// writes ordered with the dedicated CRUD RPCs.
 		if (customEndpointsProvided) {
-			const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
-			validateCustomEndpoints(data.settings.customEndpoints);
+			const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
+			return withCustomEndpointsLock(run);
 		}
-		settingsManager.saveGlobalSettings(data.settings);
-		if (data.settings.providerModelAllowlists !== undefined) {
-			await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
-		}
-		if (customEndpointsProvided) {
-			const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-			await syncCustomEndpointProviders(data.settings.customEndpoints);
-			const { clearModelsCache } = await import('../model-service');
-			clearModelsCache();
-		}
-		// Emit event for StateManager to broadcast (global event)
-		internalEventBus.publishAsync('settings.updated', {
-			namespaceId: 'global',
-			settings: data.settings,
-		});
-		return { success: true };
+		return run();
 	});
 
 	/**
