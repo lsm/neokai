@@ -132,10 +132,7 @@ export default function SessionListItem({
 					{session.title || 'New Session'}
 				</h3>
 				{session.worktree && (
-					<span
-						class="text-green-400 flex-shrink-0"
-						title={`Worktree: ${session.worktree.branch}`}
-					>
+					<span class="text-green-400 flex-shrink-0" title={`Worktree: ${session.worktree.branch}`}>
 						<WorktreeBranchIcon />
 					</span>
 				)}
