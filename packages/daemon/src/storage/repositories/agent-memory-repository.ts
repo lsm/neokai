@@ -102,39 +102,10 @@ export class AgentMemoryRepository {
 	}
 
 	search(spaceId: string, query: string, limit = 10): AgentMemorySearchResult[] {
-		const searchTerms = parseSearchTerms(query);
-		const safeLimit = normalizeLimit(limit);
-		if (searchTerms.length === 0) return [];
-
-		const rows = this.db
-			.prepare(
-				`SELECT *, 1000.0 AS rank FROM space_agent_memory
-				 WHERE space_id = ?
-				 ORDER BY updated_at DESC, key ASC`
-			)
-			.all(spaceId) as AgentMemorySearchRow[];
-		const matchedRows = rows
-			.filter((row) => {
-				const haystack = `${row.content} ${row.tags}`.toLowerCase();
-				return searchTerms.some((term) => haystack.includes(term));
-			})
-			.slice(0, safeLimit);
-
-		if (matchedRows.length > 0) {
-			const now = Date.now();
-			const bump = this.db.prepare(
-				`UPDATE space_agent_memory
-				 SET access_count = access_count + 1, last_accessed_at = ?
-				 WHERE space_id = ? AND key = ?`
-			);
-			const updateAccess = this.db.transaction((items: AgentMemorySearchRow[]) => {
-				for (const row of items) bump.run(now, row.space_id, row.key);
-			});
-			updateAccess(matchedRows);
-			this.reactiveDb?.notifyChange('space_agent_memory');
-		}
-
-		return matchedRows.map((row) => ({ memory: rowToEntry(row), rank: row.rank }));
+		return this.searchWithOptions(spaceId, query, { limit }).map((row) => ({
+			memory: rowToEntry(row),
+			rank: row.rank,
+		}));
 	}
 
 	list(
@@ -146,7 +117,9 @@ export class AgentMemoryRepository {
 		const query = options?.query?.trim();
 
 		if (query) {
-			return this.search(spaceId, query, limit).map((result) => result.memory);
+			return this.searchWithOptions(spaceId, query, { limit, offset, maxLimit: 100 }).map(
+				rowToEntry
+			);
 		}
 
 		const rows = this.db
@@ -169,6 +142,44 @@ export class AgentMemoryRepository {
 			)
 			.run(Date.now(), spaceId, normalizeKey(key));
 		this.reactiveDb?.notifyChange('space_agent_memory');
+	}
+
+	private searchWithOptions(
+		spaceId: string,
+		query: string,
+		options?: { limit?: number; offset?: number; maxLimit?: number }
+	): AgentMemorySearchRow[] {
+		const ftsQuery = buildFtsQuery(query);
+		const limit = normalizeLimit(options?.limit ?? 10, options?.maxLimit ?? 20);
+		const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
+		if (!ftsQuery) return [];
+
+		const rows = this.db
+			.prepare(
+				`SELECT m.*, bm25(space_agent_memory_fts) AS rank
+				 FROM space_agent_memory_fts
+				 JOIN space_agent_memory m ON m.rowid = space_agent_memory_fts.rowid
+				 WHERE space_agent_memory_fts MATCH ? AND m.space_id = ?
+				 ORDER BY rank ASC, m.updated_at DESC, m.key ASC
+				 LIMIT ? OFFSET ?`
+			)
+			.all(ftsQuery, spaceId, limit, offset) as AgentMemorySearchRow[];
+
+		if (rows.length > 0) {
+			const now = Date.now();
+			const bump = this.db.prepare(
+				`UPDATE space_agent_memory
+				 SET access_count = access_count + 1, last_accessed_at = ?
+				 WHERE space_id = ? AND key = ?`
+			);
+			const updateAccess = this.db.transaction((items: AgentMemorySearchRow[]) => {
+				for (const row of items) bump.run(now, row.space_id, row.key);
+			});
+			updateAccess(rows);
+			this.reactiveDb?.notifyChange('space_agent_memory');
+		}
+
+		return rows;
 	}
 }
 
@@ -204,10 +215,19 @@ function normalizeTags(tags: string[]): string[] {
 }
 
 function serializeTags(tags: string[]): string {
-	return tags.join(' ');
+	return JSON.stringify(tags);
 }
 
 function parseTags(tags: string): string[] {
+	if (!tags) return [];
+	try {
+		const parsed = JSON.parse(tags) as unknown;
+		if (Array.isArray(parsed)) {
+			return parsed.filter((tag): tag is string => typeof tag === 'string');
+		}
+	} catch {
+		// Pre-JSON rows used whitespace-delimited tags.
+	}
 	return tags.split(/\s+/).filter(Boolean);
 }
 
@@ -216,11 +236,14 @@ function normalizeLimit(limit: number, max = 20): number {
 	return Math.min(Math.max(1, Math.trunc(limit)), max);
 }
 
-function parseSearchTerms(query: string): string[] {
-	return query
+function buildFtsQuery(query: string): string | null {
+	const terms = query
 		.trim()
 		.toLowerCase()
 		.split(/\s+/)
 		.map((term) => term.replace(/[^\p{L}\p{N}_-]/gu, ''))
-		.filter(Boolean);
+		.map((term) => term.replace(/-/g, ''))
+		.filter((term) => term.length >= 3);
+	if (terms.length === 0) return null;
+	return terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(' ');
 }

@@ -9021,6 +9021,8 @@ export function runMigration132(db: BunDatabase): void {
 }
 
 function createAgentMemoryTables(db: BunDatabase): void {
+	const shouldRebuildFts = !tableExists(db, 'space_agent_memory_fts');
+
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_memory (
 			rowid INTEGER PRIMARY KEY,
@@ -9081,7 +9083,9 @@ function createAgentMemoryTables(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
 	);
-	db.exec(`INSERT INTO space_agent_memory_fts(space_agent_memory_fts) VALUES ('rebuild')`);
+	if (shouldRebuildFts) {
+		db.exec(`INSERT INTO space_agent_memory_fts(space_agent_memory_fts) VALUES ('rebuild')`);
+	}
 }
 
 function migrateNeoMessageOrigins(db: BunDatabase): void {

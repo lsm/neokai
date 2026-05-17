@@ -75,6 +75,53 @@ describe('AgentMemoryRepository', () => {
 		expect(results.map((result) => result.memory.content)).toEqual(['Use tabs for formatting.']);
 	});
 
+	test('preserves tags with whitespace', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'release.process',
+			content: 'Release process notes.',
+			tags: ['release notes', 'phase 1'],
+		});
+
+		expect(repo.read('space-a', 'release.process')?.tags).toEqual(['release notes', 'phase 1']);
+	});
+
+	test('filtered list honors limit and offset above search limit', () => {
+		for (let index = 0; index < 25; index++) {
+			repo.write({
+				spaceId: 'space-a',
+				key: `memory.${index.toString().padStart(2, '0')}`,
+				content: `Shared pagination topic ${index}`,
+			});
+		}
+
+		const firstPage = repo.list('space-a', { query: 'pagination topic', limit: 25 });
+		const secondPage = repo.list('space-a', { query: 'pagination topic', limit: 5, offset: 5 });
+
+		expect(firstPage).toHaveLength(25);
+		expect(secondPage).toHaveLength(5);
+		expect(secondPage.map((memory) => memory.key)).toEqual(
+			firstPage.slice(5, 10).map((memory) => memory.key)
+		);
+	});
+
+	test('search orders by FTS rank before recency', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'focused',
+			content: 'Preact preact preact signals signals signals.',
+		});
+		repo.write({
+			spaceId: 'space-a',
+			key: 'recent',
+			content: 'Preact signals mixed with unrelated routing and styling notes.',
+		});
+
+		const results = repo.search('space-a', 'preact signals', 1);
+		expect(results.map((result) => result.memory.key)).toEqual(['focused']);
+		expect(results[0].rank).not.toBe(1000);
+	});
+
 	test('delete removes memory from FTS index', () => {
 		repo.write({ spaceId: 'space-a', key: 'obsolete', content: 'Old Flowbite convention.' });
 		expect(repo.search('space-a', 'Flowbite', 10)).toHaveLength(1);
