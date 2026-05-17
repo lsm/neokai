@@ -497,6 +497,76 @@ describe('QueryOptionsBuilder', () => {
 
 			expect(result.thinking).toBeUndefined();
 		});
+
+		it('honours per-model thinking mode override even when provider aggregate advertises thinking', async () => {
+			// Custom-endpoint scenario: the provider exposes one thinking model
+			// and one non-thinking model. Provider aggregate says `on`, but the
+			// selected model is the non-thinking one — the builder must skip
+			// emitting any thinking payload. This is critical for the
+			// anthropic-messages pass-through bridge because it forwards body
+			// bytes verbatim and a `thinking` field would 4xx upstream.
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'custom:per-model-thinking',
+				displayName: 'Per-model thinking',
+				capabilities: {
+					streaming: true,
+					extendedThinking: true,
+					thinkingModes: 'on',
+					maxContextWindow: 32000,
+					functionCalling: true,
+					vision: false,
+				},
+				isAvailable: () => true,
+				getModels: async () => [],
+				ownsModel: () => true,
+				buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+				getModelThinkingMode: (modelId: string) => (modelId === 'reasoner' ? 'on' : 'off'),
+			} as Provider);
+			try {
+				mockSession.config.provider = 'custom:per-model-thinking';
+				mockSession.config.model = 'plain';
+				mockSession.config.thinkingLevel = 'think8k';
+				const result = builder.addSessionStateOptions(
+					{} as import('@anthropic-ai/claude-agent-sdk').Options
+				);
+				expect(result.thinking).toBeUndefined();
+			} finally {
+				resetProviderRegistry();
+			}
+		});
+
+		it('emits thinking config when per-model mode is on and provider aggregate would otherwise allow it', async () => {
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'custom:per-model-thinking-2',
+				displayName: 'Per-model thinking 2',
+				capabilities: {
+					streaming: true,
+					extendedThinking: true,
+					thinkingModes: 'on',
+					maxContextWindow: 32000,
+					functionCalling: true,
+					vision: false,
+				},
+				isAvailable: () => true,
+				getModels: async () => [],
+				ownsModel: () => true,
+				buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+				getModelThinkingMode: (modelId: string) => (modelId === 'reasoner' ? 'on' : 'off'),
+			} as Provider);
+			try {
+				mockSession.config.provider = 'custom:per-model-thinking-2';
+				mockSession.config.model = 'reasoner';
+				mockSession.config.thinkingLevel = 'think8k';
+				const result = builder.addSessionStateOptions(
+					{} as import('@anthropic-ai/claude-agent-sdk').Options
+				);
+				expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+			} finally {
+				resetProviderRegistry();
+			}
+		});
 	});
 
 	describe('system prompt configuration', () => {

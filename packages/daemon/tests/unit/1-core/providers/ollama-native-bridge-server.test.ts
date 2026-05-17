@@ -189,4 +189,57 @@ describe('OllamaNativeBridge — custom-endpoint surface', () => {
 		const response = await fetch(`http://127.0.0.1:${server.port}/health`);
 		expect(response.status).toBe(200);
 	});
+
+	describe('baseUrl normalization', () => {
+		it('strips a trailing /api/chat when the user pasted the full endpoint', async () => {
+			let capturedUrl = '';
+			const fetchMock = mock(async (url: string) => {
+				capturedUrl = url;
+				return new Response(ndjson([{ done: true, prompt_eval_count: 1, eval_count: 1 }]), {
+					status: 200,
+				});
+			});
+			const server = createOllamaNativeBridgeServer({
+				baseUrl: 'http://ollama.test/api/chat',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'llama3.2',
+					messages: [{ role: 'user', content: 'hi' }],
+					stream: true,
+				}),
+			});
+			// Must NOT be `http://ollama.test/api/chat/api/chat`.
+			expect(capturedUrl).toBe('http://ollama.test/api/chat');
+		});
+
+		it('strips /api/chat plus a trailing slash', async () => {
+			let capturedUrl = '';
+			const fetchMock = mock(async (url: string) => {
+				capturedUrl = url;
+				return new Response(ndjson([{ done: true, prompt_eval_count: 1, eval_count: 1 }]), {
+					status: 200,
+				});
+			});
+			const server = createOllamaNativeBridgeServer({
+				baseUrl: 'http://ollama.test/api/chat/',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'llama3.2',
+					messages: [{ role: 'user', content: 'hi' }],
+					stream: true,
+				}),
+			});
+			expect(capturedUrl).toBe('http://ollama.test/api/chat');
+		});
+	});
 });

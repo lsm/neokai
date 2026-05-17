@@ -623,8 +623,20 @@ export class QueryOptionsBuilder {
 			PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
 		try {
 			if (providerId) {
-				const liveMode = getProviderRegistry().get(providerId)?.capabilities?.thinkingModes;
+				const provider = getProviderRegistry().get(providerId);
+				const liveMode = provider?.capabilities?.thinkingModes;
 				if (liveMode) thinkingModes = liveMode;
+				// Per-model override beats the provider aggregate. Required for
+				// providers (e.g. custom endpoints) that expose models with
+				// heterogeneous thinking support — without this, a non-thinking
+				// model on a provider that advertises `thinking: on` because
+				// some sibling model supports it would emit `thinking` payloads
+				// that the upstream rejects.
+				const selectedModel = this.ctx.session.config.model;
+				const perModelMode = selectedModel
+					? provider?.getModelThinkingMode?.(selectedModel)
+					: undefined;
+				if (perModelMode) thinkingModes = perModelMode;
 			}
 		} catch {
 			// Registry not initialised (unit tests with reset registry) — keep static fallback.

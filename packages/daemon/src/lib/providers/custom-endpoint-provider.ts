@@ -231,6 +231,20 @@ export class CustomEndpointProvider implements Provider {
 		return 'default';
 	}
 
+	/**
+	 * Per-model thinking mode. Returns `'off'` for models that declare
+	 * `thinking: false` so the query-options builder skips the thinking
+	 * payload — critical for `anthropic-messages` endpoints because that
+	 * bridge forwards request bytes verbatim and a `thinking` field sent to
+	 * a non-thinking upstream model would 4xx.
+	 */
+	getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
+		const model = this.config.models.find((m) => m.id === modelId);
+		if (!model) return undefined;
+		const caps = resolveModelCapabilities(model, this.type);
+		return caps.thinking ? 'on' : 'off';
+	}
+
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
 		return {
 			isAuthenticated: true,
