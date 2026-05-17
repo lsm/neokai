@@ -100,9 +100,10 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		expect(nodeIndexes).toContain('idx_space_workflow_nodes_workflow_id');
 
 		const taskIndexes = getIndexes(db, 'space_tasks');
-		// Post-M71: workflow_node_id and goal_id columns were removed, so no indexes on them
+		// Post-M71: workflow_node_id column was removed, so no index on it
 		expect(taskIndexes).not.toContain('idx_space_tasks_workflow_node_id');
-		expect(taskIndexes).not.toContain('idx_space_tasks_goal_id');
+		// M131 re-adds goal_id to space_tasks for space-native goals
+		expect(taskIndexes).toContain('idx_space_tasks_goal_id');
 		// These indexes do exist post-M71
 		expect(taskIndexes).toContain('idx_space_tasks_space_id');
 		expect(taskIndexes).toContain('idx_space_tasks_workflow_run_id');

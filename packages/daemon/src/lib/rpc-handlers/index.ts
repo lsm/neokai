@@ -394,7 +394,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		externalEventStore: deps.externalEventStore,
 		externalEventService: deps.externalEventService,
 		replyRoutingRegistry,
-		memoryRepo: deps.db.agentMemory,
+			memoryRepo: deps.db.agentMemory,
+			goalService: spaceGoalService,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so

@@ -19,7 +19,12 @@ import {
 	type UpdateSpaceTaskParams,
 } from '@neokai/shared';
 
-const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>(['done', 'cancelled', 'archived']);
+const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>([
+	'done',
+	'blocked',
+	'cancelled',
+	'archived',
+]);
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';

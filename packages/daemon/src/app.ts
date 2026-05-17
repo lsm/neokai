@@ -502,7 +502,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		skillsManager,
 		mcpImportService,
 	});
-	const { cleanup: rpcHandlerCleanup, spaceRuntimeService, spaceWorktreeManager } = rpcHandlers;
+	const {
+		cleanup: rpcHandlerCleanup,
+		spaceRuntimeService,
+		spaceWorktreeManager,
+		spaceGoalService,
+	} = rpcHandlers;
 	taskAgentManager = rpcHandlers.taskAgentManager;
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
@@ -657,6 +662,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			spaceRepo: taskScheduleSpaceRepo,
 			taskRepo: taskScheduleTaskRepo,
 			eventHub: internalEventBus,
+			goalService: spaceGoalService,
 		});
 	});
 

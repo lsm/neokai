@@ -133,6 +133,8 @@ export interface PostApprovalRouterDeps {
 	taskRepo: Pick<SpaceTaskRepository, 'updateTask' | 'getTask'>;
 	spawner: PostApprovalSubSessionSpawner;
 	livenessProbe?: SessionLivenessProbe;
+	/** Optional goal service for processing terminal goal-task side effects. */
+	goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +265,14 @@ export class PostApprovalRouter {
 				postApprovalBlockedReason: null,
 			};
 			this.deps.taskRepo.updateTask(task.id, updates);
+			// Best-effort goal terminal handling — must not block approval routing.
+			try {
+				this.deps.goalService?.handleTaskTerminal(task.id);
+			} catch (err) {
+				log.warn(
+					`Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
 			log.info(
 				`post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} targetAgent=none mode=none autonomyLevel=${context.autonomyLevel ?? 'unknown'}`
 			);
