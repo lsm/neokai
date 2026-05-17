@@ -852,29 +852,58 @@ export default function ChatContainer({
 		}
 
 		let cancelled = false;
-		setLoadingOlder(true);
-		sessionStore
-			.loadOlderMessages(searchLoadTarget.before, 100, searchLoadTarget.sessionId)
-			.then(({ messages: targetWindow, hasMore }) => {
+		const resetSearchTarget = () => {
+			setSearchTargetMessageId(null);
+			searchLoadTargetRef.current = null;
+			setSearchLoadTarget(null);
+		};
+		const hasTargetMessage = (messageList: ChatMessage[]) =>
+			messageList.some(
+				(message) =>
+					message.uuid === searchTargetMessageId ||
+					(message as ChatMessage & { id?: string }).id === searchTargetMessageId
+			);
+		const applyTargetWindow = async () => {
+			setLoadingOlder(true);
+			let before = searchLoadTarget.before;
+			if (!before) return;
+			while (!cancelled) {
+				const { messages: targetWindow, hasMore } = await sessionStore.loadOlderMessages(
+					before,
+					100,
+					searchLoadTarget.sessionId
+				);
 				if (cancelled) return;
+				if (sessionStore.activeSessionId.value !== searchLoadTarget.sessionId) return;
 				if (targetWindow.length === 0) {
 					setHasMoreMessages(false);
-					setSearchTargetMessageId(null);
-					searchLoadTargetRef.current = null;
-					setSearchLoadTarget(null);
+					resetSearchTarget();
 					return;
 				}
 				sessionStore.prependMessages(targetWindow);
 				setHasMoreMessages(hasMore);
-				searchLoadTargetRef.current = null;
-				setSearchLoadTarget(null);
-			})
-			.catch(() => {
-				if (!cancelled) {
-					toast.error('Failed to load search result context');
-					setSearchTargetMessageId(null);
+				if (hasTargetMessage(targetWindow)) {
 					searchLoadTargetRef.current = null;
 					setSearchLoadTarget(null);
+					return;
+				}
+				if (!hasMore) {
+					resetSearchTarget();
+					return;
+				}
+				const oldestMessage = targetWindow[0] as ChatMessage & { timestamp?: number };
+				if (!oldestMessage.timestamp || oldestMessage.timestamp >= before) {
+					resetSearchTarget();
+					return;
+				}
+				before = oldestMessage.timestamp;
+			}
+		};
+		applyTargetWindow()
+			.catch(() => {
+				if (!cancelled && sessionStore.activeSessionId.value === searchLoadTarget.sessionId) {
+					toast.error('Failed to load search result context');
+					resetSearchTarget();
 				}
 			})
 			.finally(() => {
@@ -883,7 +912,7 @@ export default function ChatContainer({
 		return () => {
 			cancelled = true;
 		};
-	}, [searchTargetMessageId, searchLoadTarget, isInitialLoad]);
+	}, [searchTargetMessageId, searchLoadTarget, isInitialLoad, sessionId]);
 
 	useScrollToMessage({
 		containerRef: messagesContainerRef,
