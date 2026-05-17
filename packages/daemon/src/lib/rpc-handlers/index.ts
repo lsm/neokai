@@ -28,6 +28,7 @@ import { setupAuthHandlers } from './auth-handlers';
 import { setupCommandHandlers } from './command-handlers';
 import { registerMcpHandlers } from './mcp-handlers';
 import { registerSettingsHandlers } from './settings-handlers';
+import { registerCustomEndpointHandlers } from './custom-endpoint-handlers';
 import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
@@ -181,6 +182,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.db,
 		deps.mcpImportService
 	);
+	registerCustomEndpointHandlers(deps.messageHub, deps.settingsManager, deps.internalEventBus);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
 	// Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
 	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);

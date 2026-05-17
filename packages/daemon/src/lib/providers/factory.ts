@@ -15,9 +15,18 @@ import { OpenRouterProvider } from './openrouter-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
+import {
+	CustomEndpointProvider,
+	customProviderIdFor,
+	isCustomEndpointProviderId,
+} from './custom-endpoint-provider.js';
+import type { CustomEndpointConfig } from '@neokai/shared';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
+import { Logger } from '../logger.js';
+
+const logger = new Logger('providers:factory');
 
 /**
  * Initialization state
@@ -86,6 +95,101 @@ export function initializeProviders(): ProviderRegistry {
 }
 
 /**
+ * Synchronise registered custom-endpoint providers with the given config list.
+ *
+ * Re-entrant: safe to call after `initializeProviders()` whenever the user
+ * adds/removes/updates a custom endpoint via the RPC handlers. Existing
+ * `CustomEndpointProvider` instances whose config is no longer present are
+ * shut down and unregistered.
+ *
+ * Providers whose **effective config is unchanged** are left in place. Only
+ * removed or modified endpoints trigger a tear-down. This matters because
+ * `CustomEndpointProvider.shutdown()` stops embedded bridge servers with
+ * forced-close semantics, which would otherwise drop in-flight streams for
+ * unrelated endpoints whenever any one endpoint is edited.
+ */
+export async function syncCustomEndpointProviders(
+	configs: CustomEndpointConfig[] | undefined
+): Promise<void> {
+	const registry = initializeProviders();
+	const wanted = new Map<string, CustomEndpointConfig>();
+	for (const config of configs ?? []) {
+		if (!config?.id || !config.baseUrl || !config.models?.length) continue;
+		wanted.set(customProviderIdFor(config.id), config);
+	}
+
+	const toRemove: string[] = [];
+	for (const provider of registry.getAll()) {
+		if (!isCustomEndpointProviderId(provider.id)) continue;
+		if (!wanted.has(provider.id)) toRemove.push(provider.id);
+	}
+	for (const id of toRemove) {
+		const provider = registry.get(id);
+		if (provider?.shutdown) {
+			try {
+				await provider.shutdown();
+			} catch (err) {
+				logger.warn(`Failed to shut down custom endpoint provider ${id}: ${err}`);
+			}
+		}
+		registry.unregister(id);
+		lastSyncedConfigByProviderId.delete(id);
+	}
+
+	for (const [providerId, config] of wanted) {
+		const existing = registry.get(providerId);
+		const fingerprint = fingerprintCustomEndpointConfig(config);
+		if (existing && lastSyncedConfigByProviderId.get(providerId) === fingerprint) {
+			// Unchanged — leave the live provider (and its bridges) alone.
+			continue;
+		}
+		if (existing) {
+			if (existing.shutdown) {
+				try {
+					await existing.shutdown();
+				} catch (err) {
+					logger.warn(`Failed to shut down custom endpoint provider ${providerId}: ${err}`);
+				}
+			}
+			registry.unregister(providerId);
+		}
+		try {
+			registry.register(new CustomEndpointProvider(config));
+			lastSyncedConfigByProviderId.set(providerId, fingerprint);
+		} catch (err) {
+			logger.warn(`Skipping invalid custom endpoint '${config.id}': ${err}`);
+			lastSyncedConfigByProviderId.delete(providerId);
+		}
+	}
+}
+
+/**
+ * Stable, deterministic fingerprint of a custom endpoint config for change
+ * detection. Recursively sorts object keys at every depth so nested fields
+ * (e.g. `models[].capabilities`, `models[].providerModelId`, `headers.*`)
+ * are included in the fingerprint. Naively passing a sorted key list to
+ * `JSON.stringify` only whitelists top-level keys and silently drops nested
+ * ones, which would treat semantically different configs as identical.
+ */
+function fingerprintCustomEndpointConfig(config: CustomEndpointConfig): string {
+	return JSON.stringify(canonicalise(config));
+}
+
+function canonicalise(value: unknown): unknown {
+	if (value === null || typeof value !== 'object') return value;
+	if (Array.isArray(value)) return value.map(canonicalise);
+	const obj = value as Record<string, unknown>;
+	const out: Record<string, unknown> = {};
+	for (const key of Object.keys(obj).sort()) {
+		out[key] = canonicalise(obj[key]);
+	}
+	return out;
+}
+
+/** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
+const lastSyncedConfigByProviderId = new Map<string, string>();
+
+/**
  * Get the provider context manager
  *
  * Creates a context manager instance backed by the global provider registry.
@@ -107,6 +211,7 @@ export function getProviderContextManager(): ProviderContextManager {
  */
 export function resetProviderFactory(): void {
 	initialized = false;
+	lastSyncedConfigByProviderId.clear();
 }
 
 // Re-export types from shared package
