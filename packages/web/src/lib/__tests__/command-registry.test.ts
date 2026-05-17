@@ -98,11 +98,34 @@ describe('CommandRegistry', () => {
 		expect(reg.search('create')[0]?.command.id).toBe('a');
 	});
 
-	it('findByShortcut matches mod+key combos', () => {
+	it('findByShortcut matches mod+key combos via metaKey (mac)', () => {
 		const c = cmd('a', { shortcut: { display: '⌘K', key: 'k', mod: true } });
 		reg.register(c);
 		const event = { metaKey: true, ctrlKey: false, shiftKey: false, key: 'K' } as KeyboardEvent;
 		expect(reg.findByShortcut(event)).toBe(c);
+	});
+
+	it('findByShortcut matches mod+key combos via ctrlKey (non-mac)', () => {
+		const c = cmd('a', { shortcut: { display: 'Ctrl+K', key: 'k', mod: true } });
+		reg.register(c);
+		const event = { metaKey: false, ctrlKey: true, shiftKey: false, key: 'k' } as KeyboardEvent;
+		expect(reg.findByShortcut(event)).toBe(c);
+	});
+
+	it('findByShortcut returns the first matching command on shortcut collision', () => {
+		const first = cmd('a', {
+			label: 'First',
+			shortcut: { display: '⌘.', key: '.', mod: true },
+		});
+		const second = cmd('b', {
+			label: 'Second',
+			shortcut: { display: '⌘.', key: '.', mod: true },
+		});
+		reg.register(first);
+		reg.register(second);
+		const event = { metaKey: true, ctrlKey: false, shiftKey: false, key: '.' } as KeyboardEvent;
+		// Insertion order is preserved by Map.values(); first-registered wins.
+		expect(reg.findByShortcut(event)).toBe(first);
 	});
 
 	it('findByShortcut ignores wrong modifier', () => {

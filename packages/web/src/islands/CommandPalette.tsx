@@ -60,14 +60,24 @@ export function CommandPalette() {
 
 	function handleSelect(cmd: CommandDescriptor | null) {
 		if (!cmd) return;
-		try {
-			void cmd.run();
-		} finally {
-			// run() handlers are expected to close the palette themselves when
-			// they navigate; close defensively in case they don't.
-			commandPaletteOpenSignal.value = false;
-			setQuery('');
-		}
+		// Always close immediately; run the handler defensively so an async
+		// rejection in a command doesn't bubble out as an unhandled promise.
+		commandPaletteOpenSignal.value = false;
+		setQuery('');
+		void (async () => {
+			try {
+				await cmd.run();
+			} catch (err) {
+				// Surface to toast so users see the failure; swallow to keep the
+				// boundary safe even if toast itself throws.
+				try {
+					const { toast } = await import('../lib/toast.ts');
+					toast.error(err instanceof Error ? err.message : `Command "${cmd.label}" failed`);
+				} catch {
+					// ignore
+				}
+			}
+		})();
 	}
 
 	return (

@@ -65,7 +65,14 @@ export function useGlobalShortcuts(): void {
 			const cmd = commandRegistry.findByShortcut(event);
 			if (!cmd) return;
 			event.preventDefault();
-			void cmd.run();
+			void (async () => {
+				try {
+					await cmd.run();
+				} catch {
+					// Swallow: keyboard dispatch boundary; we don't want an async
+					// rejection in a command to become an unhandled rejection.
+				}
+			})();
 		};
 
 		window.addEventListener('keydown', handler);

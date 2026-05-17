@@ -11,7 +11,9 @@ import { CommandPalette } from './islands/CommandPalette.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
-import { registerDefaultCommands } from './lib/default-commands.ts';
+// Importing for side effect: registers the default command set on the
+// commandRegistry singleton so the palette has commands before first render.
+import './lib/default-commands.ts';
 import {
 	currentSessionIdSignal,
 	currentSpaceIdSignal,
@@ -59,8 +61,6 @@ export function App() {
 	useGlobalShortcuts();
 
 	useEffect(() => {
-		// Register the default command set once on mount.
-		registerDefaultCommands();
 		// STEP 1: Initialize URL-based router BEFORE any state management
 		// This ensures we read the session ID from URL on page load
 		const initialSessionId = initializeRouter();

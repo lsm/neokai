@@ -236,3 +236,9 @@ export function registerDefaultCommands(): void {
 export function _resetDefaultCommandRegistration(): void {
 	registered = false;
 }
+
+// Register at module load so the registry is populated before the palette can
+// be rendered. Importing this module is the public API for "turn on defaults";
+// the explicit `registerDefaultCommands()` call exists for tests that need to
+// re-register after a clear() and to make the side effect discoverable.
+registerDefaultCommands();

@@ -105,6 +105,21 @@ export class CommandRegistry {
 	private commands = new Map<string, CommandDescriptor>();
 
 	register(cmd: CommandDescriptor): void {
+		const sc = cmd.shortcut;
+		if (sc) {
+			for (const existing of this.commands.values()) {
+				if (existing.id === cmd.id) continue;
+				const e = existing.shortcut;
+				if (!e) continue;
+				if (e.key === sc.key && !!e.mod === !!sc.mod && !!e.shift === !!sc.shift) {
+					// eslint-disable-next-line no-console
+					console.warn(
+						`[command-registry] shortcut collision: "${cmd.id}" shares ${sc.display} with "${existing.id}"; first registered wins.`
+					);
+					break;
+				}
+			}
+		}
 		this.commands.set(cmd.id, cmd);
 	}
 
