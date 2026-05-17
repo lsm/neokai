@@ -397,6 +397,14 @@ async function streamChatToAnthropic(params: {
 	let finishReason: string | null = null;
 	type PendingToolCall = {
 		blockIndex: number;
+		/**
+		 * Upstream `tool_calls[].id` if seen, else empty string until we
+		 * synthesize one at stream end. We MUST NOT open the Anthropic
+		 * tool_use block before this is known (or finalised) — otherwise
+		 * the client sees one id but the model's follow-up `tool` message
+		 * references a different upstream id, and OpenAI-compatible
+		 * backends reject the continuation via `tool_call_id` validation.
+		 */
 		id: string;
 		name: string;
 		argumentsText: string;
@@ -471,23 +479,28 @@ async function streamChatToAnthropic(params: {
 					if (!pending) {
 						pending = {
 							blockIndex: -1,
-							id: tc.id || genToolUseId(),
+							// Don't synthesize here — wait for upstream id; if none
+							// arrives by stream end we synthesize once in the flush
+							// pass below. Opening the block with a placeholder and
+							// then overwriting `pending.id` would leak a bogus id
+							// to the client that no follow-up `tool` message can
+							// match.
+							id: tc.id ?? '',
 							name: tc.function?.name ?? '',
 							argumentsText: '',
 							opened: false,
 						};
 						pendingByIdx.set(idx, pending);
 					} else {
-						if (tc.id && !pending.id.startsWith('toolu_oai_')) {
-							// Use first non-empty id (OpenAI sends id once at start).
-						} else if (tc.id) {
-							pending.id = tc.id;
-						}
+						// First non-empty upstream id wins; subsequent chunks
+						// generally repeat it but we keep the first to be safe.
+						if (tc.id && !pending.id) pending.id = tc.id;
 						if (tc.function?.name) pending.name = tc.function.name;
 					}
 					if (tc.function?.arguments) pending.argumentsText += tc.function.arguments;
-					// Open the block as soon as we have a name (id may arrive a bit later).
-					if (pending.name && !pending.opened) {
+					// Open only when BOTH name and upstream id are known so the
+					// client sees the same id the model will reference later.
+					if (pending.name && pending.id && !pending.opened) {
 						openToolCall(pending);
 					}
 				}
@@ -498,7 +511,15 @@ async function streamChatToAnthropic(params: {
 
 		// Flush any tool calls that received a name but never closed via finish_reason.
 		for (const call of pendingByIdx.values()) {
-			if (!call.opened && call.name) openToolCall(call);
+			if (!call.opened && call.name) {
+				// No upstream id ever arrived — synthesize one so we can still
+				// emit a valid Anthropic tool_use block. Backends that strictly
+				// validate `tool_call_id` will already be unhappy with this
+				// stream, but emitting *something* is better than dropping the
+				// call entirely.
+				if (!call.id) call.id = genToolUseId();
+				openToolCall(call);
+			}
 			if (call.opened && !emittedIds.has(call.id)) finishToolCall(call);
 		}
 

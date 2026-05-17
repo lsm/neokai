@@ -62,6 +62,13 @@ export function registerSettingsHandlers(
 	messageHub.onRequest(
 		'settings.global.update',
 		async (data: { updates: Partial<GlobalSettings> }) => {
+			// Validate customEndpoints BEFORE persisting so malformed/duplicate
+			// entries cannot reach disk via the generic settings RPC and leave
+			// stored settings out of sync with the active provider registry.
+			if (data.updates.customEndpoints !== undefined) {
+				const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+				validateCustomEndpoints(data.updates.customEndpoints);
+			}
 			const updated = settingsManager.updateGlobalSettings(data.updates);
 			if (data.updates.providerModelAllowlists !== undefined) {
 				await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
@@ -69,6 +76,10 @@ export function registerSettingsHandlers(
 			if (data.updates.customEndpoints !== undefined) {
 				const { syncCustomEndpointProviders } = await import('../providers/factory.js');
 				await syncCustomEndpointProviders(data.updates.customEndpoints);
+				// Stale model cache would still list removed custom models and
+				// miss newly added ones until the TTL expires.
+				const { clearModelsCache } = await import('../model-service');
+				clearModelsCache();
 			}
 			// Emit event for StateManager to broadcast (global event)
 			internalEventBus.publishAsync('settings.updated', {
@@ -86,12 +97,18 @@ export function registerSettingsHandlers(
 	 * Save global settings (full replace)
 	 */
 	messageHub.onRequest('settings.global.save', async (data: { settings: GlobalSettings }) => {
+		if (data.settings.customEndpoints !== undefined) {
+			const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+			validateCustomEndpoints(data.settings.customEndpoints);
+		}
 		settingsManager.saveGlobalSettings(data.settings);
 		if (data.settings.providerModelAllowlists !== undefined) {
 			await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
 		}
 		const { syncCustomEndpointProviders } = await import('../providers/factory.js');
 		await syncCustomEndpointProviders(data.settings.customEndpoints);
+		const { clearModelsCache } = await import('../model-service');
+		clearModelsCache();
 		// Emit event for StateManager to broadcast (global event)
 		internalEventBus.publishAsync('settings.updated', {
 			namespaceId: 'global',

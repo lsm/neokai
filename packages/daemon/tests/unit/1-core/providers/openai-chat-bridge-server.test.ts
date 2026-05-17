@@ -538,5 +538,116 @@ describe('OpenAI Chat Completions bridge server', () => {
 			expect(typeof server.port).toBe('number');
 			expect(server.port).toBeGreaterThan(0);
 		});
+
+		it('defers tool_use block until upstream id arrives and forwards it verbatim', async () => {
+			// Upstream sends `name` in the first chunk but `id` only in the second
+			// chunk. The bridge must wait — otherwise the client would see a
+			// synthetic id and the model's follow-up `tool` message (with the
+			// real upstream id) would fail strict tool_call_id validation.
+			const fetchMock = mock(async () => {
+				const body = sseBody([
+					{
+						choices: [
+							{
+								index: 0,
+								delta: {
+									tool_calls: [
+										{
+											index: 0,
+											type: 'function',
+											function: { name: 'lookup', arguments: '' },
+										},
+									],
+								},
+							},
+						],
+					},
+					{
+						choices: [
+							{
+								index: 0,
+								delta: {
+									tool_calls: [
+										{
+											index: 0,
+											id: 'call_late',
+											function: { arguments: '{"q":"x"}' },
+										},
+									],
+								},
+							},
+						],
+					},
+					{ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+				]);
+				return new Response(body, { status: 200 });
+			});
+			const server = createOpenAIChatBridgeServer({
+				baseUrl: 'http://upstream.test',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'm',
+					messages: [{ role: 'user', content: 'lookup' }],
+					stream: true,
+					tools: [{ name: 'lookup', description: '', input_schema: { type: 'object' } }],
+				}),
+			});
+			const text = await response.text();
+			expect(text).toContain('"id":"call_late"');
+			// Must not have leaked a synthetic toolu_oai_* id.
+			expect(text).not.toMatch(/"id":"toolu_oai_/);
+		});
+
+		it('synthesises a tool_use id when upstream never sends one', async () => {
+			// Some non-strict backends omit `tool_calls[].id` entirely. The
+			// bridge must still emit a syntactically valid Anthropic tool_use
+			// block at stream end rather than dropping the call.
+			const fetchMock = mock(async () => {
+				const body = sseBody([
+					{
+						choices: [
+							{
+								index: 0,
+								delta: {
+									tool_calls: [
+										{
+											index: 0,
+											type: 'function',
+											function: { name: 'lookup', arguments: '{}' },
+										},
+									],
+								},
+							},
+						],
+					},
+					{ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+				]);
+				return new Response(body, { status: 200 });
+			});
+			const server = createOpenAIChatBridgeServer({
+				baseUrl: 'http://upstream.test',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'm',
+					messages: [{ role: 'user', content: 'lookup' }],
+					stream: true,
+					tools: [{ name: 'lookup', description: '', input_schema: { type: 'object' } }],
+				}),
+			});
+			const text = await response.text();
+			expect(text).toMatch(/"id":"toolu_oai_/);
+			expect(text).toContain('"name":"lookup"');
+			expect(text).toContain('"stop_reason":"tool_use"');
+		});
 	});
 });
