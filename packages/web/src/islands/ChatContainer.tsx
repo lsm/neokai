@@ -1411,7 +1411,11 @@ export default function ChatContainer({
 
 							{/* Messages - QuestionPrompt rendered inline with AskUserQuestion tool blocks */}
 							{messages.map((msg, idx) => (
-								<div key={msg.uuid || `msg-${idx}`} data-message-id={msg.uuid} class="scroll-mt-20">
+								<div
+									key={msg.uuid || `msg-${idx}`}
+									data-message-id={msg.uuid || (msg as ChatMessage & { id?: string }).id}
+									class="scroll-mt-20"
+								>
 									<SDKMessageRenderer
 										message={msg}
 										toolResultsMap={maps.toolResultsMap}

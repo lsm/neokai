@@ -90,4 +90,20 @@ describe('Migration 134: message search FTS', () => {
 		runMigration134(db);
 		expect(tableExists(db, 'message_search_fts')).toBe(true);
 	});
+
+	test('does not backfill again when FTS table already exists', () => {
+		runMigration134(db);
+		db.prepare(
+			`INSERT INTO message_search_fts (kind, source_id, title, body, timestamp)
+			 VALUES ('task', 'sentinel', 'sentinel', 'sentinel body', ?)`
+		).run(Date.now());
+		db.prepare(`DELETE FROM sdk_messages`).run();
+
+		runMigration134(db);
+
+		const rows = db
+			.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+			.all('sentinel') as Array<{ source_id: string }>;
+		expect(rows.map((row) => row.source_id)).toEqual(['sentinel']);
+	});
 });

@@ -9014,8 +9014,11 @@ export function runMigration131(db: BunDatabase): void {
  * migration backfills existing messages and task titles/descriptions.
  */
 export function runMigration134(db: BunDatabase): void {
+	const created = !tableExists(db, 'message_search_fts');
 	createMessageSearchFtsTable(db);
-	backfillMessageSearchFts(db);
+	if (created) {
+		backfillMessageSearchFts(db);
+	}
 }
 
 function createMessageSearchFtsTable(db: BunDatabase): void {

@@ -14,6 +14,15 @@ import type { SQLiteValue } from '../types';
 export class SessionRepository {
 	constructor(private db: BunDatabase) {}
 
+	private tableExists(tableName: string): boolean {
+		try {
+			const row = this.db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(tableName);
+			return !!row;
+		} catch {
+			return false;
+		}
+	}
+
 	/**
 	 * Create a new session
 	 */
@@ -239,9 +248,13 @@ export class SessionRepository {
 		const deleteOverrides = this.db.prepare(
 			`DELETE FROM mcp_enablement WHERE scope_type = 'session' AND scope_id = ?`
 		);
+		const deleteSearchRows = this.tableExists('message_search_fts')
+			? this.db.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND session_id = ?`)
+			: null;
 		const deleteSession = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
 		const tx = this.db.transaction((sessionId: string) => {
 			deleteOverrides.run(sessionId);
+			deleteSearchRows?.run(sessionId);
 			deleteSession.run(sessionId);
 		});
 		tx(id);

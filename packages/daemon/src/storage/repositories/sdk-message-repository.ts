@@ -1142,7 +1142,7 @@ export class SDKMessageRepository {
 			return {
 				kind: row.kind,
 				sourceId: row.source_id,
-				messageId: row.message_id ?? undefined,
+				messageId: row.message_id ?? row.source_id,
 				sessionId: row.session_id ?? undefined,
 				taskId: row.task_id ?? undefined,
 				spaceId: row.space_id ?? undefined,

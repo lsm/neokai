@@ -105,8 +105,8 @@ export function MessageSearchOverlay({
 				onClose();
 				return;
 			}
-			if (!result.sessionId) return;
-			const targetMessageId = result.messageId || result.sourceId;
+			if (!result.sessionId || !result.messageId) return;
+			const targetMessageId = result.messageId;
 			if (result.sessionId !== currentSessionId) {
 				searchHighlightMessageIdSignal.value = {
 					sessionId: result.sessionId,
