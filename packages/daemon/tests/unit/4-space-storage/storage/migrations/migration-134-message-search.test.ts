@@ -126,4 +126,20 @@ describe('Migration 134: message search FTS', () => {
 			'task:task-1',
 		]);
 	});
+
+	test('backfills when FTS table exists but has fewer rows than sources', () => {
+		seedSearchFixtures(db);
+		runMigration132(db);
+		db.prepare(`DELETE FROM message_search_fts WHERE kind = 'task'`).run();
+
+		runMigration132(db);
+
+		const rows = db
+			.prepare(`SELECT kind, source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+			.all('needle') as Array<{ kind: string; source_id: string }>;
+		expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
+			'message:msg-1',
+			'task:task-1',
+		]);
+	});
 });

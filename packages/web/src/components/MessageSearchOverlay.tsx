@@ -71,6 +71,9 @@ export function MessageSearchOverlay({
 		const timeout = setTimeout(async () => {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
+				if (requestId === requestIdRef.current) {
+					setLoading(false);
+				}
 				toast.error('Connection lost.');
 				return;
 			}

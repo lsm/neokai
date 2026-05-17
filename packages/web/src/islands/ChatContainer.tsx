@@ -288,6 +288,7 @@ export default function ChatContainer({
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
 	const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
 	const searchLoadTargetRef = useRef<SearchMessageLoadTarget | null>(null);
+	const [searchLoadTarget, setSearchLoadTarget] = useState<SearchMessageLoadTarget | null>(null);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -639,7 +640,9 @@ export default function ChatContainer({
 
 	const selectSearchMessage = useCallback(
 		(messageId: string, loadTarget?: SearchMessageLoadTarget) => {
-			searchLoadTargetRef.current = loadTarget ?? null;
+			const nextLoadTarget = loadTarget ?? null;
+			searchLoadTargetRef.current = nextLoadTarget;
+			setSearchLoadTarget(nextLoadTarget);
 			setSearchTargetMessageId(messageId);
 		},
 		[]
@@ -839,31 +842,39 @@ export default function ChatContainer({
 		);
 		if (isLoaded) return;
 
-		const loadTarget = searchLoadTargetRef.current;
-		if (!loadTarget?.before) {
-			const timeout = setTimeout(() => setSearchTargetMessageId(null), 750);
+		if (!searchLoadTarget?.before) {
+			const timeout = setTimeout(() => {
+				setSearchTargetMessageId(null);
+				searchLoadTargetRef.current = null;
+				setSearchLoadTarget(null);
+			}, 750);
 			return () => clearTimeout(timeout);
 		}
 
 		let cancelled = false;
 		setLoadingOlder(true);
 		sessionStore
-			.loadOlderMessages(loadTarget.before, 100, loadTarget.sessionId)
+			.loadOlderMessages(searchLoadTarget.before, 100, searchLoadTarget.sessionId)
 			.then(({ messages: targetWindow, hasMore }) => {
 				if (cancelled) return;
 				if (targetWindow.length === 0) {
 					setHasMoreMessages(false);
 					setSearchTargetMessageId(null);
+					searchLoadTargetRef.current = null;
+					setSearchLoadTarget(null);
 					return;
 				}
 				sessionStore.prependMessages(targetWindow);
 				setHasMoreMessages(hasMore);
 				searchLoadTargetRef.current = null;
+				setSearchLoadTarget(null);
 			})
 			.catch(() => {
 				if (!cancelled) {
 					toast.error('Failed to load search result context');
 					setSearchTargetMessageId(null);
+					searchLoadTargetRef.current = null;
+					setSearchLoadTarget(null);
 				}
 			})
 			.finally(() => {
@@ -872,7 +883,7 @@ export default function ChatContainer({
 		return () => {
 			cancelled = true;
 		};
-	}, [searchTargetMessageId, isInitialLoad, messages]);
+	}, [searchTargetMessageId, searchLoadTarget, isInitialLoad]);
 
 	useScrollToMessage({
 		containerRef: messagesContainerRef,
@@ -880,7 +891,11 @@ export default function ChatContainer({
 		messageCount: messages.length,
 		isInitialLoad,
 		onAnchored: (messageId) => {
-			if (messageId === searchTargetMessageId) setSearchTargetMessageId(null);
+			if (messageId === searchTargetMessageId) {
+				setSearchTargetMessageId(null);
+				searchLoadTargetRef.current = null;
+				setSearchLoadTarget(null);
+			}
 			if (messageId === highlightMessageId) clearOverlayHighlightMessageId();
 		},
 	});
