@@ -217,7 +217,7 @@ export function RightPanel() {
 			/>
 			<div
 				class={cn(
-					'fixed right-0 top-0 z-30 h-safe-screen overflow-hidden bg-transparent lg:relative lg:top-auto lg:z-auto lg:h-full lg:flex-shrink-0',
+					'fixed right-0 top-0 z-30 h-safe-screen overflow-hidden bg-transparent lg:relative lg:top-auto lg:z-auto lg:h-full lg:flex-shrink-0 lg:bg-app-content',
 					!resizing && 'transition-[width] duration-200 ease-out'
 				)}
 				style={{ width: open ? panelWidthValue : '0px' }}
