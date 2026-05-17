@@ -231,5 +231,103 @@ describe('settings handlers — custom endpoints integration', () => {
 			// race surfaced a "not found" against a stale read.
 			expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
 		});
+
+		it('serialises settings.global.update (no customEndpoints in payload) against customEndpoints.add', async () => {
+			// settings.global.update still does a full read-merge-write of the
+			// global settings row, which includes customEndpoints. If the handler
+			// skips the lock when `updates.customEndpoints` is omitted, then a
+			// concurrent customEndpoints.add can land between the update
+			// handler's read and write — and the update will overwrite the row
+			// with a stale customEndpoints snapshot, dropping the added entry.
+			//
+			// Simulate the race by stalling updateGlobalSettings so the add gets
+			// a chance to run on top of the same pre-state.
+			registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
+			const real = settings.manager.updateGlobalSettings as unknown as (
+				updates: Partial<GlobalSettings>
+			) => GlobalSettings;
+			let stallResolve: (() => void) | undefined;
+			const stall = new Promise<void>((r) => {
+				stallResolve = r;
+			});
+			let firstCall = true;
+			settings.manager.updateGlobalSettings = mock(async (updates: Partial<GlobalSettings>) => {
+				if (firstCall) {
+					firstCall = false;
+					await stall;
+				}
+				return real.call(settings.manager, updates);
+			}) as unknown as typeof settings.manager.updateGlobalSettings;
+
+			const updateHandler = hubData.handlers.get('settings.global.update')!;
+			const addHandler = hubData.handlers.get('customEndpoints.add')!;
+			const second: CustomEndpointConfig = { ...validEndpoint, id: 'second' };
+
+			// Kick off settings.global.update first — it will stall inside the
+			// (stubbed) updateGlobalSettings while holding the lock.
+			const updatePromise = updateHandler({ updates: { showArchived: true } }, {});
+			// Yield so the update handler can enter the lock-protected region.
+			await Promise.resolve();
+			await Promise.resolve();
+			// Fire customEndpoints.add — without the lock, this would land first
+			// (since update is stalled); the lock must hold it until update
+			// releases.
+			const addPromise = addHandler({ endpoint: second }, {});
+
+			// Release the stall so update completes, then verify add ran AFTER.
+			stallResolve?.();
+			await Promise.all([updatePromise, addPromise]);
+
+			// Final state must include both customEndpoints (initial + added).
+			// If the lock was skipped, the update handler's write would have
+			// landed last with the stale customEndpoints=[validEndpoint], wiping
+			// `second`.
+			const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
+			expect(ids).toEqual(['lmstudio', 'second']);
+		});
+
+		it('serialises settings.global.save (no customEndpoints in payload) against customEndpoints.add', async () => {
+			// settings.global.save with the field omitted snapshots the persisted
+			// customEndpoints list and writes the merged settings back. The
+			// snapshot MUST happen inside the lock; otherwise a concurrent
+			// customEndpoints.add can land between the read and the save, and
+			// the save will overwrite it with the stale list.
+			registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
+
+			// Stall saveGlobalSettings AFTER the snapshot has been taken inside
+			// the lock; this gives us the only window where a non-serialised add
+			// could clobber state. Under correct locking the add waits.
+			const realSave = settings.manager.saveGlobalSettings as unknown as (
+				s: GlobalSettings
+			) => void;
+			let stallResolve: (() => void) | undefined;
+			const stall = new Promise<void>((r) => {
+				stallResolve = r;
+			});
+			let firstSave = true;
+			settings.manager.saveGlobalSettings = mock(async (s: GlobalSettings) => {
+				if (firstSave) {
+					firstSave = false;
+					await stall;
+				}
+				realSave.call(settings.manager, s);
+			}) as unknown as typeof settings.manager.saveGlobalSettings;
+
+			const saveHandler = hubData.handlers.get('settings.global.save')!;
+			const addHandler = hubData.handlers.get('customEndpoints.add')!;
+			const second: CustomEndpointConfig = { ...validEndpoint, id: 'second' };
+
+			const savePromise = saveHandler({ settings: { showArchived: true } as GlobalSettings }, {});
+			await Promise.resolve();
+			await Promise.resolve();
+			const addPromise = addHandler({ endpoint: second }, {});
+			stallResolve?.();
+			await Promise.all([savePromise, addPromise]);
+
+			const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
+			// add must not have been swallowed by the save's stale snapshot —
+			// both endpoints must be present.
+			expect(ids).toEqual(['lmstudio', 'second']);
+		});
 	});
 });
