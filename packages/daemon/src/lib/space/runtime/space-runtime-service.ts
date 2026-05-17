@@ -36,6 +36,7 @@ import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import {
 	SpaceAgentNotificationService,
 	type SpaceAgentNotificationServiceConfig,
@@ -43,6 +44,7 @@ import {
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import type { ExternalEventService } from '../../external-events/external-event-service';
+import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 
 const log = new Logger('space-runtime-service');
 
@@ -128,6 +130,8 @@ export interface SpaceRuntimeServiceConfig {
 	 * session ID as the reply target when sending messages to task/node agents.
 	 */
 	replyRoutingRegistry?: ReplyRoutingRegistry;
+	/** Persistent per-space agent memory repository. */
+	memoryRepo?: AgentMemoryRepository;
 }
 
 export class SpaceRuntimeService {
@@ -792,6 +796,13 @@ export class SpaceRuntimeService {
 		const additional: Record<string, McpServerConfig> = {
 			'space-agent-tools': mcpServer as unknown as McpServerConfig,
 		};
+		if (this.config.memoryRepo) {
+			additional['agent-memory'] = createAgentMemoryMcpServer({
+				spaceId: space.id,
+				memoryRepo: this.config.memoryRepo,
+				mySessionId: session.id,
+			}) as unknown as McpServerConfig;
+		}
 
 		if (this.config.dbPath) {
 			// Close any stale instance for this session (e.g., on re-provision
@@ -908,6 +919,13 @@ export class SpaceRuntimeService {
 		const mcpServers: Record<string, McpServerConfig> = {
 			'space-agent-tools': mcpServer as unknown as McpServerConfig,
 		};
+		if (this.config.memoryRepo) {
+			mcpServers['agent-memory'] = createAgentMemoryMcpServer({
+				spaceId: space.id,
+				memoryRepo: this.config.memoryRepo,
+				mySessionId: spaceChatSessionId,
+			}) as unknown as McpServerConfig;
+		}
 		if (this.config.dbPath) {
 			const dbQueryServer = createDbQueryMcpServer({
 				dbPath: this.config.dbPath,
