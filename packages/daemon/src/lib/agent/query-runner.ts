@@ -482,10 +482,6 @@ export class QueryRunner {
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 
-			// Set SDK client identifier for analytics
-			this.ctx.originalEnvVars.CLAUDE_AGENT_SDK_CLIENT_APP =
-				process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
-			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'neokai/0.5.0';
 			// Note: PORT and NEOKAI_PORT are cleared inside applyEnvVarsToProcess() above,
 			// so SDK subprocesses cannot inherit the daemon's listening port.
 
