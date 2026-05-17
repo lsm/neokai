@@ -44,7 +44,7 @@ export type CreateDeliveryInput = Omit<DeliveryRecord, 'deliveryId' | 'createdAt
 export interface MessageStore {
 	createMessage(input: CreateMessageInput): Promise<MessageRecord>;
 	getMessage(messageId: string): Promise<MessageRecord | undefined>;
-	listMessagesByConversation(conversationId: string): Promise<MessageRecord[]>;
+	listMessagesByConversation(spaceId: string, conversationId: string): Promise<MessageRecord[]>;
 }
 
 export interface DeliveryStore {

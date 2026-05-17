@@ -52,6 +52,8 @@ describe('address parsing', () => {
 			'@worker:Review/',
 			'@worker:/reviewer',
 			'#',
+			'##deployments',
+			'@@coordinator',
 			'@bad:prefix',
 			'@bad/handle',
 			'@ leading-space',
@@ -69,7 +71,13 @@ describe('address parsing', () => {
 		}
 	});
 
-	test('requires explicit agent when formatting explicit worker run addresses', () => {
+	test('rejects malformed formatted address parts', () => {
+		expect(() => formatAddress({ kind: 'handle', handle: '@coordinator' })).toThrow(
+			"Handle address cannot contain '@', ':', or '/'"
+		);
+		expect(() => formatAddress({ kind: 'channel', name: '#deployments' })).toThrow(
+			'Channel address cannot contain extra # prefix'
+		);
 		expect(() =>
 			formatAddress({ kind: 'worker', workflowRunId: 'f1089', nodeId: 'Review' })
 		).toThrow('Address worker agent cannot be empty');

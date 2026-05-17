@@ -44,6 +44,9 @@ export function parseAddress(target: string): ParsedAddress {
 	if (target.startsWith('#')) {
 		const name = target.slice(1);
 		assertSegment(name, 'channel name');
+		if (name.startsWith('#')) {
+			throw new Error(`Channel address cannot contain extra # prefix: ${target}`);
+		}
 		return { kind: 'channel', name };
 	}
 
@@ -69,8 +72,8 @@ export function parseAddress(target: string): ParsedAddress {
 
 	const handle = target.slice(1);
 	assertSegment(handle, 'handle');
-	if (handle.includes(':') || handle.includes('/')) {
-		throw new Error(`Handle address cannot contain ':' or '/': ${target}`);
+	if (handle.includes('@') || handle.includes(':') || handle.includes('/')) {
+		throw new Error(`Handle address cannot contain '@', ':', or '/': ${target}`);
 	}
 	return { kind: 'handle', handle };
 }
@@ -79,8 +82,12 @@ export function formatAddress(address: ParsedAddress): string {
 	switch (address.kind) {
 		case 'handle':
 			assertSegment(address.handle, 'handle');
-			if (address.handle.includes(':') || address.handle.includes('/')) {
-				throw new Error(`Handle address cannot contain ':' or '/': @${address.handle}`);
+			if (
+				address.handle.includes('@') ||
+				address.handle.includes(':') ||
+				address.handle.includes('/')
+			) {
+				throw new Error(`Handle address cannot contain '@', ':', or '/': @${address.handle}`);
 			}
 			return `@${address.handle}`;
 		case 'role':
@@ -93,6 +100,9 @@ export function formatAddress(address: ParsedAddress): string {
 			return formatWorkerAddress(address);
 		case 'channel':
 			assertSegment(address.name, 'channel name');
+			if (address.name.startsWith('#')) {
+				throw new Error(`Channel address cannot contain extra # prefix: #${address.name}`);
+			}
 			return `#${address.name}`;
 	}
 }
