@@ -183,9 +183,7 @@ export function WorkspaceSelector({
 											</option>
 										))
 									)}
-									{!nativeFolderPickerAvailable && (
-										<option value="__manual__">Enter project path...</option>
-									)}
+									<option value="__manual__">Enter project path...</option>
 								</select>
 								{nativeFolderPickerAvailable && (
 									<button

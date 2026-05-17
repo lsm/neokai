@@ -99,9 +99,10 @@ export function WorkspaceChips({
 			onClick: () => onSelectProject(path),
 		})),
 		{ type: 'divider' as const },
-		nativeFolderPickerAvailable
-			? { label: 'Browse on this computer…', onClick: onBrowse }
-			: { label: 'Enter project path…', onClick: onEnterPath },
+		...(nativeFolderPickerAvailable
+			? [{ label: 'Browse on this computer…', onClick: onBrowse }]
+			: []),
+		{ label: 'Enter project path…', onClick: onEnterPath },
 	];
 
 	const isGit = !!selectedProject && !!gitInfo?.isGitRepo;
