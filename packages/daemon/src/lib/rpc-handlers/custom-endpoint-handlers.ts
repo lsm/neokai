@@ -1,16 +1,22 @@
 /**
  * Custom Endpoint RPC Handlers
  *
- * CRUD over user-defined OpenAI-compatible API endpoints. Each mutation
- * writes the full list back to `settings.customEndpoints` and re-syncs the
- * provider registry so changes take effect immediately without a daemon
- * restart.
+ * CRUD over user-defined API endpoints (OpenAI Chat, Anthropic Messages,
+ * Ollama native). Each mutation writes the full list back to
+ * `settings.customEndpoints` and re-syncs the provider registry so changes
+ * take effect immediately without a daemon restart.
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { CustomEndpointConfig } from '@neokai/shared';
+import type { CustomEndpointConfig, CustomEndpointType } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+
+const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([
+	'openai-chat',
+	'anthropic-messages',
+	'ollama-native',
+]);
 
 /**
  * Validate a single endpoint. Exported for callers (e.g. the generic
@@ -24,6 +30,13 @@ export function validateCustomEndpoint(config: CustomEndpointConfig): void {
 		throw new Error(
 			`Custom endpoint id '${config.id}' is invalid (allowed: letters, digits, '.', '_', '-')`
 		);
+	if (config.type !== undefined && !VALID_CUSTOM_ENDPOINT_TYPES.has(config.type)) {
+		throw new Error(
+			`Custom endpoint '${config.id}': type '${config.type}' is invalid (allowed: ${[
+				...VALID_CUSTOM_ENDPOINT_TYPES,
+			].join(', ')})`
+		);
+	}
 	if (!config.name || typeof config.name !== 'string')
 		throw new Error(`Custom endpoint '${config.id}': name is required`);
 	if (!config.baseUrl || typeof config.baseUrl !== 'string')

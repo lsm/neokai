@@ -1,20 +1,26 @@
 /**
  * Custom Endpoint Provider
  *
- * Wraps a user-defined OpenAI-compatible API endpoint. Each instance:
+ * Wraps a user-defined API endpoint of one of three upstream types:
+ *
+ *   - `openai-chat`         OpenAI Chat Completions (default for legacy
+ *                           configs persisted before the discriminator existed)
+ *   - `anthropic-messages`  Anthropic Messages pass-through
+ *   - `ollama-native`       Ollama native `/api/chat` (NDJSON streaming)
+ *
+ * Each instance:
  *
  * 1. Has a deterministic provider ID of the form `custom:<endpointId>` so it
  *    coexists with the built-in providers in the registry.
- * 2. Owns an embedded `OpenAIChatBridgeServer` per active model (lazily started
- *    on first `buildSdkConfig` call). The bridge translates between the
- *    Anthropic Messages API the SDK speaks and the upstream Chat Completions
- *    API.
+ * 2. Owns one or more embedded bridge servers, lazily started on first
+ *    `buildSdkConfig` call. The bridge selected by `type` translates between
+ *    the Anthropic Messages API the SDK speaks and the upstream wire format.
  * 3. Reports model-level capabilities (`toolUse`, `vision`, `thinking`,
  *    `caching`, `maxContextTokens`) so the rest of the system can degrade
  *    gracefully when a feature isn't supported.
  *
- * Tests can pass `bridgeFactory` and `bridgeFetchImpl` to substitute a fake
- * bridge or fetch implementation.
+ * Tests can pass `bridgeFactories` and `bridgeFetchImpl` to substitute fake
+ * bridges or fetch implementations on a per-type basis.
  */
 
 import type {
@@ -27,16 +33,29 @@ import type {
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
 import {
+	CUSTOM_ENDPOINT_TYPE_CAPABILITY_DEFAULTS,
 	DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES,
+	resolveCustomEndpointType,
 	type CustomEndpointConfig,
 	type CustomEndpointModel,
 	type CustomEndpointModelCapabilities,
+	type CustomEndpointType,
 } from '@neokai/shared';
 import {
 	createOpenAIChatBridgeServer,
 	type OpenAIChatBridgeConfig,
 	type OpenAIChatBridgeServer,
 } from './openai-chat-bridge/server.js';
+import {
+	createAnthropicMessagesBridgeServer,
+	type AnthropicMessagesBridgeConfig,
+	type AnthropicMessagesBridgeServer,
+} from './anthropic-messages-bridge/server.js';
+import {
+	createOllamaNativeBridgeServer,
+	type OllamaNativeBridgeConfig,
+	type OllamaNativeBridgeServer,
+} from './ollama-native-bridge/server.js';
 
 /** Prefix prepended to user-supplied endpoint IDs to form a provider ID. */
 export const CUSTOM_ENDPOINT_PROVIDER_PREFIX = 'custom:';
@@ -49,19 +68,44 @@ export function isCustomEndpointProviderId(providerId: string): boolean {
 	return providerId.startsWith(CUSTOM_ENDPOINT_PROVIDER_PREFIX);
 }
 
+/**
+ * Common shape every bridge type exposes. Lets the provider hold a
+ * heterogeneous map of bridges without leaking the per-type config to
+ * higher layers.
+ */
+interface CustomEndpointBridge {
+	port: number;
+	stop(): void;
+}
+
 export interface CustomEndpointProviderOptions {
-	/** Override fetch used by the bridge (tests). */
+	/** Override fetch used by every bridge type (tests). */
 	bridgeFetchImpl?: typeof fetch;
-	/** Override bridge factory (tests). */
+	/**
+	 * Per-type factory overrides for tests. Any type not overridden falls back
+	 * to the real implementation.
+	 */
+	bridgeFactories?: {
+		'openai-chat'?: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
+		'anthropic-messages'?: (config: AnthropicMessagesBridgeConfig) => AnthropicMessagesBridgeServer;
+		'ollama-native'?: (config: OllamaNativeBridgeConfig) => OllamaNativeBridgeServer;
+	};
+	/**
+	 * Legacy single-factory override. Equivalent to passing the factory under
+	 * `bridgeFactories['openai-chat']`. Retained so existing tests don't need
+	 * to be rewritten just to keep working with the OpenAI Chat default type.
+	 */
 	bridgeFactory?: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
 }
 
-/** Resolve model-level capabilities with defaults applied. */
+/** Resolve model-level capabilities with type-specific then global defaults applied. */
 export function resolveModelCapabilities(
-	model: CustomEndpointModel
+	model: CustomEndpointModel,
+	type: CustomEndpointType = 'openai-chat'
 ): CustomEndpointModelCapabilities {
 	return {
 		...DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES,
+		...CUSTOM_ENDPOINT_TYPE_CAPABILITY_DEFAULTS[type],
 		...model.capabilities,
 	};
 }
@@ -79,9 +123,9 @@ export class CustomEndpointProvider implements Provider {
 	readonly displayName: string;
 	readonly capabilities: ProviderCapabilities;
 	private readonly config: CustomEndpointConfig;
-	private readonly bridgeFactory: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
-	private readonly bridgeFetchImpl?: typeof fetch;
-	private bridges = new Map<string, OpenAIChatBridgeServer>();
+	private readonly type: CustomEndpointType;
+	private readonly options: CustomEndpointProviderOptions;
+	private bridges = new Map<string, CustomEndpointBridge>();
 
 	constructor(config: CustomEndpointConfig, options: CustomEndpointProviderOptions = {}) {
 		if (!config.id) throw new Error('CustomEndpointProvider: endpoint id is required');
@@ -90,11 +134,11 @@ export class CustomEndpointProvider implements Provider {
 		if (!config.models || config.models.length === 0)
 			throw new Error(`CustomEndpointProvider[${config.id}]: at least one model is required`);
 		this.config = config;
+		this.type = resolveCustomEndpointType(config);
+		this.options = options;
 		this.id = customProviderIdFor(config.id);
 		this.displayName = config.name || config.id;
 		this.capabilities = this.aggregateCapabilities(config.models);
-		this.bridgeFactory = options.bridgeFactory ?? createOpenAIChatBridgeServer;
-		this.bridgeFetchImpl = options.bridgeFetchImpl;
 	}
 
 	/**
@@ -110,7 +154,7 @@ export class CustomEndpointProvider implements Provider {
 		let vision = false;
 		let maxContextWindow = 0;
 		for (const model of models) {
-			const caps = resolveModelCapabilities(model);
+			const caps = resolveModelCapabilities(model, this.type);
 			streaming = streaming || caps.streaming;
 			extendedThinking = extendedThinking || caps.thinking;
 			functionCalling = functionCalling || caps.toolUse;
@@ -162,19 +206,10 @@ export class CustomEndpointProvider implements Provider {
 				`Custom endpoint '${this.config.id}' has no models; cannot build SDK config for '${modelId}'`
 			);
 		}
-		const caps = resolveModelCapabilities(model);
+		const caps = resolveModelCapabilities(model, this.type);
 		const baseUrl = sessionConfig?.baseUrl || this.config.baseUrl;
 		const apiKey = sessionConfig?.apiKey ?? this.config.apiKey;
-		const bridge = this.getOrCreateBridge({
-			baseUrl,
-			apiKey,
-			headers: this.config.headers,
-			toolUseSupported: caps.toolUse,
-			visionSupported: caps.vision,
-			thinkingSupported: caps.thinking,
-			modelContextWindow: caps.maxContextTokens,
-			model,
-		});
+		const bridge = this.getOrCreateBridge({ baseUrl, apiKey, caps, model });
 		const upstreamModel = providerModelStringFor(model);
 		return {
 			envVars: {
@@ -213,42 +248,90 @@ export class CustomEndpointProvider implements Provider {
 		return this.config;
 	}
 
+	/** Resolved type (with the legacy `openai-chat` default applied). */
+	getType(): CustomEndpointType {
+		return this.type;
+	}
+
 	private getOrCreateBridge(params: {
 		baseUrl: string;
 		apiKey?: string;
-		headers?: Record<string, string>;
-		toolUseSupported: boolean;
-		visionSupported: boolean;
-		thinkingSupported: boolean;
-		modelContextWindow: number;
+		caps: CustomEndpointModelCapabilities;
 		model: CustomEndpointModel;
-	}): OpenAIChatBridgeServer {
+	}): CustomEndpointBridge {
 		const key = [
+			this.type,
 			params.baseUrl,
 			params.apiKey ?? '',
 			params.model.id,
-			params.toolUseSupported,
-			params.visionSupported,
-			params.thinkingSupported,
+			params.caps.toolUse,
+			params.caps.vision,
+			params.caps.thinking,
 		].join(' ');
 		const existing = this.bridges.get(key);
 		if (existing) return existing;
-		const bridge = this.bridgeFactory({
-			baseUrl: params.baseUrl,
-			apiKey: params.apiKey,
-			headers: params.headers,
-			toolUseSupported: params.toolUseSupported,
-			visionSupported: params.visionSupported,
-			thinkingSupported: params.thinkingSupported,
-			modelContextWindow: params.modelContextWindow,
-			...(this.bridgeFetchImpl ? { fetchImpl: this.bridgeFetchImpl } : {}),
-		});
+		const bridge = this.createBridgeForType(params);
 		this.bridges.set(key, bridge);
 		return bridge;
 	}
 
+	private createBridgeForType(params: {
+		baseUrl: string;
+		apiKey?: string;
+		caps: CustomEndpointModelCapabilities;
+		model: CustomEndpointModel;
+	}): CustomEndpointBridge {
+		const { baseUrl, apiKey, caps } = params;
+		const fetchImpl = this.options.bridgeFetchImpl;
+		switch (this.type) {
+			case 'anthropic-messages': {
+				const factory =
+					this.options.bridgeFactories?.['anthropic-messages'] ??
+					createAnthropicMessagesBridgeServer;
+				return factory({
+					baseUrl,
+					apiKey,
+					headers: this.config.headers,
+					...(fetchImpl ? { fetchImpl } : {}),
+				});
+			}
+			case 'ollama-native': {
+				const factory =
+					this.options.bridgeFactories?.['ollama-native'] ?? createOllamaNativeBridgeServer;
+				return factory({
+					baseUrl,
+					apiKey,
+					headers: this.config.headers,
+					toolUseSupported: caps.toolUse,
+					modelContextWindow: caps.maxContextTokens,
+					// Bind to loopback so other local users can't reach this bridge
+					// with the configured upstream API key.
+					hostname: '127.0.0.1',
+					...(fetchImpl ? { fetchImpl } : {}),
+				});
+			}
+			case 'openai-chat':
+			default: {
+				const factory =
+					this.options.bridgeFactories?.['openai-chat'] ??
+					this.options.bridgeFactory ??
+					createOpenAIChatBridgeServer;
+				return factory({
+					baseUrl,
+					apiKey,
+					headers: this.config.headers,
+					toolUseSupported: caps.toolUse,
+					visionSupported: caps.vision,
+					thinkingSupported: caps.thinking,
+					modelContextWindow: caps.maxContextTokens,
+					...(fetchImpl ? { fetchImpl } : {}),
+				});
+			}
+		}
+	}
+
 	private toModelInfo(model: CustomEndpointModel): ModelInfo {
-		const caps = resolveModelCapabilities(model);
+		const caps = resolveModelCapabilities(model, this.type);
 		return {
 			id: model.id,
 			name: modelDisplayName(model),

@@ -28,6 +28,31 @@ export type OllamaBridgeConfig = {
 	baseUrl: string;
 	apiKey?: string;
 	fetchImpl?: typeof fetch;
+	/**
+	 * Extra HTTP headers attached to every upstream `/api/chat` request.
+	 * Used by custom Ollama-native endpoints that gate access via custom
+	 * auth headers (e.g. `x-api-key` on a reverse proxy in front of Ollama).
+	 */
+	headers?: Record<string, string>;
+	/**
+	 * Whether the active model supports tool use. When false, `tools[]` is
+	 * stripped from the upstream request body so older Ollama servers (or
+	 * models without tool support) don't reject the call.
+	 */
+	toolUseSupported?: boolean;
+	/**
+	 * Max context window for the active model. Forwarded as `options.num_ctx`
+	 * so Ollama allocates an adequate KV cache instead of falling back to its
+	 * compile-time default (2k tokens on many builds).
+	 */
+	modelContextWindow?: number;
+	/**
+	 * Bind the embedded HTTP server to a specific interface. Defaults to all
+	 * interfaces for backwards compatibility with the built-in OllamaProvider.
+	 * Custom-endpoint callers pass `'127.0.0.1'` so the bridge isn't reachable
+	 * from other local users.
+	 */
+	hostname?: string;
 };
 
 type OllamaChatMessage = {
@@ -53,6 +78,7 @@ type OllamaChatRequest = {
 	stream: true;
 	options?: {
 		num_predict?: number;
+		num_ctx?: number;
 	};
 };
 
@@ -165,7 +191,10 @@ function appendOllamaMessages(
 	if (text) messages.push({ role: 'user', content: text });
 }
 
-function buildOllamaRequest(body: AnthropicRequest): OllamaChatRequest {
+function buildOllamaRequest(
+	body: AnthropicRequest,
+	options?: { toolUseSupported?: boolean; modelContextWindow?: number }
+): OllamaChatRequest {
 	const messages: OllamaChatMessage[] = [];
 	const toolNameByUseId = new Map<string, string>();
 	const system = extractSystemText(body.system);
@@ -179,10 +208,22 @@ function buildOllamaRequest(body: AnthropicRequest): OllamaChatRequest {
 		messages,
 		stream: true,
 	};
+	const ollamaOptions: { num_predict?: number; num_ctx?: number } = {};
 	if (body.max_tokens && body.max_tokens > 0) {
-		request.options = { num_predict: body.max_tokens };
+		ollamaOptions.num_predict = body.max_tokens;
 	}
-	if (body.tools && body.tools.length > 0) {
+	if (options?.modelContextWindow && options.modelContextWindow > 0) {
+		// Without num_ctx Ollama falls back to a compile-time default (2k tokens
+		// on many builds), silently truncating long prompts. Forward the model's
+		// declared context window so the upstream allocates a matching KV cache.
+		ollamaOptions.num_ctx = options.modelContextWindow;
+	}
+	if (Object.keys(ollamaOptions).length > 0) request.options = ollamaOptions;
+	// `toolUseSupported` defaults to true to preserve the previous behaviour
+	// for the built-in OllamaProvider. Custom-endpoint callers pass false to
+	// strip tools when the model doesn't support them.
+	const allowTools = options?.toolUseSupported !== false;
+	if (allowTools && body.tools && body.tools.length > 0) {
 		request.tools = body.tools.map((tool) => ({
 			type: 'function',
 			function: {
@@ -350,6 +391,7 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
 	const fetchImpl = config.fetchImpl ?? fetch;
 	const baseUrl = config.baseUrl.replace(/\/$/, '');
 	const server = Bun.serve({
+		...(config.hostname ? { hostname: config.hostname } : {}),
 		port: 0,
 		idleTimeout: 0,
 		async fetch(req: Request): Promise<Response> {
@@ -401,7 +443,10 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
 				);
 			}
 
-			const requestBody = buildOllamaRequest(body);
+			const requestBody = buildOllamaRequest(body, {
+				toolUseSupported: config.toolUseSupported,
+				modelContextWindow: config.modelContextWindow,
+			});
 			const inputTokens = estimateTokens(
 				requestBody.messages
 					.map((message) => message.content)
@@ -415,6 +460,9 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
 					headers: {
 						'Content-Type': 'application/json',
 						...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+						// User-supplied headers win so an integrator can override the
+						// auth header name (e.g. `x-custom-auth`) for reverse proxies.
+						...config.headers,
 					},
 					body: JSON.stringify(requestBody),
 				});

@@ -1,15 +1,31 @@
 /**
  * Custom Endpoint types
  *
- * User-configurable OpenAI-compatible API endpoints. These let users plug in
- * local model servers (Ollama OpenAI mode, LM Studio, vLLM), self-hosted
- * deployments, and proxies (LiteLLM, custom OpenRouter) that all speak the
- * OpenAI Chat Completions API surface.
+ * User-configurable API endpoints. Each endpoint advertises a `type` that
+ * selects the upstream API surface and the bridge that translates between it
+ * and the Anthropic Messages API the SDK speaks:
+ *
+ *   - `openai-chat`         OpenAI Chat Completions (LM Studio, vLLM, LiteLLM,
+ *                           Ollama OpenAI shim, OpenRouter-compatible proxies)
+ *   - `anthropic-messages`  Anthropic Messages API pass-through (Bedrock fronts,
+ *                           self-hosted Anthropic-shim, custom Claude gateways)
+ *   - `ollama-native`       Ollama native API (`/api/chat`, `/api/tags`) for
+ *                           users who disable the OpenAI shim or need
+ *                           Ollama-only features
  *
  * Each endpoint is registered with the provider registry at daemon startup
  * as a `CustomEndpointProvider` instance. The provider routes traffic through
- * an embedded Anthropic ↔ OpenAI Chat Completions bridge.
+ * the bridge selected by `type`.
  */
+
+/**
+ * Upstream API surface. The provider picks the appropriate bridge based on
+ * this value. New types must be added to the bridge factory simultaneously.
+ */
+export type CustomEndpointType = 'openai-chat' | 'anthropic-messages' | 'ollama-native';
+
+/** Default endpoint type assumed when an existing config omits `type`. */
+export const DEFAULT_CUSTOM_ENDPOINT_TYPE: CustomEndpointType = 'openai-chat';
 
 /**
  * Per-model capability hints. The provider honours these when reporting
@@ -50,10 +66,9 @@ export interface CustomEndpointModel {
 }
 
 /**
- * A user-defined endpoint backed by an OpenAI Chat Completions API.
- *
- * Stored as JSON inside `GlobalSettings.customEndpoints`. Each entry becomes
- * its own provider in the registry, with `id = "custom:" + endpoint.id`.
+ * A user-defined endpoint. Stored as JSON inside
+ * `GlobalSettings.customEndpoints`. Each entry becomes its own provider in
+ * the registry, with `id = "custom:" + endpoint.id`.
  */
 export interface CustomEndpointConfig {
 	/**
@@ -61,6 +76,11 @@ export interface CustomEndpointConfig {
 	 * `custom:<id>`. Should be a short slug like `lmstudio` or `litellm-prod`.
 	 */
 	id: string;
+	/**
+	 * Upstream API surface. Optional — existing configs persisted before this
+	 * field existed are treated as `openai-chat` to preserve backwards compat.
+	 */
+	type?: CustomEndpointType;
 	/** Display name shown in UIs. */
 	name: string;
 	/** Upstream base URL (no trailing slash needed). Required. */
@@ -84,3 +104,34 @@ export const DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES: CustomEndpointModelCapabiliti
 	caching: false,
 	maxContextTokens: 128000,
 };
+
+/**
+ * Per-type capability defaults. Applied on top of the global defaults when a
+ * model omits a field. `ollama-native` disables caching/thinking by default
+ * because the upstream doesn't honour Anthropic-style `cache_control` headers
+ * or `thinking` blocks; `anthropic-messages` defaults to the most permissive
+ * profile since the request body is forwarded verbatim.
+ */
+export const CUSTOM_ENDPOINT_TYPE_CAPABILITY_DEFAULTS: Record<
+	CustomEndpointType,
+	Partial<CustomEndpointModelCapabilities>
+> = {
+	'openai-chat': {},
+	'anthropic-messages': {
+		toolUse: true,
+		vision: true,
+		thinking: true,
+		caching: true,
+	},
+	'ollama-native': {
+		toolUse: true,
+		vision: false,
+		thinking: false,
+		caching: false,
+	},
+};
+
+/** Resolve the effective endpoint type, defaulting when omitted. */
+export function resolveCustomEndpointType(config: CustomEndpointConfig): CustomEndpointType {
+	return config.type ?? DEFAULT_CUSTOM_ENDPOINT_TYPE;
+}
