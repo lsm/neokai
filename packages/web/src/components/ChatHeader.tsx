@@ -33,6 +33,7 @@ export interface ChatHeaderProps {
 	readonly?: boolean;
 	messages?: ChatMessage[];
 	toolInputsMap?: Map<string, unknown>;
+	titleOverride?: string;
 	/**
 	 * When provided, renders a left-arrow back button in the header's left
 	 * slot (replacing the `MobileMenuButton`) that invokes this callback on
@@ -58,6 +59,7 @@ export function ChatHeader({
 	readonly = false,
 	messages = [],
 	toolInputsMap = new Map(),
+	titleOverride,
 	onBack,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
@@ -222,7 +224,7 @@ export function ChatHeader({
 						class="min-w-0 truncate text-sm font-semibold text-gray-100"
 						data-tauri-drag-region
 					>
-						{session?.title || 'New Session'}
+						{titleOverride || session?.title || 'New Session'}
 					</h2>
 
 					{/* Session menu sits next to the title, matching the Codex header placement. */}

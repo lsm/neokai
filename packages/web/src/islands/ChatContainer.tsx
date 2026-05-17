@@ -138,6 +138,7 @@ interface ChatContainerProps {
 	 * around each `SDKMessageRenderer`. When absent, behavior is unchanged.
 	 */
 	highlightMessageId?: string;
+	titleOverride?: string;
 	/**
 	 * When set, renders a "pending agent" state instead of loading from
 	 * sessionStore. The agent has been declared in the workflow but has not yet
@@ -156,6 +157,7 @@ export default function ChatContainer({
 	readonly = false,
 	onBack,
 	highlightMessageId,
+	titleOverride,
 	pendingAgent,
 	onSendOverride,
 }: ChatContainerProps) {
@@ -1210,6 +1212,7 @@ export default function ChatContainer({
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
 				onBack={onBack}
+				titleOverride={titleOverride}
 				messages={messages}
 				toolInputsMap={maps.toolInputsMap}
 			/>

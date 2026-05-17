@@ -472,7 +472,7 @@ export function ContextPanel() {
 						</svg>
 						<span>Settings</span>
 					</button>
-					<DaemonStatusIndicator />
+					<DaemonStatusIndicator showLabel={isSpaceDetail} />
 				</div>
 			</div>
 			<SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
