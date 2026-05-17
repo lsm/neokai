@@ -633,15 +633,7 @@ export class TaskAgentManager {
 				mcpServers: {
 					...init.mcpServers,
 					'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-					...(this.config.memoryRepo
-						? {
-								'agent-memory': createAgentMemoryMcpServer({
-									spaceId: space.id,
-									memoryRepo: this.config.memoryRepo,
-									mySessionId: sessionId,
-								}) as unknown as McpServerConfig,
-							}
-						: {}),
+					...this.buildAgentMemoryMcpServers(space.id, sessionId),
 				},
 			};
 
@@ -2635,6 +2627,7 @@ export class TaskAgentManager {
 		const mergedMcpServers: Record<string, McpServerConfig> = {
 			...registryMcpServers,
 			'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+			...this.buildAgentMemoryMcpServers(spaceId, subSessionId),
 		};
 
 		// Use merge semantics: the restored session has no in-memory MCP servers
@@ -3076,7 +3069,10 @@ export class TaskAgentManager {
 	 *   Without this the Coder→Reviewer handoff dies silently with "No such tool
 	 *   available" (PR #1535 failure mode).
 	 */
-	private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = ['node-agent'] as const;
+	private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = [
+		'node-agent',
+		'agent-memory',
+	] as const;
 
 	/**
 	 * Verify that a workflow node sub-session has its required MCP server
@@ -3141,10 +3137,12 @@ export class TaskAgentManager {
 				`Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
 		);
 
-		// Re-attach the missing required server while preserving other runtime servers.
+		// Re-attach missing required servers while preserving other runtime servers.
 		for (const name of missing) {
 			if (name === 'node-agent') {
 				await this.reinjectNodeAgentMcpServer(session, ctx);
+			} else if (name === 'agent-memory') {
+				await this.reinjectAgentMemoryMcpServer(session, ctx);
 			}
 		}
 
@@ -3312,6 +3310,16 @@ export class TaskAgentManager {
 		await session.restartQuery();
 	}
 
+	async reinjectAgentMemoryMcpServer(
+		session: AgentSession,
+		ctx: { subSessionId: string; spaceId: string }
+	): Promise<void> {
+		const mcpServers = this.buildAgentMemoryMcpServers(ctx.spaceId, ctx.subSessionId);
+		if (Object.keys(mcpServers).length === 0) return;
+		session.mergeRuntimeMcpServers(mcpServers);
+		await session.restartQuery();
+	}
+
 	/**
 	 * Build (or re-build) the per-session `space-agent-tools` MCP server and merge
 	 * it into the session's runtime MCP map, preserving any other MCP servers
@@ -3447,7 +3455,18 @@ export class TaskAgentManager {
 	 * The server gives the node agent peer communication tools (list_peers, send_message,
 	 * save_artifact) that are scoped to its group, channel topology, and node task.
 	 */
-	private buildNodeAgentMcpServerForSession(
+	buildAgentMemoryMcpServers(spaceId: string, sessionId: string): Record<string, McpServerConfig> {
+		if (!this.config.memoryRepo) return {};
+		return {
+			'agent-memory': createAgentMemoryMcpServer({
+				spaceId,
+				memoryRepo: this.config.memoryRepo,
+				mySessionId: sessionId,
+			}) as unknown as McpServerConfig,
+		};
+	}
+
+	buildNodeAgentMcpServerForSession(
 		taskId: string,
 		subSessionId: string,
 		agentName: string,
@@ -3872,6 +3891,7 @@ export class TaskAgentManager {
 			mcpServers: {
 				...init.mcpServers,
 				'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+				...this.buildAgentMemoryMcpServers(spaceId, sessionId),
 			},
 		};
 

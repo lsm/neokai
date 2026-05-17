@@ -81,7 +81,9 @@ function readStringArray(payload: unknown, key: string): string[] {
 function readOptionalNumber(payload: unknown, key: string): number | undefined {
 	const value = readRecord(payload)[key];
 	if (value == null) return undefined;
-	if (typeof value !== 'number') throw new Error(`${key} must be a number.`);
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		throw new Error(`${key} must be a finite number.`);
+	}
 	return value;
 }
 
