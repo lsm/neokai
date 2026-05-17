@@ -388,64 +388,8 @@ describe('VisualWorkflowEditor', () => {
 			// Transitions are hidden on canvas (channels are primary connections).
 		});
 
-		it('Task Agent never receives the start badge after any node deletion', () => {
-			const { getAllByTestId, queryByTestId, getByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-
-			const allNodes = getAllByTestId(/^workflow-node-/);
-			const step2Node = allNodes.find((n) => !n.querySelector('[data-testid="start-badge"]'))!;
-			fireEvent.click(step2Node);
-			fireEvent.click(getByTestId('set-as-start-button'));
-
-			// step-2 should now be the start node
-			expect(step2Node.querySelector('[data-testid="start-badge"]')).toBeTruthy();
-
-			const step1Node = getAllByTestId(/^workflow-node-/).find(
-				(n) => !n.querySelector('[data-testid="start-badge"]')
-			)!;
-			fireEvent.click(step1Node);
-			fireEvent.click(getByTestId('delete-step-button'));
-			fireEvent.click(getByTestId('delete-confirm-button'));
-
-			expect(queryByTestId('task-agent-overlay')).toBeTruthy();
-
-			// step-2 should still be the start
-			const startBadges = document.querySelectorAll('[data-testid="start-badge"]');
-			expect(startBadges).toHaveLength(1);
-		});
-
-		it('Task Agent never receives the start badge — create mode invariant', () => {
-			const { getByTestId, queryAllByTestId, queryByTestId } = render(
-				<VisualWorkflowEditor {...makeProps()} />
-			);
-
-			expect(queryByTestId('task-agent-overlay')).toBeTruthy();
-			expect(queryAllByTestId(/^workflow-node-/).length).toBe(0);
-
-			fireEvent.click(getByTestId('add-step-button'));
-			fireEvent.click(getByTestId('add-step-button'));
-			expect(queryAllByTestId(/^workflow-node-/).length).toBe(2);
-
-			const step2 = queryAllByTestId(/^workflow-node-/).find(
-				(n) => !n.querySelector('[data-testid="start-badge"]')
-			)!;
-			fireEvent.click(step2);
-			fireEvent.click(getByTestId('set-as-start-button'));
-
-			const step1 = queryAllByTestId(/^workflow-node-/).find(
-				(n) => !n.querySelector('[data-testid="start-badge"]')
-			)!;
-			fireEvent.click(step1);
-			fireEvent.click(getByTestId('delete-step-button'));
-			fireEvent.click(getByTestId('delete-confirm-button'));
-
-			expect(queryByTestId('task-agent-overlay')).toBeTruthy();
-			expect(document.querySelectorAll('[data-testid="start-badge"]')).toHaveLength(1);
-		});
-
 		it('keyboard Delete on start node — next regular node becomes start (wasStart=true path)', () => {
-			const { container, getAllByTestId, queryByTestId } = render(
+			const { container, getAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 
@@ -461,7 +405,6 @@ describe('VisualWorkflowEditor', () => {
 			expect(getAllByTestId(/^workflow-node-/).length).toBe(1);
 
 			expect(nonStartRegular.querySelector('[data-testid="start-badge"]')).toBeTruthy();
-			expect(queryByTestId('task-agent-overlay')).toBeTruthy();
 
 			expect(container.querySelectorAll('[data-testid="start-badge"]')).toHaveLength(1);
 		});
@@ -734,11 +677,12 @@ describe('VisualWorkflowEditor', () => {
 	// -------------------------------------------------------------------------
 
 	describe('Post-approval route', () => {
-		it('reflects workflow postApproval in edit mode', () => {
-			const { getByTestId } = render(
+		it('reflects legacy workflow postApproval on the end node in edit mode', () => {
+			const { getAllByTestId, getByTestId, queryByTestId } = render(
 				<VisualWorkflowEditor
 					{...makeProps({
 						workflow: makeWorkflow({
+							endNodeId: STEP_2_ID,
 							postApproval: {
 								targetAgent: 'coder',
 								instructions: 'Deploy {{task_id}}.',
@@ -748,20 +692,26 @@ describe('VisualWorkflowEditor', () => {
 				/>
 			);
 
+			const codeNode = getAllByTestId(/^workflow-node-/).find((node) =>
+				node.textContent?.includes('Code')
+			)!;
+			fireEvent.click(codeNode);
+
 			expect((getByTestId('post-approval-enabled-checkbox') as HTMLInputElement).checked).toBe(
 				true
 			);
-			expect((getByTestId('post-approval-target-select') as HTMLSelectElement).value).toBe('coder');
+			expect(queryByTestId('post-approval-target-select')).toBeNull();
 			expect(
 				(getByTestId('post-approval-instructions-textarea') as HTMLTextAreaElement).value
 			).toBe('Deploy {{task_id}}.');
 		});
 
-		it('includes edited postApproval in updateWorkflow call', async () => {
-			const { getByTestId } = render(
+		it('includes edited node postApproval in updateWorkflow call', async () => {
+			const { getAllByTestId, getByTestId } = render(
 				<VisualWorkflowEditor
 					{...makeProps({
 						workflow: makeWorkflow({
+							endNodeId: STEP_2_ID,
 							postApproval: {
 								targetAgent: 'coder',
 								instructions: 'Old instructions.',
@@ -770,6 +720,11 @@ describe('VisualWorkflowEditor', () => {
 					})}
 				/>
 			);
+
+			const codeNode = getAllByTestId(/^workflow-node-/).find((node) =>
+				node.textContent?.includes('Code')
+			)!;
+			fireEvent.click(codeNode);
 
 			fireEvent.input(getByTestId('post-approval-instructions-textarea'), {
 				target: { value: 'Deploy {{task_id}}.' },
@@ -780,10 +735,12 @@ describe('VisualWorkflowEditor', () => {
 
 			await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
 			const params = mockUpdateWorkflow.mock.calls[0][1];
-			expect(params.postApproval).toEqual({
+			const codeParams = params.nodes.find((node: { name: string }) => node.name === 'Code');
+			expect(codeParams.postApproval).toEqual({
 				targetAgent: 'coder',
 				instructions: 'Deploy {{task_id}}.',
 			});
+			expect(params.postApproval).toBeNull();
 		});
 	});
 
@@ -1290,21 +1247,6 @@ describe('VisualWorkflowEditor', () => {
 			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 			fireEvent.click(getByTestId('node-panel-back-button'));
 			expect(getByTestId('node-config-panel')).toBeTruthy();
-		});
-	});
-
-	describe('Task Agent overlay', () => {
-		it('renders a pinned Task Agent overlay in create mode', () => {
-			const { getByTestId, getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
-			expect(getByTestId('task-agent-overlay')).toBeTruthy();
-			expect(getByText('Always available coordinator')).toBeTruthy();
-		});
-
-		it('renders a pinned Task Agent overlay in edit mode', () => {
-			const { getByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-			expect(getByTestId('task-agent-overlay')).toBeTruthy();
 		});
 	});
 });

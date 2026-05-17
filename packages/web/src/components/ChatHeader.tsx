@@ -9,24 +9,18 @@
  * - Space sessions hide features that aren't applicable
  */
 
-import type { Session, SessionFeatures } from '@neokai/shared';
+import type { ChatMessage, Session, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
-import { borderColors } from '../lib/design-tokens';
-import { formatTokens } from '../lib/utils';
+import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { connectionState } from '../lib/state';
-import { getModelLabel } from '../lib/session-utils';
+import { cn } from '../lib/utils.ts';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
-import { Tooltip } from './ui/Tooltip';
-import { GitBranchIcon } from './icons/GitBranchIcon';
 import { MobileMenuButton } from './ui/MobileMenuButton';
+import { SessionInfoPanelButton } from './SessionInfoPanel.tsx';
 
 export interface ChatHeaderProps {
 	session: Session | null;
-	displayStats: {
-		totalTokens: number;
-		totalCost: number;
-	};
 	features?: SessionFeatures;
 	onToolsClick: () => void;
 	onInfoClick: () => void;
@@ -37,6 +31,9 @@ export interface ChatHeaderProps {
 	archiving?: boolean;
 	resettingAgent?: boolean;
 	readonly?: boolean;
+	messages?: ChatMessage[];
+	toolInputsMap?: Map<string, unknown>;
+	titleOverride?: string;
 	/**
 	 * When provided, renders a left-arrow back button in the header's left
 	 * slot (replacing the `MobileMenuButton`) that invokes this callback on
@@ -50,7 +47,6 @@ export interface ChatHeaderProps {
 
 export function ChatHeader({
 	session,
-	displayStats,
 	features = DEFAULT_WORKER_FEATURES,
 	onToolsClick,
 	onInfoClick,
@@ -61,9 +57,14 @@ export function ChatHeader({
 	archiving = false,
 	resettingAgent = false,
 	readonly = false,
+	messages = [],
+	toolInputsMap = new Map(),
+	titleOverride,
 	onBack,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
+	const rightPanelOpen = rightPanelTargetSignal.value !== null;
+	const rightPanelAvailable = features.worktree && !!session?.id;
 
 	const getHeaderActions = () => {
 		const actions: Array<
@@ -188,9 +189,13 @@ export function ChatHeader({
 
 	return (
 		<div
-			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[65px] flex items-center relative z-10`}
+			data-tauri-drag-region
+			class={cn(
+				'relative z-10 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4',
+				rightPanelAvailable && !rightPanelOpen && 'pr-14'
+			)}
 		>
-			<div class="flex-1 min-w-0 flex items-center gap-3">
+			<div class="flex-1 min-w-0 flex items-center gap-3" data-tauri-drag-region>
 				{onBack ? (
 					<button
 						type="button"
@@ -213,78 +218,41 @@ export function ChatHeader({
 					<MobileMenuButton />
 				)}
 
-				{/* Session title and stats */}
-				<div class="flex-1 min-w-0">
-					<div class="flex items-center gap-3">
-						<h2
-							data-testid="chat-header-title"
-							class="text-sm font-semibold text-gray-100 truncate"
-						>
-							{session?.title || 'New Session'}
-						</h2>
-						<div class="flex items-center gap-2 text-xs text-gray-400">
-							<span class="flex items-center gap-1" title="Total tokens">
-								<svg class="w-3 h-3" fill="currentColor" viewBox="-1 -1 18 18">
-									<path d="M8 2a.5.5 0 0 1 .5.5V4a.5.5 0 0 1-1 0V2.5A.5.5 0 0 1 8 2M3.732 3.732a.5.5 0 0 1 .707 0l.915.914a.5.5 0 1 1-.708.708l-.914-.915a.5.5 0 0 1 0-.707M2 8a.5.5 0 0 1 .5-.5h1.586a.5.5 0 0 1 0 1H2.5A.5.5 0 0 1 2 8m9.5 0a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1H12a.5.5 0 0 1-.5-.5m.754-4.246a.39.39 0 0 0-.527-.02L7.547 7.31A.91.91 0 1 0 8.85 8.569l3.434-4.297a.39.39 0 0 0-.029-.518z" />
-									<path
-										fill-rule="evenodd"
-										d="M6.664 15.889A8 8 0 1 1 9.336.11a8 8 0 0 1-2.672 15.78zm-4.665-4.283A11.95 11.95 0 0 1 8 10c2.186 0 4.236.585 6.001 1.606a7 7 0 1 0-12.002 0"
-									/>
+				<div class="flex flex-1 min-w-0 items-center gap-1.5" data-tauri-drag-region>
+					<h2
+						data-testid="chat-header-title"
+						class="min-w-0 truncate text-sm font-semibold text-gray-100"
+						data-tauri-drag-region
+					>
+						{titleOverride || session?.title || 'New Session'}
+					</h2>
+
+					{/* Session menu sits next to the title, matching the Codex header placement. */}
+					<Dropdown
+						class="flex-shrink-0"
+						trigger={
+							<IconButton
+								size="sm"
+								title={!isConnected ? 'Not connected' : 'Session options'}
+								disabled={!isConnected}
+								class="text-gray-500"
+							>
+								<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+									<path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
 								</svg>
-								{formatTokens(displayStats.totalTokens)}
-							</span>
-							<span class="text-gray-600">·</span>
-							<span class="font-mono text-green-400">${displayStats.totalCost.toFixed(4)}</span>
-							{session?.config?.model && (
-								<>
-									<span class="hidden sm:inline text-gray-600">·</span>
-									<span
-										class="hidden sm:inline text-blue-400 font-medium"
-										title={session.config.model}
-									>
-										{getModelLabel(session.config.model)}
-									</span>
-								</>
-							)}
-							{(session?.worktree?.branch || session?.gitBranch) && (
-								<>
-									<span class="hidden sm:inline text-gray-600">·</span>
-									<span class="hidden sm:flex items-center gap-1 font-mono text-gray-500">
-										<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
-											/>
-										</svg>
-										{session?.worktree?.branch || session?.gitBranch}
-										{session?.worktree && (
-											<Tooltip content="Using isolated git worktree" position="bottom">
-												<GitBranchIcon className="w-3.5 h-3.5 text-purple-400" />
-											</Tooltip>
-										)}
-									</span>
-								</>
-							)}
-						</div>
-					</div>
+							</IconButton>
+						}
+						items={getHeaderActions()}
+					/>
 				</div>
 
-				{/* Options dropdown */}
-				<Dropdown
-					trigger={
-						<IconButton
-							title={!isConnected ? 'Not connected' : 'Session options'}
-							disabled={!isConnected}
-						>
-							<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-								<path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-							</svg>
-						</IconButton>
-					}
-					items={getHeaderActions()}
-				/>
+				{features.sessionInfo && (
+					<SessionInfoPanelButton
+						session={session}
+						messages={messages}
+						toolInputsMap={toolInputsMap}
+					/>
+				)}
 			</div>
 		</div>
 	);

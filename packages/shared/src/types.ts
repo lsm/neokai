@@ -603,6 +603,11 @@ export interface SessionMetadata {
 		createdAt?: string;
 		completedAt?: string;
 	};
+	archivedWorktree?: {
+		mainRepoPath: string;
+		worktreePath: string;
+		branch: string;
+	};
 	// Session architecture fields
 	/** Type of session in architecture context */
 	sessionType?: SessionType;

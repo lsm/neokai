@@ -9,38 +9,50 @@ import type { MessageHub } from '@neokai/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('dialog-handlers');
+const FOLDER_PICKER_TIMEOUT_MS = 10 * 60 * 1000;
+
+interface DialogPickFolderRequest {
+	timeoutMs?: number;
+}
+
+function normalizePickerTimeout(timeoutMs: unknown): number {
+	return typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+		? timeoutMs
+		: FOLDER_PICKER_TIMEOUT_MS;
+}
 
 /**
  * Open a native folder picker dialog
  * Returns the selected folder path or null if cancelled
  */
-async function pickFolder(): Promise<string | null> {
+async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string | null> {
 	const platform = process.platform;
 
 	try {
 		if (platform === 'darwin') {
 			// macOS - use osascript with AppleScript
 			// Use POSIX path to get the full filesystem path directly
-			const result = await runCommand('osascript', [
-				'-e',
-				`POSIX path of (choose folder with prompt "Select a workspace folder:")`,
-			]);
+			const result = await runCommand(
+				'osascript',
+				['-e', `POSIX path of (choose folder with prompt "Select a workspace folder:")`],
+				timeoutMs
+			);
 			return result?.trim() || null;
 		} else if (platform === 'linux') {
 			// Linux - try zenity first, then kdialog
 			if (await commandExists('zenity')) {
-				const result = await runCommand('zenity', [
-					'--file-selection',
-					'--directory',
-					'--title=Select a workspace folder',
-				]);
+				const result = await runCommand(
+					'zenity',
+					['--file-selection', '--directory', '--title=Select a workspace folder'],
+					timeoutMs
+				);
 				return result?.trim() || null;
 			} else if (await commandExists('kdialog')) {
-				const result = await runCommand('kdialog', [
-					'--getexistingdirectory',
-					'/',
-					'Select a workspace folder',
-				]);
+				const result = await runCommand(
+					'kdialog',
+					['--getexistingdirectory', '/', 'Select a workspace folder'],
+					timeoutMs
+				);
 				return result?.trim() || null;
 			} else {
 				log.warn('No dialog tool available on Linux (zenity or kdialog required)');
@@ -57,7 +69,7 @@ async function pickFolder(): Promise<string | null> {
 					$dialog.SelectedPath
 				}
 			`;
-			const result = await runCommand('powershell', ['-Command', psScript]);
+			const result = await runCommand('powershell', ['-Command', psScript], timeoutMs);
 			return result?.trim() || null;
 		} else {
 			log.warn(`Unsupported platform for folder picker: ${platform}`);
@@ -72,7 +84,7 @@ async function pickFolder(): Promise<string | null> {
 /**
  * Run a command and return stdout
  */
-async function runCommand(cmd: string, args: string[]): Promise<string | null> {
+async function runCommand(cmd: string, args: string[], timeoutMs?: number): Promise<string | null> {
 	const proc = Bun.spawn([cmd, ...args], {
 		stdout: 'pipe',
 		stderr: 'pipe',
@@ -102,8 +114,38 @@ async function runCommand(cmd: string, args: string[]): Promise<string | null> {
 		}
 	};
 
-	// Wait for both streams to be fully read AND process to exit
-	const [, , exitCode] = await Promise.all([readStdout(), readStderr(), proc.exited]);
+	const completion = Promise.all([readStdout(), readStderr(), proc.exited])
+		.then(([, , exitCode]) => ({ status: 'exited' as const, exitCode }))
+		.catch((error) => ({ status: 'error' as const, error }));
+
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	const timeout =
+		timeoutMs !== undefined
+			? new Promise<{ status: 'timeout' }>((resolve) => {
+					timeoutId = setTimeout(() => resolve({ status: 'timeout' }), timeoutMs);
+				})
+			: null;
+
+	const outcome = timeout ? await Promise.race([completion, timeout]) : await completion;
+	if (timeoutId !== undefined) clearTimeout(timeoutId);
+
+	if (outcome.status === 'timeout') {
+		log.warn(`Command '${cmd}' timed out after ${timeoutMs}ms; closing folder picker`);
+		try {
+			proc.kill();
+			await proc.exited.catch(() => {});
+		} catch (error) {
+			log.debug(`Failed to kill timed-out command '${cmd}':`, error);
+		}
+		return null;
+	}
+
+	if (outcome.status === 'error') {
+		log.debug(`Command '${cmd}' failed:`, outcome.error);
+		return null;
+	}
+
+	const { exitCode } = outcome;
 
 	// Combine all chunks
 	const stdout =
@@ -133,8 +175,8 @@ async function commandExists(cmd: string): Promise<boolean> {
 
 export function setupDialogHandlers(messageHub: MessageHub): void {
 	// dialog.pickFolder - Open native folder picker
-	messageHub.onRequest('dialog.pickFolder', async () => {
-		const path = await pickFolder();
+	messageHub.onRequest('dialog.pickFolder', async (data: DialogPickFolderRequest | undefined) => {
+		const path = await pickFolder(normalizePickerTimeout(data?.timeoutMs));
 		return { path };
 	});
 }

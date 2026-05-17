@@ -36,7 +36,6 @@ import { Logger } from '../logger';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { setupDialogHandlers } from './dialog-handlers';
 import { setupQuestionHandlers } from './question-handlers';
-import { setupLegacyInboxCompatHandlers } from './legacy-inbox-compat-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
@@ -89,6 +88,7 @@ import { setupSpaceMcpHandlers } from './space-mcp-handlers';
 import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
 import { setupWorkspaceHandlers } from './workspace-handlers';
+import { setupGitHandlers } from './git-handlers';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
 import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
 import { SpaceRepository } from '../../storage/repositories/space-repository';
@@ -235,9 +235,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const workspaceHistoryRepo = new WorkspaceHistoryRepository(deps.db.getDatabase());
 	setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo, deps.mcpImportService);
 
-	// Legacy inbox compatibility shim — the web Inbox UI still calls these RPCs.
-	// Room infrastructure is retired; this delegates directly to TaskRepository.
-	setupLegacyInboxCompatHandlers(deps.messageHub, deps.db, deps.reactiveDb);
+	// Git context RPC handlers — drives workspace pickers and the session Git panel.
+	setupGitHandlers(deps.messageHub, deps.sessionManager.getWorktreeManager(), deps.sessionManager);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);

@@ -15,9 +15,8 @@
  * - Delete inside input/textarea/contenteditable does not trigger onEdgeDelete
  * - Arrowhead markers are rendered in defs
  * - Multiple instances have non-colliding marker IDs
- * - Channel edge constants (CHANNEL_EDGE_COLOR, CHANNEL_EDGE_DASH_ARRAY, TASK_AGENT_X)
+ * - Channel edge constants (CHANNEL_EDGE_COLOR, CHANNEL_EDGE_DASH_ARRAY)
  * - computeChannelEdgePoints for regular node-to-node channels
- * - computeChannelEdgePoints for task-agent to node channels
  * - Bidirectional channel renders two arrowheads (markerStart + markerEnd)
  * - One-way channel renders one arrowhead (markerEnd only)
  * - Channel edges use dashed style (strokeDasharray)
@@ -38,7 +37,6 @@ import {
 	SELECTED_STROKE_WIDTH,
 	CHANNEL_EDGE_COLOR,
 	CHANNEL_EDGE_DASH_ARRAY,
-	TASK_AGENT_X,
 	computeChannelEdgePoints,
 	buildChannelPathD,
 	buildVisibleChannelPathD,
@@ -413,10 +411,6 @@ describe('Channel edge constants', () => {
 	it('CHANNEL_EDGE_DASH_ARRAY is a dashed pattern', () => {
 		expect(CHANNEL_EDGE_DASH_ARRAY).toBe('6 4');
 	});
-
-	it('TASK_AGENT_X is 60', () => {
-		expect(TASK_AGENT_X).toBe(60);
-	});
 });
 
 // ---------------------------------------------------------------------------
@@ -490,30 +484,6 @@ describe('computeChannelEdgePoints', () => {
 		expect(pts!.ty).toBe(250);
 	});
 
-	it('task-agent channel uses TASK_AGENT_X as source x', () => {
-		const channel: ResolvedWorkflowChannel = {
-			direction: 'one-way' as const,
-			fromStepId: 'task-agent',
-			toStepId: 'step-2',
-		};
-		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
-		expect(pts).not.toBeNull();
-		expect(pts!.sx).toBe(TASK_AGENT_X);
-	});
-
-	it('task-agent channel uses top-center of target node', () => {
-		const channel: ResolvedWorkflowChannel = {
-			direction: 'one-way' as const,
-			fromStepId: 'task-agent',
-			toStepId: 'step-2',
-		};
-		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
-		expect(pts).not.toBeNull();
-		// step-2: x=300, width=160 → center x = 380, y = 250
-		expect(pts!.tx).toBe(300 + 160 / 2);
-		expect(pts!.ty).toBe(250);
-	});
-
 	it('builds an orthogonal path for routed semantic channels', () => {
 		const channel: ResolvedWorkflowChannel = {
 			direction: 'one-way' as const,
@@ -573,7 +543,7 @@ function renderEdgesWithChannels(props: Partial<EdgeRendererProps> = {}) {
 describe('EdgeRenderer — channel edge rendering', () => {
 	it('renders channel edges when channels prop is provided', () => {
 		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'one-way' as const },
+			{ fromStepId: 'step-3', toStepId: 'step-1', direction: 'one-way' as const },
 			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'bidirectional' as const },
 		];
 		const { container } = renderEdgesWithChannels({ channels });
@@ -583,15 +553,15 @@ describe('EdgeRenderer — channel edge rendering', () => {
 
 	it('channel edges have correct data-testid attribute', () => {
 		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'one-way' as const },
+			{ fromStepId: 'step-3', toStepId: 'step-1', direction: 'one-way' as const },
 		];
 		const { getByTestId } = renderEdgesWithChannels({ channels });
-		expect(getByTestId('channel-edge-task-agent-step-1')).toBeTruthy();
+		expect(getByTestId('channel-edge-step-3-step-1')).toBeTruthy();
 	});
 
 	it('channel edges have correct data-channel-direction attribute', () => {
 		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'one-way' as const },
+			{ fromStepId: 'step-3', toStepId: 'step-1', direction: 'one-way' as const },
 			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'bidirectional' as const },
 		];
 		const { container } = renderEdgesWithChannels({ channels });

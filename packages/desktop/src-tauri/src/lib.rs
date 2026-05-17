@@ -1,13 +1,11 @@
 use std::sync::Mutex;
-use std::time::Duration;
 use tauri::{
 	menu::{Menu, MenuItem},
 	tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-	Emitter, Manager,
+	Manager, Runtime,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 use tauri_plugin_shell::process::CommandChild;
-use tauri_plugin_shell::ShellExt;
 
 // Store the sidecar child process for cleanup.
 struct SidecarState {
@@ -16,9 +14,19 @@ struct SidecarState {
 
 const DAEMON_URL: &str = "http://localhost:9283";
 
+fn kill_sidecar<R: Runtime>(app: &tauri::AppHandle<R>) {
+	if let Some(state) = app.try_state::<SidecarState>() {
+		if let Ok(mut guard) = state.child.lock() {
+			if let Some(child) = guard.take() {
+				let _ = child.kill();
+			}
+		}
+	}
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-	tauri::Builder::default()
+	let app = tauri::Builder::default()
 		.plugin(tauri_plugin_shell::init())
 		.plugin(tauri_plugin_notification::init())
 		.plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -64,13 +72,7 @@ pub fn run() {
 						// Kill the bundled daemon before exit; app.exit(0) calls
 						// std::process::exit which skips Drop, so without this the
 						// child can outlive the desktop app.
-						if let Some(state) = app.try_state::<SidecarState>() {
-							if let Ok(mut guard) = state.child.lock() {
-								if let Some(child) = guard.take() {
-									let _ = child.kill();
-								}
-							}
-						}
+						kill_sidecar(app);
 						app.exit(0);
 					}
 					_ => {}
@@ -117,6 +119,9 @@ pub fn run() {
 			// and the webview points straight at devUrl, so there's nothing to spawn.
 			#[cfg(not(debug_assertions))]
 			{
+				use tauri::Emitter;
+				use tauri_plugin_shell::ShellExt;
+
 				let sidecar_state = app.state::<SidecarState>();
 				let app_handle = app.handle().clone();
 
@@ -161,8 +166,8 @@ pub fn run() {
 									"[neokai] Process terminated with code: {:?}",
 									payload.code
 								);
-								let _ = app_handle_for_events
-									.emit("neokai-terminated", payload.code);
+								let _ =
+									app_handle_for_events.emit("neokai-terminated", payload.code);
 							}
 							_ => {}
 						}
@@ -180,7 +185,7 @@ pub fn run() {
 				tauri::async_runtime::spawn(async move {
 					let mut ready = false;
 					for attempt in 1..=30 {
-						tokio::time::sleep(Duration::from_millis(500)).await;
+						tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 						match reqwest::get(format!("{}/api/health", DAEMON_URL)).await {
 							Ok(response) if response.status().is_success() => {
 								log::info!("Daemon ready after {} attempts", attempt);
@@ -206,8 +211,7 @@ pub fn run() {
 						}
 					} else {
 						log::error!("Daemon failed to start within timeout");
-						let _ = app_handle
-							.emit("neokai-start-failed", "Daemon failed to start");
+						let _ = app_handle.emit("neokai-start-failed", "Daemon failed to start");
 					}
 				});
 			}
@@ -218,9 +222,7 @@ pub fn run() {
 					"Development mode: expecting neokai daemon at {}",
 					DAEMON_URL
 				);
-				log::info!(
-					"Run 'make dev PORT=9283' from the monorepo root to start the daemon"
-				);
+				log::info!("Run 'make dev PORT=9283' from the monorepo root to start the daemon");
 			}
 
 			Ok(())
@@ -240,6 +242,13 @@ pub fn run() {
 				}
 			}
 		})
-		.run(tauri::generate_context!())
-		.expect("error while running tauri application");
+		.build(tauri::generate_context!())
+		.expect("error while building tauri application");
+
+	app.run(|app_handle, event| match event {
+		tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+			kill_sidecar(app_handle);
+		}
+		_ => {}
+	});
 }

@@ -225,9 +225,6 @@ export function buildPathD(pts: EdgePoints): string {
 // Channel edge helpers
 // ---------------------------------------------------------------------------
 
-/** Fixed X position for the Task Agent hub rail on the left side of the canvas. */
-export const TASK_AGENT_X = 60;
-
 function getNodeAnchorPoint(
 	nodePos: NodePosition[string],
 	side: AnchorSide
@@ -451,12 +448,11 @@ function buildChannelOrthogonalPoints(
 	channel: ResolvedWorkflowChannel,
 	pts: EdgePoints
 ): Point2D[] {
-	const sourceSide =
-		channel.fromStepId === 'task-agent' ? 'right' : (channel.sourceSide ?? 'bottom');
+	const sourceSide = channel.sourceSide ?? 'bottom';
 	const targetSide = channel.targetSide ?? 'top';
 	const start = { x: pts.sx, y: pts.sy };
 	const end = { x: pts.tx, y: pts.ty };
-	const startLead = movePoint(start, sourceSide, channel.fromStepId === 'task-agent' ? 42 : 28);
+	const startLead = movePoint(start, sourceSide, 28);
 	const endLead = movePoint(end, targetSide, 28);
 
 	let midPoints: Point2D[] = [];
@@ -507,39 +503,14 @@ function getVisibleChannelPathPoints(channel: ResolvedWorkflowChannel, pts: Edge
 	);
 }
 
-/** Compute the bezier path for a channel edge connecting node ports.
- *  For the special 'task-agent' source, routes from the Task Agent rail (left side)
- *  to the target node's top-center port. */
+/** Compute the bezier path for a channel edge connecting node ports. */
 export function computeChannelEdgePoints(
 	channel: ResolvedWorkflowChannel,
 	nodePositions: NodePosition
 ): EdgePoints | null {
-	const toPos = nodePositions[channel.toStepId];
-	if (!toPos) return null;
-
-	// Handle Task Agent source (special virtual hub on the left side).
-	// Task Agent routes to the target's top-center (not side port), so we use
-	// a proportional offset (40-50% of distance) to ensure a smooth curve.
-	// This differs from regular node-to-node channels which use a fixed CHANNEL_CP_OFFSET
-	// since they connect side ports horizontally.
-	if (channel.fromStepId === 'task-agent') {
-		const sx = TASK_AGENT_X;
-		const sy = toPos.y + toPos.height / 2;
-		const tx = toPos.x + toPos.width / 2;
-		const ty = toPos.y;
-
-		const cpOffset = Math.max(40, Math.abs(tx - sx) * 0.5);
-		const cp1x = sx + cpOffset;
-		const cp1y = sy;
-		const cp2x = tx - cpOffset;
-		const cp2y = ty;
-
-		return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
-	}
-
-	// Regular node-to-node channel: connect using the routed semantic anchor sides.
 	const fromPos = nodePositions[channel.fromStepId];
-	if (!fromPos) return null;
+	const toPos = nodePositions[channel.toStepId];
+	if (!fromPos || !toPos) return null;
 
 	const sourceSide = channel.sourceSide ?? 'bottom';
 	const targetSide = channel.targetSide ?? 'top';

@@ -286,14 +286,15 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
 	});
 
 	test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {
-		// Pull the seeded Coding workflow — it must carry
+		// Pull the seeded Coding workflow — its end node must carry
 		// postApproval.targetAgent='reviewer' and an interpolated template.
 		const coding = h.workflowManager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === CODING_WORKFLOW.name);
 		expect(coding).toBeDefined();
-		expect(coding!.postApproval?.targetAgent).toBe('reviewer');
-		expect(coding!.postApproval?.instructions).toContain('{{pr_url}}');
+		const codingEndNode = coding!.nodes.find((node) => node.id === coding!.endNodeId);
+		expect(codingEndNode?.postApproval?.targetAgent).toBe('reviewer');
+		expect(codingEndNode?.postApproval?.instructions).toContain('{{pr_url}}');
 
 		// -----------------------------------------------------------------
 		// Seed a workflow run + task, then persist a `result` artifact with
@@ -478,6 +479,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
 			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name);
 		expect(planDecompose).toBeDefined();
 		expect(planDecompose!.postApproval).toBeUndefined();
+		expect(planDecompose!.nodes.some((node) => node.postApproval)).toBe(false);
 
 		const { taskId } = seedRunAndTask(h, planDecompose!.id, 'Plan the work');
 

@@ -12,7 +12,7 @@
  */
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'preact/hooks';
-import { isChannelCyclic, TASK_AGENT_NODE_ID } from '@neokai/shared';
+import { isChannelCyclic } from '@neokai/shared';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager';
@@ -177,7 +177,6 @@ export function useRuntimeCanvasData(
 	const endpointNodeIdLookup = useMemo(() => {
 		const map = new Map<string, string>();
 		for (const node of nodes) {
-			if (node.step.localId === TASK_AGENT_NODE_ID || node.step.id === TASK_AGENT_NODE_ID) continue;
 			if (node.step.agentId) map.set(node.step.agentId, node.step.localId);
 			if (node.step.name) map.set(node.step.name, node.step.localId);
 			for (const agent of node.step.agents ?? []) {
@@ -189,12 +188,7 @@ export function useRuntimeCanvasData(
 	}, [nodes]);
 
 	const nodeOrderByLocalId = useMemo(
-		() =>
-			new Map(
-				nodes
-					.filter((n) => n.step.localId !== TASK_AGENT_NODE_ID && n.step.id !== TASK_AGENT_NODE_ID)
-					.map((node, index) => [node.step.localId, index])
-			),
+		() => new Map(nodes.map((node, index) => [node.step.localId, index])),
 		[nodes]
 	);
 
@@ -284,15 +278,6 @@ export function useRuntimeCanvasData(
 		});
 	}, [routedSemanticEdges, channels, endpointNodeIdLookup, gates, gateDataMap, runId]);
 
-	// ---- Filter to regular nodes (exclude Task Agent) ----
-	const regularNodes = useMemo(
-		() =>
-			nodes.filter(
-				(node) => node.step.id !== TASK_AGENT_NODE_ID && node.step.localId !== TASK_AGENT_NODE_ID
-			),
-		[nodes]
-	);
-
 	// ---- Build WorkflowNodeData[] ----
 	const nodeData = useMemo<WorkflowNodeData[]>(() => {
 		const startKey =
@@ -303,7 +288,7 @@ export function useRuntimeCanvasData(
 			? (workflow.nodes.find((s) => s.id === workflow.endNodeId)?.id ?? undefined)
 			: undefined;
 
-		return regularNodes.map((node, i) => {
+		return nodes.map((node, i) => {
 			const nodeId = node.step.id;
 			const allNodeExecs = nodeId ? (nodeExecutionsByNodeId.get(nodeId) ?? []) : [];
 			const nodeExecs = runId
@@ -330,21 +315,10 @@ export function useRuntimeCanvasData(
 				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
 			};
 		});
-	}, [
-		regularNodes,
-		agents,
-		channels,
-		workflow,
-		nodeExecutionsByNodeId,
-		runId,
-		anchorUsageByNodeId,
-	]);
+	}, [nodes, agents, channels, workflow, nodeExecutionsByNodeId, runId, anchorUsageByNodeId]);
 
 	// ---- Build canvas node positions ----
-	const canvasNodePositions = useMemo<NodePosition>(
-		() => buildVisualNodePositions(regularNodes),
-		[regularNodes]
-	);
+	const canvasNodePositions = useMemo<NodePosition>(() => buildVisualNodePositions(nodes), [nodes]);
 
 	return {
 		nodeData,

@@ -273,9 +273,7 @@ describe('useRuntimeCanvasData', () => {
 
 		await waitFor(() => {
 			const { channelEdges } = result.current;
-			const edge = channelEdges.find(
-				(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
-			);
+			const edge = channelEdges[0];
 			expect(edge?.runtimeStatus).toBe('open');
 		});
 	});
@@ -302,9 +300,7 @@ describe('useRuntimeCanvasData', () => {
 
 		await waitFor(() => {
 			const { channelEdges } = result.current;
-			const edge = channelEdges.find(
-				(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
-			);
+			const edge = channelEdges[0];
 			expect(edge?.runtimeStatus).toBe('waiting_human');
 		});
 	});
@@ -330,9 +326,7 @@ describe('useRuntimeCanvasData', () => {
 
 		await waitFor(() => {
 			const { channelEdges } = result.current;
-			const edge = channelEdges.find(
-				(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
-			);
+			const edge = channelEdges[0];
 			expect(edge?.runtimeStatus).toBe('blocked');
 		});
 	});

@@ -40,6 +40,27 @@ function createMockProcess(stdout: string, exitCode: number = 0) {
 	};
 }
 
+function createHangingMockProcess() {
+	let resolveExit: (exitCode: number) => void = () => {};
+	const exited = new Promise<number>((resolve) => {
+		resolveExit = resolve;
+	});
+	const createOpenStream = () =>
+		new ReadableStream<Uint8Array>({
+			start() {
+				// Keep the stream open until the process is killed.
+			},
+		});
+	const kill = mock(() => resolveExit(143));
+
+	return {
+		stdout: createOpenStream(),
+		stderr: createOpenStream(),
+		exited,
+		kill,
+	};
+}
+
 // Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
 	hub: MessageHub;
@@ -168,6 +189,18 @@ describe('Dialog RPC Handlers', () => {
 				const result = await handler({}, {});
 
 				expect(result).toEqual({ path: null });
+			});
+
+			it('closes the folder picker process when the daemon-side timeout expires', async () => {
+				setPlatform('darwin');
+				const proc = createHangingMockProcess();
+				spawnSpy.mockImplementation(() => proc as unknown as ReturnType<typeof Bun.spawn>);
+
+				const handler = messageHubData.handlers.get('dialog.pickFolder')!;
+				const result = await handler({ timeoutMs: 1 }, {});
+
+				expect(result).toEqual({ path: null });
+				expect(proc.kill).toHaveBeenCalledTimes(1);
 			});
 		});
 

@@ -7,6 +7,7 @@ export interface CliOptions {
 	port?: number;
 	host?: string;
 	dbPath?: string;
+	workspaceRoot?: string;
 	help?: boolean;
 	version?: boolean;
 }
@@ -47,6 +48,11 @@ export function parseArgs(args: string[]): ParseArgsResult {
 			if (!options.dbPath) {
 				return { options, error: '--db-path requires a path' };
 			}
+		} else if (arg === '--workspace') {
+			options.workspaceRoot = args[++i];
+			if (!options.workspaceRoot) {
+				return { options, error: '--workspace requires a path' };
+			}
 		} else {
 			// Unknown option - set help flag and return error
 			options.help = true;
@@ -70,12 +76,14 @@ Options:
   -p, --port <port>         Port to listen on (default: 9283)
   --host <host>             Host to bind to (default: 0.0.0.0)
   --db-path <path>          Database file path (default: ~/.neokai/data/daemon.db)
+  --workspace <path>        Default workspace root for file indexing
   -V, --version             Show version number
   -h, --help                Show this help message
 
 Examples:
   kai                           Start server (database at ~/.neokai/data/daemon.db)
   kai -p 8080                   Start on port 8080
+  kai --workspace ~/code         Start with a default workspace root
   kai --db-path /data/db.db     Use a custom database path
 `;
 }

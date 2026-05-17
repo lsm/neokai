@@ -3,6 +3,8 @@ import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
 import { defineConfig } from 'vite';
 
+const repoTmpDir = resolve(__dirname, '../../tmp').replace(/\\/g, '/');
+
 export default defineConfig({
 	plugins: [preact(), tailwindcss()],
 
@@ -58,7 +60,7 @@ export default defineConfig({
 				'**/node_modules/**',
 				'**/dist/**',
 				'**/data/**',
-				'**/tmp/**', // This covers tmp/workspace/.worktrees/ as well
+				`${repoTmpDir}/**`, // Repo-local tmp only; worktrees may live under /Users/.../tmp.
 			],
 			usePolling: false, // Use native file system events
 		},

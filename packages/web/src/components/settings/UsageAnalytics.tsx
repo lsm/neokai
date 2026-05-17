@@ -27,7 +27,7 @@ interface UsageData {
 
 function StatCard({ label, value, subtext }: { label: string; value: string; subtext?: string }) {
 	return (
-		<div class="bg-dark-800 border border-dark-700 rounded-lg p-4">
+		<div class="bg-white/[0.025] border border-white/[0.08] rounded-lg p-4">
 			<div class="text-xs text-gray-400 mb-1">{label}</div>
 			<div class="text-xl font-semibold text-gray-100">{value}</div>
 			{subtext && <div class="text-xs text-gray-500 mt-1">{subtext}</div>}
@@ -119,7 +119,7 @@ export function UsageAnalytics() {
 					type="button"
 					onClick={fetchUsage}
 					disabled={loading}
-					class="text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1.5 px-2 py-1 rounded border border-dark-700 hover:border-dark-600 disabled:opacity-50"
+					class="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-dark-800 px-2.5 py-1.5 text-xs text-gray-300 transition-colors hover:border-dark-500 hover:bg-dark-700 hover:text-gray-100 disabled:opacity-50"
 				>
 					<svg
 						class={`w-3 h-3 ${loading ? 'animate-spin' : ''}`}

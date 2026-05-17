@@ -108,6 +108,14 @@ describe('getConfig', () => {
 		expect(config.dbPath).toBe('/cli/path/db.sqlite');
 	});
 
+	test('CLI workspace override takes precedence over env var', () => {
+		process.env.NEOKAI_WORKSPACE_ROOT = '/env/workspace';
+
+		const config = getConfig({ workspaceRoot: '/cli/workspace' });
+
+		expect(config.workspaceRoot).toBe('/cli/workspace');
+	});
+
 	test('DB_PATH env var takes precedence over default path', () => {
 		process.env.DB_PATH = '/custom/database.db';
 

@@ -13,7 +13,6 @@ import {
 	settingsSectionSignal,
 } from './signals.ts';
 import {
-	navigateToInbox,
 	navigateToSessions,
 	navigateToSettings,
 	navigateToSpace,
@@ -99,17 +98,6 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 			closePalette();
 			navSectionSignal.value = 'chats';
 			navigateToSessions();
-		},
-	},
-	{
-		id: 'nav.inbox',
-		label: 'Go to inbox',
-		category: 'navigation',
-		keywords: ['notifications'],
-		run: () => {
-			closePalette();
-			navSectionSignal.value = 'inbox';
-			navigateToInbox();
 		},
 	},
 	{

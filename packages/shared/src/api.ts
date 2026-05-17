@@ -10,6 +10,7 @@ import type {
 	SessionConfig,
 	Tool,
 	ToolBundle,
+	CommitInfo,
 	WorktreeCommitStatus,
 	// SDK Config types
 	SDKConfig,
@@ -38,6 +39,7 @@ export interface CreateSessionRequest {
 	initialTools?: string[];
 	config?: Partial<SessionConfig>;
 	worktreeBaseBranch?: string; // Base branch for worktree (default: HEAD)
+	worktreeMode?: 'worktree' | 'direct'; // Explicit worktree decision — skips the in-chat choice prompt
 	title?: string; // Optional title - if provided, skips auto-title generation
 	roomId?: string; // Optional room ID to assign session to
 	spaceId?: string; // Optional space ID to assign session to
@@ -113,6 +115,103 @@ export interface WorkspaceRemoveRequest {
 
 export interface WorkspaceRemoveResponse {
 	success: boolean;
+}
+
+/** Response for `git.branches` — git context for a folder path. */
+export interface GitBranchesResponse {
+	/** Whether the path is inside a git repository. */
+	isGitRepo: boolean;
+	/** Absolute path to the repository root, or null when not a git repo. */
+	gitRoot: string | null;
+	/** Branch HEAD currently points to, or null when detached / unborn. */
+	currentBranch: string | null;
+	/** Best-guess default branch (origin/HEAD, else main/master), or null. */
+	defaultBranch: string | null;
+	/** Local branch names. */
+	branches: string[];
+	/** Whether the working tree has uncommitted changes. */
+	isDirty: boolean;
+}
+
+export type GitSessionMode = 'worktree' | 'direct' | 'none';
+
+export type GitFileStatusKind =
+	| 'modified'
+	| 'added'
+	| 'deleted'
+	| 'renamed'
+	| 'untracked'
+	| 'conflicted'
+	| 'other';
+
+export interface GitChangedFile {
+	path: string;
+	oldPath?: string;
+	status: GitFileStatusKind;
+	staged: boolean;
+}
+
+export type GitReviewFileSource = 'branch' | 'working_tree' | 'both';
+
+export interface GitReviewFile {
+	path: string;
+	oldPath?: string;
+	status: GitFileStatusKind;
+	additions: number;
+	deletions: number;
+	patch: string | null;
+	patchTruncated: boolean;
+	source: GitReviewFileSource;
+}
+
+export interface GitPullRequestSummary {
+	number: number;
+	title: string;
+	url: string;
+	state: string;
+	isDraft: boolean;
+	mergeable: string | null;
+	reviewDecision: string | null;
+	headRefName: string | null;
+	baseRefName: string | null;
+	additions: number;
+	deletions: number;
+}
+
+export interface GitCheckSummary {
+	name: string;
+	state: string;
+	bucket: string | null;
+	url: string | null;
+}
+
+export interface GitReviewSummary {
+	files: GitReviewFile[];
+	totalAdditions: number;
+	totalDeletions: number;
+	pullRequest: GitPullRequestSummary | null;
+	checks: GitCheckSummary[];
+	githubError?: string;
+}
+
+/** Response for `git.sessionStatus` — Git context for a specific chat session. */
+export interface GitSessionStatusResponse {
+	sessionId: string;
+	mode: GitSessionMode;
+	isGitRepo: boolean;
+	workspacePath: string | null;
+	worktreePath: string | null;
+	mainRepoPath: string | null;
+	branch: string | null;
+	baseBranch: string | null;
+	defaultBranch: string | null;
+	isDirty: boolean;
+	files: GitChangedFile[];
+	commitsAhead: CommitInfo[];
+	aheadCount: number | null;
+	behindCount: number | null;
+	review: GitReviewSummary;
+	error?: string;
 }
 
 export interface ArchiveSessionRequest {

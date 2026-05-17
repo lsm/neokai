@@ -94,13 +94,13 @@ async function createTestSpace(page: Page): Promise<string> {
 
 /**
  * Helper to add a node with a given step name and configure two agents.
- * Returns the node locator (not including Task Agent virtual node).
+ * Returns the node locator.
  */
 async function addMultiAgentNode(
 	editor: import('@playwright/test').Locator,
 	stepName: string
 ): Promise<import('@playwright/test').Locator> {
-	const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
+	const nodes = editor.locator('[data-testid^="workflow-node-"]');
 	const countBefore = await nodes.count();
 
 	await editor.getByTestId('add-step-button').click();
@@ -221,7 +221,7 @@ test.describe('Agent-Centric Workflow', () => {
 
 		// Add a step with two agents
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
+		const nodes = editor.locator('[data-testid^="workflow-node-"]');
 		await expect(nodes).toHaveCount(1, { timeout: 3000 });
 
 		await nodes.first().click();

@@ -222,69 +222,43 @@ function WorkflowCard({
 	return (
 		<div
 			class={[
-				'bg-dark-850 border rounded-lg p-4 hover:border-dark-600 transition-colors group',
-				workflow.disabled ? 'border-dark-800 opacity-60' : 'border-dark-700',
+				'group border-b border-white/10 py-3 transition-colors last:border-b-0',
+				workflow.disabled ? 'opacity-60' : '',
 			].join(' ')}
 		>
 			{deleteError && (
-				<div class="mb-2 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
-					{deleteError}
-				</div>
+				<div class="mb-2 rounded bg-red-900/20 px-3 py-1.5 text-xs text-red-300">{deleteError}</div>
 			)}
 
-			<div class="flex items-start justify-between gap-3">
-				<div class="flex-1 min-w-0">
-					<div class="flex items-center gap-2">
+			<div class="flex items-start justify-between gap-4">
+				<div class="min-w-0 flex-1">
+					<div class="flex min-w-0 items-center gap-2">
 						<h3 class="text-sm font-medium text-gray-200 truncate">{workflow.name}</h3>
 						{workflow.disabled && (
-							<span class="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium bg-red-900/20 border border-red-800/40 rounded text-red-400 shrink-0">
+							<span class="inline-flex shrink-0 items-center rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
 								Disabled
 							</span>
 						)}
 					</div>
 					{workflow.description && (
-						<p class="text-xs text-gray-500 mt-0.5 line-clamp-2">{workflow.description}</p>
+						<p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">{workflow.description}</p>
 					)}
 					{/* Template badge + drift indicator */}
 					{workflow.templateName && (
-						<div class="flex items-center gap-1.5 mt-1">
-							<span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-dark-800 border border-dark-600 rounded text-gray-500">
-								<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
-									/>
-								</svg>
+						<div class="mt-1.5 flex items-center gap-1.5">
+							<span class="inline-flex items-center rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-500">
 								{workflow.templateName}
 							</span>
 							{driftDrifted === true && (
-								<span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-yellow-900/30 border border-yellow-700/50 rounded text-yellow-400">
-									<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-										/>
-									</svg>
+								<span class="inline-flex items-center rounded bg-yellow-500/10 px-1.5 py-0.5 text-xs text-yellow-300">
 									Outdated
 								</span>
 							)}
 							{duplicateDrift && (
 								<span
-									class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-orange-900/30 border border-orange-700/50 rounded text-orange-400"
+									class="inline-flex items-center rounded bg-orange-500/10 px-1.5 py-0.5 text-xs text-orange-300"
 									title={`${duplicateDrift.groupSize} rows share the "${duplicateDrift.templateName}" template with diverging content. Resync keeps the newest row and removes the rest.`}
 								>
-									<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
-										/>
-									</svg>
 									Duplicate ×{duplicateDrift.groupSize}
 								</span>
 							)}
@@ -295,7 +269,7 @@ function WorkflowCard({
 				{/* Action buttons */}
 				<div
 					data-testid="workflow-card-actions"
-					class="flex items-center gap-1.5 flex-shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+					class="flex flex-shrink-0 items-center gap-1.5 opacity-70 transition-opacity group-hover:opacity-100"
 				>
 					{confirmDelete ? (
 						<>
@@ -319,7 +293,7 @@ function WorkflowCard({
 							{workflow.templateName && driftDrifted === true && (
 								<button
 									onClick={() => setConfirmSync(true)}
-									class="px-2.5 py-1 text-xs text-yellow-400 hover:text-yellow-200 bg-dark-800 hover:bg-dark-700 rounded border border-yellow-700/50 hover:border-yellow-600/70 transition-colors"
+									class="rounded-md px-2 py-1 text-xs text-yellow-300 transition-colors hover:bg-white/5 hover:text-yellow-200"
 									title="Sync from template (overwrites local changes)"
 								>
 									Sync
@@ -328,7 +302,7 @@ function WorkflowCard({
 							{duplicateDrift?.isNewest && (
 								<button
 									onClick={() => setConfirmDupResync(true)}
-									class="px-2.5 py-1 text-xs text-orange-400 hover:text-orange-200 bg-dark-800 hover:bg-dark-700 rounded border border-orange-700/50 hover:border-orange-600/70 transition-colors"
+									class="rounded-md px-2 py-1 text-xs text-orange-300 transition-colors hover:bg-white/5 hover:text-orange-200"
 									title={`Remove ${duplicateDrift.groupSize - 1} older duplicate${duplicateDrift.groupSize - 1 === 1 ? '' : 's'} and resync this workflow from the built-in template`}
 								>
 									Resync duplicates
@@ -336,13 +310,13 @@ function WorkflowCard({
 							)}
 							<button
 								onClick={onEdit}
-								class="px-2.5 py-1 text-xs text-gray-500 hover:text-gray-200 bg-dark-800 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 transition-colors"
+								class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
 							>
 								Edit
 							</button>
 							<button
 								onClick={handleExport}
-								class="px-2.5 py-1 text-xs text-gray-500 hover:text-gray-200 bg-dark-800 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 transition-colors"
+								class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
 								title="Export workflow"
 							>
 								<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -356,7 +330,7 @@ function WorkflowCard({
 							</button>
 							<button
 								onClick={() => setConfirmDelete(true)}
-								class="px-2.5 py-1 text-xs text-gray-500 hover:text-red-400 bg-dark-800 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 transition-colors"
+								class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
 								title="Delete workflow"
 							>
 								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -373,23 +347,18 @@ function WorkflowCard({
 				</div>
 			</div>
 
-			{/* Mini step viz */}
-			<div class="mt-3">
-				<MiniStepViz workflow={workflow} />
-			</div>
-
-			{/* Step count + tags footer */}
-			<div class="mt-2.5 flex items-center gap-2 flex-wrap">
+			<div class="mt-2 flex flex-wrap items-center gap-2">
 				<span class="text-xs text-gray-600">
 					{workflow.nodeCount} {workflow.nodeCount === 1 ? 'step' : 'steps'}
 				</span>
+				<MiniStepViz workflow={workflow} />
 				{workflow.tags.length > 0 && (
 					<>
 						<span class="text-gray-700">·</span>
 						{workflow.tags.map((tag) => (
 							<span
 								key={tag}
-								class="px-1.5 py-0.5 text-xs bg-dark-800 border border-dark-700 rounded text-gray-500"
+								class="rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-500"
 							>
 								{tag}
 							</span>
@@ -665,17 +634,22 @@ export function WorkflowList({
 	}
 
 	return (
-		<div class="flex flex-col h-full overflow-hidden">
-			{/* Header */}
-			<div class="flex items-center justify-between px-6 py-4 border-b border-dark-700 flex-shrink-0">
-				<h1 class="text-sm font-semibold text-gray-100">
-					Workflows <span class="text-xs text-gray-500 font-normal">({workflows.length})</span>
-				</h1>
+		<div class="flex h-full min-h-0 flex-col overflow-hidden">
+			<div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3">
+				<div class="flex min-w-0 items-start gap-3">
+					<div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-purple-400/70" />
+					<div class="min-w-0">
+						<p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
+							{workflows.length} {workflows.length === 1 ? 'workflow' : 'workflows'}
+						</p>
+						<p class="mt-1 text-xs text-gray-500">Reusable multi-agent pipelines for this space.</p>
+					</div>
+				</div>
 				<div class="flex items-center gap-2">
 					<button
 						type="button"
 						onClick={startImport}
-						class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-300 hover:text-gray-100 hover:bg-dark-800 rounded-lg transition-colors"
+						class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
 					>
 						<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
 							<path
@@ -691,7 +665,7 @@ export function WorkflowList({
 						<button
 							type="button"
 							onClick={exportAll}
-							class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-300 hover:text-gray-100 hover:bg-dark-800 rounded-lg transition-colors"
+							class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
 						>
 							<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
 								<path
@@ -706,7 +680,7 @@ export function WorkflowList({
 					)}
 					<button
 						onClick={onCreateWorkflow}
-						class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+						class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
 					>
 						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
@@ -721,8 +695,7 @@ export function WorkflowList({
 				</div>
 			</div>
 
-			{/* List */}
-			<div class="flex-1 overflow-y-auto p-6">
+			<div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto pr-3">
 				<div class="min-h-[calc(100%+1px)]">
 					{workflows.length === 0 ? (
 						<div class="text-center py-12">
@@ -753,7 +726,7 @@ export function WorkflowList({
 							</button>
 						</div>
 					) : (
-						<div class="space-y-3">
+						<div>
 							{workflows.map((wf) => (
 								<WorkflowCard
 									key={wf.id}

@@ -111,7 +111,7 @@ describe('WorkflowList', () => {
 
 	it('renders Workflows heading', () => {
 		const { getByText } = render(<WorkflowList {...defaultProps} />);
-		expect(getByText(/Workflows/)).toBeTruthy();
+		expect(getByText('0 workflows')).toBeTruthy();
 	});
 
 	it('renders Create Workflow button in header', () => {

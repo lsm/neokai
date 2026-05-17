@@ -132,7 +132,7 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		const positions = autoLayout(workflow.nodes, [], workflow.startNodeId!);
 		const elapsed = performance.now() - start;
 
-		// Verify correctness: all 25 regular nodes + 1 Task Agent virtual node must receive a position.
+		// Verify correctness: all 25 workflow nodes must receive a position.
 		expect(positions.size).toBe(25);
 
 		// Performance gate: layout must finish well within 100ms.
@@ -147,7 +147,7 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		const workflow = buildLargeWorkflow();
 		const positions = autoLayout(workflow.nodes, [], workflow.startNodeId!);
 
-		// All 25 regular nodes + 1 Task Agent virtual node should have a position entry.
+		// All 25 workflow nodes should have a position entry.
 		expect(positions.size).toBe(25);
 
 		// No two nodes may share the exact same canvas point.

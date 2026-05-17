@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import {
 	buildVisualNodePositions,
 	getVisualNodeDimensions,
@@ -7,25 +6,9 @@ import {
 	MULTI_AGENT_NODE_WIDTH,
 	SINGLE_AGENT_NODE_HEIGHT,
 	SINGLE_AGENT_NODE_WIDTH,
-	TASK_AGENT_NODE_HEIGHT,
-	TASK_AGENT_NODE_WIDTH,
 } from '../nodeMetrics';
 
 describe('nodeMetrics', () => {
-	it('returns task-agent dimensions for the virtual task agent node', () => {
-		expect(
-			getVisualNodeDimensions({
-				localId: TASK_AGENT_NODE_ID,
-				id: TASK_AGENT_NODE_ID,
-				name: 'Task Agent',
-				agentId: '',
-			})
-		).toEqual({
-			width: TASK_AGENT_NODE_WIDTH,
-			height: TASK_AGENT_NODE_HEIGHT,
-		});
-	});
-
 	it('returns multi-agent dimensions for multi-agent workflow nodes', () => {
 		expect(
 			getVisualNodeDimensions({
@@ -61,15 +44,6 @@ describe('nodeMetrics', () => {
 		const positions = buildVisualNodePositions([
 			{
 				step: {
-					localId: TASK_AGENT_NODE_ID,
-					id: TASK_AGENT_NODE_ID,
-					name: 'Task Agent',
-					agentId: '',
-				},
-				position: { x: 50, y: 20 },
-			},
-			{
-				step: {
 					localId: 'review',
 					name: 'Code Review',
 					agentId: '',
@@ -83,13 +57,6 @@ describe('nodeMetrics', () => {
 				position: { x: 100, y: 200 },
 			},
 		]);
-
-		expect(positions[TASK_AGENT_NODE_ID]).toEqual({
-			x: 50,
-			y: 20,
-			width: TASK_AGENT_NODE_WIDTH,
-			height: TASK_AGENT_NODE_HEIGHT,
-		});
 
 		expect(positions.review).toEqual({
 			x: 100,

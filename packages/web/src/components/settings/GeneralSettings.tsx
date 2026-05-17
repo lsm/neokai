@@ -191,40 +191,50 @@ export function GeneralSettings() {
 				/>
 			</SettingsRow>
 
-			<SettingsRow label="Setting Sources" description="Which on-disk settings files the SDK loads">
-				<div class="space-y-2">
-					<label class="flex items-center gap-2 cursor-pointer">
+			<SettingsRow
+				label="Setting Sources"
+				description="Which on-disk settings files the SDK loads"
+				layout="stacked"
+			>
+				<div class="grid gap-2 sm:grid-cols-3">
+					<label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-white/[0.08] bg-dark-900/40 px-3 py-2.5">
 						<input
 							type="checkbox"
 							checked={localSettingSources.includes('user')}
 							onChange={() => toggleSettingSource('user')}
 							disabled={isUpdating}
-							class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 						/>
-						<span class="text-sm text-gray-200">User settings</span>
-						<span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+						<span class="min-w-0">
+							<span class="block text-sm text-gray-200">User settings</span>
+							<span class="block truncate text-xs text-gray-500">~/.claude/settings.json</span>
+						</span>
 					</label>
-					<label class="flex items-center gap-2 cursor-pointer">
+					<label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-white/[0.08] bg-dark-900/40 px-3 py-2.5">
 						<input
 							type="checkbox"
 							checked={localSettingSources.includes('project')}
 							onChange={() => toggleSettingSource('project')}
 							disabled={isUpdating}
-							class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 						/>
-						<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
-						<span class="text-xs text-gray-500">(.claude/settings.json)</span>
+						<span class="min-w-0">
+							<span class="block text-sm text-gray-200">Project settings</span>
+							<span class="block truncate text-xs text-gray-500">.claude/settings.json</span>
+						</span>
 					</label>
-					<label class="flex items-center gap-2 cursor-pointer">
+					<label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-white/[0.08] bg-dark-900/40 px-3 py-2.5">
 						<input
 							type="checkbox"
 							checked={localSettingSources.includes('local')}
 							onChange={() => toggleSettingSource('local')}
 							disabled={isUpdating}
-							class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 						/>
-						<span class="text-sm text-gray-200">Local settings</span>
-						<span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+						<span class="min-w-0">
+							<span class="block text-sm text-gray-200">Local settings</span>
+							<span class="block truncate text-xs text-gray-500">.claude/settings.local.json</span>
+						</span>
 					</label>
 				</div>
 			</SettingsRow>

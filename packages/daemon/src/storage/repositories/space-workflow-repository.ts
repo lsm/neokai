@@ -52,9 +52,8 @@ interface WorkflowRow {
 	instructions: string | null;
 	completion_autonomy_level: number;
 	/**
-	 * JSON-encoded `PostApprovalRoute` — null when the workflow has no
-	 * post-approval route configured. Added in PR 1/5 of the post-approval
-	 * refactor; no runtime consumer reads this yet.
+	 * JSON-encoded legacy workflow-level `PostApprovalRoute` — null when the
+	 * workflow has no legacy route configured. New routes live in node config.
 	 */
 	post_approval?: string | null;
 	disabled: number;
@@ -77,6 +76,8 @@ interface NodeRow {
 interface NodeConfigJson {
 	/** Multi-agent array */
 	agents?: WorkflowNodeAgent[];
+	/** Optional post-approval route scoped to this workflow node. */
+	postApproval?: PostApprovalRoute;
 	/**
 	 * Forward-compat: rows persisted before PR 5/5 of the
 	 * task-agent-as-post-approval-executor refactor may carry a legacy
@@ -127,8 +128,8 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
 	// Forward-compat: drop the deprecated `completionActions` key without
 	// failing the load. Older rows persisted before PR 5/5 of the
 	// task-agent-as-post-approval-executor refactor still carry it. The
-	// runtime no longer routes through it — the workflow's `postApproval`
-	// route is the supported replacement. We do NOT log here per-node; the
+	// runtime no longer routes through it — node-level `postApproval` routes
+	// are the supported replacement. We do NOT log here per-node; the
 	// caller aggregates stripped fields and emits a single structured
 	// `workflow.migrated` log line per workflow load. See plan §6.1.
 	if (cfg.completionActions !== undefined && ctx) {
@@ -139,6 +140,7 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
 		id: row.id,
 		name: row.name,
 		agents,
+		...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
 	};
 }
 
@@ -478,7 +480,10 @@ export class SpaceWorkflowRepository {
 		);
 
 		for (const node of nodes) {
-			const cfg: NodeConfigJson = { agents: node.agents };
+			const cfg: NodeConfigJson = {
+				agents: node.agents,
+				...(node.postApproval ? { postApproval: node.postApproval } : {}),
+			};
 			const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
 			if (result.changes === 0) {
 				log.error(
@@ -674,6 +679,9 @@ export class SpaceWorkflowRepository {
 		}
 		if (resolvedAgents && resolvedAgents.length > 0) {
 			nodeCfg.agents = resolvedAgents;
+		}
+		if (input.postApproval) {
+			nodeCfg.postApproval = input.postApproval;
 		}
 
 		return nodeCfg;

@@ -56,7 +56,7 @@ const SpaceTaskPane = lazy(() =>
 
 /** Shared Suspense fallback for lazy-loaded space views. */
 const lazyFallback = (
-	<div class="flex-1 flex items-center justify-center bg-dark-900">
+	<div class="flex-1 flex items-center justify-center bg-app-content">
 		<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
 	</div>
 );
@@ -211,23 +211,28 @@ export default function SpaceIsland({
 	// ChatContainer's root is already flex-1 flex-col overflow-hidden.
 	// AgentOverlayChat uses a Portal so it doesn't affect layout.
 	if (sessionViewId) {
+		const isSpaceAgentSession = sessionViewId === `space:chat:${spaceId}`;
 		return (
 			<>
-				<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
+				<ChatContainer
+					key={sessionViewId}
+					sessionId={sessionViewId}
+					titleOverride={isSpaceAgentSession ? 'Space Agent' : undefined}
+				/>
 				{overlay}
 			</>
 		);
 	}
 	if (!space && !error) {
 		return (
-			<div class="flex-1 flex items-center justify-center bg-dark-900">
+			<div class="flex-1 flex items-center justify-center bg-app-content">
 				<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
 			</div>
 		);
 	}
 	if (!space && error) {
 		return (
-			<div class="flex-1 flex items-center justify-center bg-dark-900">
+			<div class="flex-1 flex items-center justify-center bg-app-content">
 				<div class="text-center max-w-sm">
 					<p class="text-sm text-red-400 mb-2">Failed to load space</p>
 					<p class="text-xs text-gray-600">{error}</p>
@@ -239,7 +244,10 @@ export default function SpaceIsland({
 	if (taskViewId) {
 		return (
 			<>
-				<div class="flex-1 flex flex-col overflow-hidden bg-dark-900" data-testid="space-task-pane">
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-app-content"
+					data-testid="space-task-pane"
+				>
 					<Suspense fallback={lazyFallback}>
 						<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
 					</Suspense>
@@ -253,16 +261,15 @@ export default function SpaceIsland({
 		return (
 			<>
 				<div
-					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					class="flex-1 flex flex-col overflow-hidden bg-app-content"
 					data-testid="space-tasks-view"
 				>
 					<SpacePageHeader
-						spaceName={space.name}
 						pageTitle="Tasks"
 						actions={
 							<button
 								onClick={() => setCreateTaskOpen(true)}
-								class="p-1.5 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+								class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100"
 								aria-label="Create task"
 								title="Create task"
 							>
@@ -309,17 +316,16 @@ export default function SpaceIsland({
 		return (
 			<>
 				<div
-					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					class="flex-1 flex flex-col overflow-hidden bg-app-content"
 					data-testid="space-sessions-view"
 				>
 					<SpacePageHeader
-						spaceName={space.name}
 						pageTitle="Sessions"
 						actions={
 							<button
 								onClick={handleCreateSession}
 								disabled={creatingSession}
-								class="p-1.5 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+								class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
 								aria-label="Create session"
 								title="Create session"
 							>
@@ -349,10 +355,10 @@ export default function SpaceIsland({
 		return (
 			<>
 				<div
-					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					class="flex-1 flex flex-col overflow-hidden bg-app-content"
 					data-testid="space-configure-view"
 				>
-					<SpacePageHeader spaceName={space.name} pageTitle="Settings" />
+					<SpacePageHeader pageTitle="Settings" />
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
 						<Suspense fallback={lazyFallback}>
 							<SpaceConfigurePage space={space} />
@@ -368,10 +374,10 @@ export default function SpaceIsland({
 		<>
 			{overlay}
 			<div
-				class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+				class="flex-1 flex flex-col overflow-hidden bg-app-content"
 				data-testid="space-overview-view"
 			>
-				<SpacePageHeader spaceName={space?.name ?? ''} pageTitle="Overview" />
+				<SpacePageHeader pageTitle="Overview" />
 				<div class="flex-1 overflow-hidden flex flex-col min-w-0">
 					<Suspense fallback={lazyFallback}>
 						<SpaceOverview
