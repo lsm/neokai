@@ -15,8 +15,14 @@ export function setupAgentMemoryHandlers(
 			spaceId: request.spaceId,
 			key: readRequiredString(payload, 'key'),
 			content: readRequiredString(payload, 'content'),
-			tags: readStringArray(payload, 'tags'),
-			createdBySession: readOptionalString(payload, 'createdBySession'),
+			// Forward `tags` only when the caller actually sent it so the repository
+			// can preserve previously stored tags on content-only updates instead of
+			// silently clearing them.
+			tags: readOptionalStringArray(payload, 'tags'),
+			// Provenance is never trusted from RPC payloads — RPC writes have no
+			// agent-session attribution. Agent-authored writes flow through the MCP
+			// tool, which supplies the session id from the runtime.
+			createdBySession: null,
 		});
 	});
 
@@ -25,7 +31,7 @@ export function setupAgentMemoryHandlers(
 		return deps.memoryRepo.search(
 			request.spaceId,
 			readRequiredString(payload, 'query'),
-			readOptionalNumber(payload, 'limit') ?? 10
+			readOptionalInteger(payload, 'limit') ?? 10
 		);
 	});
 
@@ -43,8 +49,8 @@ export function setupAgentMemoryHandlers(
 		const request = parseSpaceScopedRequest(payload);
 		return deps.memoryRepo.list(request.spaceId, {
 			query: readOptionalString(payload, 'query') ?? undefined,
-			limit: readOptionalNumber(payload, 'limit') ?? 50,
-			offset: readOptionalNumber(payload, 'offset') ?? 0,
+			limit: readOptionalInteger(payload, 'limit') ?? 50,
+			offset: readOptionalInteger(payload, 'offset') ?? 0,
 		});
 	});
 }
@@ -69,20 +75,27 @@ function readOptionalString(payload: unknown, key: string): string | null {
 	return trimmed.length > 0 ? trimmed : null;
 }
 
-function readStringArray(payload: unknown, key: string): string[] {
+function readOptionalStringArray(payload: unknown, key: string): string[] | undefined {
 	const value = readRecord(payload)[key];
-	if (value == null) return [];
+	if (value === undefined) return undefined;
+	if (value === null) return [];
 	if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
 		throw new Error(`${key} must be an array of strings.`);
 	}
 	return value;
 }
 
-function readOptionalNumber(payload: unknown, key: string): number | undefined {
+function readOptionalInteger(payload: unknown, key: string): number | undefined {
 	const value = readRecord(payload)[key];
 	if (value == null) return undefined;
 	if (typeof value !== 'number' || !Number.isFinite(value)) {
 		throw new Error(`${key} must be a finite number.`);
+	}
+	// SQLite stores integers as int64, but any value outside the JS safe-integer
+	// range loses precision before reaching the driver and is rejected with a
+	// datatype-mismatch error. Validate up-front so callers see a clean message.
+	if (!Number.isSafeInteger(value)) {
+		throw new Error(`${key} must be a safe integer.`);
 	}
 	return value;
 }

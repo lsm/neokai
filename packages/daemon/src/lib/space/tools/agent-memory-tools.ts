@@ -40,7 +40,10 @@ export function createAgentMemoryToolHandlers(config: AgentMemoryToolsConfig) {
 				spaceId,
 				key: args.key,
 				content: args.content,
-				tags: args.tags ?? [],
+				// Pass `tags` through verbatim — including `undefined` — so the
+				// repository can preserve previously stored tags on content-only
+				// updates instead of clearing them with an explicit empty array.
+				tags: args.tags,
 				createdBySession: mySessionId ?? null,
 			});
 			return jsonResult({ success: true, memory });

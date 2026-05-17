@@ -59,4 +59,27 @@ describe('agent memory MCP tool handlers', () => {
 		const read = parseResult(await handlers['memory.read']({ key: 'decision.build' }));
 		expect((read.memory as { content: string }).content).toContain('make build');
 	});
+
+	test('memory.write preserves existing tags when caller omits tags', async () => {
+		const handlers = createAgentMemoryToolHandlers({
+			spaceId: 'space-a',
+			memoryRepo: repo,
+			mySessionId: 'session-1',
+		});
+
+		await handlers['memory.write']({
+			key: 'decision.format',
+			content: 'Initial decision.',
+			tags: ['formatting', 'biome'],
+		});
+
+		const update = parseResult(
+			await handlers['memory.write']({
+				key: 'decision.format',
+				content: 'Updated decision body.',
+			})
+		);
+		const memory = update.memory as { tags: string[] };
+		expect(memory.tags).toEqual(['formatting', 'biome']);
+	});
 });
