@@ -60,6 +60,15 @@ export function App() {
 	useGlobalShortcuts();
 
 	useEffect(() => {
+		const isTauriRuntime = '__TAURI_INTERNALS__' in window || 'isTauri' in window;
+		document.documentElement.classList.toggle('tauri-desktop', isTauriRuntime);
+
+		return () => {
+			document.documentElement.classList.remove('tauri-desktop');
+		};
+	}, []);
+
+	useEffect(() => {
 		// STEP 1: Initialize URL-based router BEFORE any state management
 		// This ensures we read the session ID from URL on page load
 		const initialSessionId = initializeRouter();
@@ -196,7 +205,7 @@ export function App() {
 
 	return (
 		<>
-			<div class="flex h-dvh overflow-hidden bg-dark-800 relative pt-safe">
+			<div class="desktop-window-shell flex h-dvh overflow-hidden bg-dark-800 relative pt-safe">
 				{/* Sidebar — section switcher, section content, settings */}
 				<ContextPanel />
 

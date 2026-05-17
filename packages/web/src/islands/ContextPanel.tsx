@@ -335,7 +335,13 @@ export function ContextPanel() {
 					overflow-hidden
 				`}
 			>
-				<SectionSwitcher onClose={handlePanelClose} />
+				<div class="desktop-titlebar-row" data-tauri-drag-region>
+					<div class="desktop-traffic-light-space" aria-hidden="true" data-tauri-drag-region />
+					<SectionSwitcher onClose={handlePanelClose} variant="titlebar" />
+				</div>
+				<div class="desktop-standard-switcher">
+					<SectionSwitcher onClose={handlePanelClose} />
+				</div>
 
 				{/* Space-detail header — back / name / configure (desktop) */}
 				{isSpaceDetail && (

@@ -265,7 +265,9 @@ export function SessionsPage() {
 	};
 
 	return (
-		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
+		<div class="relative flex-1 flex flex-col bg-dark-900 overflow-hidden">
+			<div class="desktop-empty-drag-strip" data-tauri-drag-region />
+
 			{/* Mobile: open the sidebar drawer */}
 			<div class="md:hidden flex items-center px-3 py-2">
 				<MobileMenuButton />

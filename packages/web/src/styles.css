@@ -644,6 +644,47 @@ a:focus-visible {
 	height: var(--safe-height, 100svh);
 }
 
+.desktop-titlebar-row {
+	display: none;
+}
+
+.desktop-empty-drag-strip {
+	display: none;
+}
+
+@media (min-width: 768px) {
+	html.tauri-desktop .desktop-window-shell {
+		padding-top: 0;
+	}
+
+	html.tauri-desktop .desktop-titlebar-row {
+		display: flex;
+		height: 48px;
+		flex: 0 0 48px;
+		align-items: center;
+		gap: 8px;
+		padding: 0 12px 0 0;
+	}
+
+	html.tauri-desktop .desktop-traffic-light-space {
+		width: 82px;
+		flex: 0 0 82px;
+		align-self: stretch;
+	}
+
+	html.tauri-desktop .desktop-standard-switcher {
+		display: none;
+	}
+
+	html.tauri-desktop .desktop-empty-drag-strip {
+		position: absolute;
+		inset: 0 0 auto;
+		z-index: 20;
+		display: block;
+		height: 48px;
+	}
+}
+
 /* Bottom bar padding utility.
    Uses --bottom-bar-height custom property (default 0px).
    Downstream components that need bottom padding matching the BottomTabBar

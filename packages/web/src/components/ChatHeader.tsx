@@ -187,6 +187,7 @@ export function ChatHeader({
 
 	return (
 		<div
+			data-tauri-drag-region
 			class={cn(
 				'relative z-10 flex h-[52px] flex-shrink-0 items-center bg-dark-900 px-4',
 				rightPanelAvailable && !rightPanelOpen && 'pr-14'

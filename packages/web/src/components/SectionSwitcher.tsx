@@ -5,6 +5,7 @@ import { cn } from '../lib/utils.ts';
 
 interface SectionSwitcherProps {
 	onClose?: () => void;
+	variant?: 'default' | 'titlebar';
 }
 
 const SECTIONS = [
@@ -12,12 +13,24 @@ const SECTIONS = [
 	{ id: 'spaces', label: 'Spaces', onClick: navigateToSpaces },
 ] as const;
 
-export function SectionSwitcher({ onClose }: SectionSwitcherProps) {
+export function SectionSwitcher({ onClose, variant = 'default' }: SectionSwitcherProps) {
 	const navSection = navSectionSignal.value;
+	const isTitlebar = variant === 'titlebar';
 
 	return (
-		<div class={`flex items-center gap-2 px-2 py-2 border-b ${borderColors.ui.default}`}>
-			<div class="grid grid-cols-2 flex-1 rounded-full bg-dark-900/70 p-0.5" role="tablist">
+		<div
+			class={cn(
+				'flex items-center gap-2',
+				isTitlebar ? 'w-[136px] flex-none' : `px-2 py-2 border-b ${borderColors.ui.default}`
+			)}
+		>
+			<div
+				class={cn(
+					'grid grid-cols-2 flex-1 rounded-full bg-dark-900/70 p-0.5',
+					isTitlebar && 'h-6 bg-dark-950/70'
+				)}
+				role="tablist"
+			>
 				{SECTIONS.map((section) => {
 					const isActive = navSection === section.id;
 					return (
@@ -31,10 +44,11 @@ export function SectionSwitcher({ onClose }: SectionSwitcherProps) {
 								onClose?.();
 							}}
 							class={cn(
-								'rounded-full px-3 py-1.5 text-sm font-medium transition-colors',
+								'rounded-full font-medium transition-colors',
+								isTitlebar ? 'px-2 text-[12px] leading-5' : 'px-3 py-1.5 text-sm',
 								isActive
-									? 'bg-white/10 text-gray-100 shadow-sm'
-									: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
+									? 'bg-white/10 text-gray-100'
+									: 'text-gray-500 hover:bg-white/5 hover:text-gray-200'
 							)}
 						>
 							{section.label}
