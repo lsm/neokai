@@ -4,7 +4,7 @@
  * Centered panel shown in the ChatContainer empty state for worker sessions
  * that were created without a workspace. Allows users to:
  * - Select from recent workspace history (pre-selected: most recent)
- * - Pick a new workspace via system folder picker
+ * - Enter a daemon-machine path, optionally assisted by a native folder picker
  * - Choose worktree vs direct mode
  * - Skip workspace selection entirely
  *
@@ -60,15 +60,21 @@ export function WorkspaceSelector({
 	const handleBrowse = async () => {
 		try {
 			const hub = connectionManager.getHubIfConnected();
-			if (!hub) return;
+			if (!hub) {
+				setShowCustomInput(true);
+				setError('Not connected to server. Please wait...');
+				return;
+			}
 			const response = await hub.request<{ path: string | null }>('dialog.pickFolder');
 			if (response.path) {
 				setCustomPath(response.path);
 				setShowCustomInput(true);
 				setSelectedPath('');
+			} else {
+				setShowCustomInput(true);
 			}
 		} catch {
-			// Silently ignore — user cancelled dialog
+			setShowCustomInput(true);
 		}
 	};
 
@@ -95,11 +101,11 @@ export function WorkspaceSelector({
 			setLoading(true);
 			setError(null);
 
-			await setSessionWorkspace(sessionId, path, worktreeMode);
+			const entry = await addWorkspaceToHistory(path);
+			await setSessionWorkspace(sessionId, entry.path, worktreeMode);
 
 			// Persist to history
-			addRecentPath(path);
-			addWorkspaceToHistory(path).catch(() => {});
+			addRecentPath(entry.path);
 
 			onConfirmCallback();
 		} catch (err) {
@@ -161,7 +167,7 @@ export function WorkspaceSelector({
 											</option>
 										))
 									)}
-									<option value="__manual__">Enter path manually...</option>
+									<option value="__manual__">Enter daemon path...</option>
 								</select>
 								<button
 									type="button"
@@ -188,7 +194,7 @@ export function WorkspaceSelector({
 									type="text"
 									value={customPath}
 									onInput={(e) => setCustomPath((e.target as HTMLInputElement).value)}
-									placeholder="Enter workspace path..."
+									placeholder="Path on daemon machine"
 									autoFocus
 									class="flex-1 bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
 								/>
@@ -228,6 +234,9 @@ export function WorkspaceSelector({
 									</button>
 								)}
 							</div>
+							<p class="mt-1.5 text-[11px] leading-4 text-gray-600">
+								Use a path on the machine running the NeoKai daemon.
+							</p>
 						</div>
 					)}
 

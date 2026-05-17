@@ -94,6 +94,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 		commitStatus: WorktreeCommitStatus;
 	} | null>(null);
 	const [archiveBusy, setArchiveBusy] = useState(false);
+	const [addProjectOpen, setAddProjectOpen] = useState(false);
+	const [addProjectPath, setAddProjectPath] = useState('');
+	const [addProjectError, setAddProjectError] = useState<string | null>(null);
+	const [addProjectBusy, setAddProjectBusy] = useState(false);
 
 	// Load workspace history once so explicitly-added (empty) projects show.
 	useEffect(() => {
@@ -124,20 +128,50 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 		});
 	};
 
-	const handleAddProject = async () => {
+	const addProjectFromPath = async (path: string) => {
+		const trimmed = path.trim();
+		if (!trimmed) {
+			setAddProjectError('Enter a path on the daemon machine.');
+			return;
+		}
+		setAddProjectBusy(true);
+		setAddProjectError(null);
+		try {
+			const entry = await addWorkspaceToHistory(trimmed);
+			setHistory((prev) => [entry, ...prev.filter((e) => e.path !== entry.path)]);
+			setAddProjectPath('');
+			setAddProjectOpen(false);
+		} catch (err) {
+			setAddProjectOpen(true);
+			setAddProjectError(err instanceof Error ? err.message : 'Failed to add project');
+		} finally {
+			setAddProjectBusy(false);
+		}
+	};
+
+	const handleBrowseProject = async () => {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
-			toast.error('Not connected to server. Please wait...');
+			setAddProjectOpen(true);
+			setAddProjectError('Not connected to server. Please wait...');
 			return;
 		}
 		try {
 			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder');
-			if (!picked?.path) return;
-			const entry = await addWorkspaceToHistory(picked.path);
-			setHistory((prev) => [entry, ...prev.filter((e) => e.path !== entry.path)]);
+			if (!picked?.path) {
+				setAddProjectOpen(true);
+				return;
+			}
+			await addProjectFromPath(picked.path);
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to add project');
+			setAddProjectOpen(true);
+			setAddProjectError(err instanceof Error ? err.message : 'Failed to add project');
 		}
+	};
+
+	const handleAddProjectSubmit = (e: Event) => {
+		e.preventDefault();
+		addProjectFromPath(addProjectPath);
 	};
 
 	const handleRemoveProject = async (path: string) => {
@@ -243,7 +277,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 							<button
 								type="button"
 								data-testid="add-project-button"
-								onClick={handleAddProject}
+								onClick={() => {
+									setAddProjectOpen(true);
+									setAddProjectError(null);
+								}}
 								title="Add project"
 								aria-label="Add project"
 								class="p-0.5 rounded text-gray-500 hover:text-gray-200 hover:bg-white/5 transition-colors"
@@ -258,6 +295,58 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 								</svg>
 							</button>
 						</div>
+						{addProjectOpen && (
+							<form
+								data-testid="add-project-form"
+								onSubmit={handleAddProjectSubmit}
+								class="mx-2 mb-2 rounded-lg border border-dark-700 bg-dark-850 p-2"
+							>
+								<div class="flex items-center gap-1.5">
+									<input
+										type="text"
+										data-testid="add-project-path-input"
+										value={addProjectPath}
+										onInput={(e) => {
+											setAddProjectPath((e.currentTarget as HTMLInputElement).value);
+											setAddProjectError(null);
+										}}
+										placeholder="Path on daemon machine"
+										autoFocus
+										class="min-w-0 flex-1 rounded-md border border-dark-700 bg-dark-900 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-dark-600 focus:outline-none"
+									/>
+									<button
+										type="button"
+										data-testid="add-project-browse-button"
+										onClick={handleBrowseProject}
+										title="Browse on daemon machine"
+										aria-label="Browse on daemon machine"
+										class="rounded-md border border-dark-700 bg-dark-900 p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
+									>
+										<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={1.75}
+												d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+											/>
+										</svg>
+									</button>
+									<button
+										type="submit"
+										disabled={addProjectBusy}
+										class="rounded-md bg-dark-700 px-2 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-dark-600 disabled:cursor-not-allowed disabled:opacity-50"
+									>
+										{addProjectBusy ? 'Adding…' : 'Add'}
+									</button>
+								</div>
+								<p class="mt-1.5 text-[11px] leading-4 text-gray-600">
+									Use a path on the machine running the NeoKai daemon.
+								</p>
+								{addProjectError && (
+									<p class="mt-1.5 text-[11px] leading-4 text-red-400">{addProjectError}</p>
+								)}
+							</form>
+						)}
 						{projects.length > 0 && (
 							<div class="flex flex-col gap-0.5">
 								{projects.map((project) => (

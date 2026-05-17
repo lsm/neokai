@@ -193,17 +193,35 @@ describe('SessionsSidebar', () => {
 		expect(screen.getByText('No chats')).toBeTruthy();
 	});
 
-	it('adds a project through the folder picker', async () => {
+	it('adds a project from a daemon-machine path', async () => {
 		mockSessionsSignal.value = [
 			createMockSession('session-1', 'Project Chat', '/workspace/neokai'),
 		];
 
 		render(<SessionsSidebar />);
 		fireEvent.click(screen.getByTestId('add-project-button'));
+		fireEvent.input(screen.getByTestId('add-project-path-input'), {
+			target: { value: '/workspace/new-project' },
+		});
+		fireEvent.submit(screen.getByTestId('add-project-form'));
+
+		await waitFor(() =>
+			expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/new-project')
+		);
+		expect(await screen.findByText('new-project')).toBeTruthy();
+	});
+
+	it('keeps native browsing available from the add-project form', async () => {
+		mockSessionsSignal.value = [
+			createMockSession('session-1', 'Project Chat', '/workspace/neokai'),
+		];
+
+		render(<SessionsSidebar />);
+		fireEvent.click(screen.getByTestId('add-project-button'));
+		fireEvent.click(screen.getByTestId('add-project-browse-button'));
 
 		await waitFor(() => expect(mockHubRequest).toHaveBeenCalledWith('dialog.pickFolder'));
 		expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/new-project');
-		expect(await screen.findByText('new-project')).toBeTruthy();
 	});
 
 	it('archives a chat after the inline confirmation click', async () => {

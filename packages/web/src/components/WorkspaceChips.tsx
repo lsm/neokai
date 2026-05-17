@@ -22,6 +22,7 @@ interface WorkspaceChipsProps {
 	baseBranch: string | null;
 	onSelectProject: (path: string | null) => void;
 	onBrowse: () => void;
+	onEnterPath: () => void;
 	onSelectMode: (mode: 'worktree' | 'direct') => void;
 	onSelectBranch: (branch: string) => void;
 }
@@ -81,6 +82,7 @@ export function WorkspaceChips({
 	baseBranch,
 	onSelectProject,
 	onBrowse,
+	onEnterPath,
 	onSelectMode,
 	onSelectBranch,
 }: WorkspaceChipsProps) {
@@ -95,7 +97,8 @@ export function WorkspaceChips({
 			onClick: () => onSelectProject(path),
 		})),
 		{ type: 'divider' as const },
-		{ label: 'Browse for folder…', onClick: onBrowse },
+		{ label: 'Enter daemon path…', onClick: onEnterPath },
+		{ label: 'Browse on daemon…', onClick: onBrowse },
 	];
 
 	const isGit = !!selectedProject && !!gitInfo?.isGitRepo;

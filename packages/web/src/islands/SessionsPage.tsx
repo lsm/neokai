@@ -86,6 +86,10 @@ export function SessionsPage() {
 	const [gitLoading, setGitLoading] = useState(false);
 	const [mode, setMode] = useState<NewChatWorktreeMode>(initialSelection.mode);
 	const [baseBranch, setBaseBranch] = useState<string | null>(initialSelection.baseBranch);
+	const [manualProjectOpen, setManualProjectOpen] = useState(false);
+	const [manualProjectPath, setManualProjectPath] = useState('');
+	const [manualProjectError, setManualProjectError] = useState<string | null>(null);
+	const [manualProjectBusy, setManualProjectBusy] = useState(false);
 
 	// Session creation only needs a live connection — auth is exercised later by
 	// the message send, which surfaces its own error.
@@ -155,22 +159,51 @@ export function SessionsPage() {
 		if (!path) setBaseBranch(null);
 	};
 
+	const addProjectFromPath = async (path: string) => {
+		const trimmed = path.trim();
+		if (!trimmed) {
+			setManualProjectError('Enter a path on the daemon machine.');
+			return;
+		}
+		setManualProjectBusy(true);
+		setManualProjectError(null);
+		try {
+			const entry = await addWorkspaceToHistory(trimmed);
+			setHistory((prev) => [entry, ...prev.filter((p) => p.path !== entry.path)]);
+			handleSelectProject(entry.path);
+			setManualProjectPath('');
+			setManualProjectOpen(false);
+		} catch (err) {
+			setManualProjectOpen(true);
+			setManualProjectError(err instanceof Error ? err.message : 'Failed to add project');
+		} finally {
+			setManualProjectBusy(false);
+		}
+	};
+
 	const handleBrowse = async () => {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
-			toast.error('Not connected to server. Please wait...');
+			setManualProjectOpen(true);
+			setManualProjectError('Not connected to server. Please wait...');
 			return;
 		}
 		try {
 			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder');
-			if (!picked?.path) return;
-			const folder = picked.path;
-			const entry = await addWorkspaceToHistory(folder);
-			setHistory((prev) => [entry, ...prev.filter((p) => p.path !== entry.path)]);
-			handleSelectProject(folder);
+			if (!picked?.path) {
+				setManualProjectOpen(true);
+				return;
+			}
+			await addProjectFromPath(picked.path);
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to add project');
+			setManualProjectOpen(true);
+			setManualProjectError(err instanceof Error ? err.message : 'Failed to add project');
 		}
+	};
+
+	const handleManualProjectSubmit = (e: Event) => {
+		e.preventDefault();
+		addProjectFromPath(manualProjectPath);
 	};
 
 	const handleSubmit = async () => {
@@ -307,9 +340,46 @@ export function SessionsPage() {
 							baseBranch={baseBranch}
 							onSelectProject={handleSelectProject}
 							onBrowse={handleBrowse}
+							onEnterPath={() => {
+								setManualProjectOpen(true);
+								setManualProjectError(null);
+							}}
 							onSelectMode={setMode}
 							onSelectBranch={setBaseBranch}
 						/>
+						{manualProjectOpen && (
+							<form
+								onSubmit={handleManualProjectSubmit}
+								class="mt-2 max-w-lg rounded-xl border border-dark-700 bg-dark-800 p-2"
+							>
+								<div class="flex items-center gap-2">
+									<input
+										type="text"
+										value={manualProjectPath}
+										onInput={(e) => {
+											setManualProjectPath((e.currentTarget as HTMLInputElement).value);
+											setManualProjectError(null);
+										}}
+										placeholder="Path on daemon machine"
+										autoFocus
+										class="min-w-0 flex-1 rounded-lg border border-dark-700 bg-dark-900 px-3 py-2 text-xs text-gray-100 placeholder-gray-600 focus:border-dark-600 focus:outline-none"
+									/>
+									<button
+										type="submit"
+										disabled={manualProjectBusy}
+										class="rounded-lg bg-dark-700 px-3 py-2 text-xs font-medium text-gray-200 transition-colors hover:bg-dark-600 disabled:cursor-not-allowed disabled:opacity-50"
+									>
+										{manualProjectBusy ? 'Adding…' : 'Add'}
+									</button>
+								</div>
+								<p class="mt-1.5 text-[11px] leading-4 text-gray-600">
+									Use a path on the machine running the NeoKai daemon.
+								</p>
+								{manualProjectError && (
+									<p class="mt-1.5 text-[11px] leading-4 text-red-400">{manualProjectError}</p>
+								)}
+							</form>
+						)}
 					</div>
 				</div>
 			</div>

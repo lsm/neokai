@@ -12,6 +12,9 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { createTables } from '../../../../src/storage/schema';
 import { WorkspaceHistoryRepository } from '../../../../src/storage/repositories/workspace-history-repository';
 import { setupWorkspaceHandlers } from '../../../../src/lib/rpc-handlers/workspace-handlers';
@@ -65,6 +68,13 @@ describe('workspace handlers', () => {
 	let db: BunDatabase;
 	let repo: WorkspaceHistoryRepository;
 	let handlers: Map<string, RequestHandler>;
+	let tempRoot: string;
+
+	function makeWorkspace(name: string): string {
+		const path = join(tempRoot, name);
+		mkdirSync(path, { recursive: true });
+		return path;
+	}
 
 	beforeEach(() => {
 		db = new BunDatabase(':memory:');
@@ -73,10 +83,12 @@ describe('workspace handlers', () => {
 		const { hub, handlers: h } = createMockMessageHub();
 		handlers = h;
 		setupWorkspaceHandlers(hub, repo);
+		tempRoot = mkdtempSync(join(tmpdir(), 'neokai-workspace-handlers-'));
 	});
 
 	afterEach(() => {
 		db.close();
+		rmSync(tempRoot, { recursive: true, force: true });
 	});
 
 	describe('workspace.history', () => {
@@ -147,20 +159,22 @@ describe('workspace handlers', () => {
 
 	describe('workspace.add', () => {
 		it('adds a new workspace entry', async () => {
+			const workspace = makeWorkspace('my-project');
 			const handler = handlers.get('workspace.add')!;
-			const result = (await handler({ path: '/home/user/my-project' })) as {
+			const result = (await handler({ path: workspace })) as {
 				entry: { path: string; lastUsedAt: number; useCount: number };
 			};
 
-			expect(result.entry.path).toBe('/home/user/my-project');
+			expect(result.entry.path).toBe(workspace);
 			expect(result.entry.useCount).toBe(1);
 			expect(typeof result.entry.lastUsedAt).toBe('number');
 		});
 
 		it('increments use_count on duplicate add', async () => {
+			const workspace = makeWorkspace('my-project');
 			const handler = handlers.get('workspace.add')!;
-			await handler({ path: '/home/user/my-project' });
-			const result = (await handler({ path: '/home/user/my-project' })) as {
+			await handler({ path: workspace });
+			const result = (await handler({ path: workspace })) as {
 				entry: { path: string; useCount: number };
 			};
 
@@ -168,15 +182,16 @@ describe('workspace handlers', () => {
 		});
 
 		it('persists entry so workspace.history returns it', async () => {
+			const workspace = makeWorkspace('foo');
 			const addHandler = handlers.get('workspace.add')!;
 			const historyHandler = handlers.get('workspace.history')!;
 
-			await addHandler({ path: '/projects/foo' });
+			await addHandler({ path: workspace });
 			const result = (await historyHandler({})) as {
 				entries: Array<{ path: string }>;
 			};
 
-			expect(result.entries.some((e) => e.path === '/projects/foo')).toBe(true);
+			expect(result.entries.some((e) => e.path === workspace)).toBe(true);
 		});
 
 		it('throws when path is missing', async () => {
@@ -192,6 +207,22 @@ describe('workspace handlers', () => {
 		it('throws when path is not a string', async () => {
 			const handler = handlers.get('workspace.add')!;
 			await expect(handler({ path: 123 })).rejects.toThrow('path is required');
+		});
+
+		it('throws when path does not exist on the daemon machine', async () => {
+			const handler = handlers.get('workspace.add')!;
+			await expect(handler({ path: join(tempRoot, 'missing') })).rejects.toThrow(
+				'Workspace path does not exist on the daemon machine'
+			);
+		});
+
+		it('throws when path is not a directory', async () => {
+			const filePath = join(tempRoot, 'file.txt');
+			writeFileSync(filePath, 'not a directory');
+			const handler = handlers.get('workspace.add')!;
+			await expect(handler({ path: filePath })).rejects.toThrow(
+				'Workspace path is not a directory on the daemon machine'
+			);
 		});
 	});
 
