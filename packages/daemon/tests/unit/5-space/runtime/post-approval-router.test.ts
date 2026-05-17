@@ -1,8 +1,9 @@
 /**
  * Unit tests for the PostApprovalRouter.
  *
- * The router is pure plumbing: it reads `workflow.postApproval` and dispatches
- * via injected delegates. These tests use in-memory SQLite for the task
+ * The router is pure plumbing: it reads node-level `postApproval` routes
+ * (falling back to legacy `workflow.postApproval`) and dispatches via injected
+ * delegates. These tests use in-memory SQLite for the task
  * repository and stub the delegates, so we can assert exactly which branch
  * fired for each workflow configuration.
  *
@@ -205,6 +206,56 @@ describe('PostApprovalRouter.route', () => {
 		expect(final?.postApprovalStartedAt).toBeGreaterThanOrEqual(before);
 		expect(final?.postApprovalStartedAt).toBeLessThanOrEqual(after);
 		expect(final?.status).toBe('approved');
+	});
+
+	test('node-level postApproval on submitting node overrides legacy workflow route', async () => {
+		const task = makeApprovedTask(taskRepo);
+		const delegates = makeDelegates();
+		const router = new PostApprovalRouter({
+			taskRepo,
+			spawner: delegates.spawner,
+			livenessProbe: delegates.liveness,
+		});
+
+		const workflow = stubWorkflow({
+			startNodeId: 'n1',
+			endNodeId: 'n2',
+			postApproval: {
+				targetAgent: 'legacy',
+				instructions: 'Legacy route should not run.',
+			},
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Build',
+					agents: [{ agentId: 'coder-id', name: 'coder' }],
+				},
+				{
+					id: 'n2',
+					name: 'Review',
+					agents: [{ agentId: 'reviewer-id', name: 'reviewer' }],
+					postApproval: {
+						targetAgent: 'reviewer',
+						instructions: 'Merge {{task_title}}.',
+					},
+				},
+			],
+		});
+
+		const result = await router.route(
+			{ ...task, pendingCompletionSubmittedByNodeId: 'n2' },
+			workflow,
+			{
+				approvalSource: 'agent',
+				task_title: task.title,
+			}
+		);
+
+		expect(result.mode).toBe('spawn');
+		expect(delegates.spawned).toHaveLength(1);
+		expect(delegates.spawned[0].targetAgent).toBe('reviewer');
+		expect(delegates.spawned[0].kickoffMessage).toContain('Merge Ship it.');
+		expect(delegates.spawned[0].kickoffMessage).not.toContain('Legacy route');
 	});
 
 	test('already-routed (live session) → no re-spawn', async () => {

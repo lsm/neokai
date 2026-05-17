@@ -229,9 +229,9 @@ export function buildWorkflowCreateParams(
 			id: nodeNameToId.get(exportedNode.name)!,
 			name: exportedNode.name,
 			agents,
+			postApproval: exportedNode.postApproval,
 		};
 
-		// node-level instructions have been removed from the schema
 		return node;
 	});
 

@@ -50,12 +50,17 @@ interface WorkflowFingerprint {
 	 */
 	completionAutonomyLevel: number;
 	/**
-	 * Workflow-level post-approval route. Empty string when no route is
-	 * declared. Format: `<targetAgent>|<instructions>`. Detects changes to the
-	 * post-approval handoff — so seeder re-stamping triggers when the built-in
-	 * templates gain or modify their `postApproval` entry.
+	 * Node-level post-approval routes, sorted. Format:
+	 * `<nodeName>|<targetAgent>|<instructions>`. Detects changes to the
+	 * post-approval handoff so seeder re-stamping triggers when built-in
+	 * templates gain or modify node routes.
 	 */
-	postApproval: string;
+	nodePostApproval: string[];
+	/**
+	 * Legacy workflow-level post-approval route. Kept in the fingerprint so
+	 * clearing old template-level routes also triggers a re-stamp.
+	 */
+	legacyPostApproval: string;
 }
 
 /**
@@ -157,9 +162,16 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 		.flatMap((n) => n.agents.map((a) => `${n.name}|${a.name}|${a.customPrompt?.value ?? ''}`))
 		.sort();
 
-	// Serialize workflow-level post-approval route.
-	// Format: `<targetAgent>|<instructions>` (empty string when absent).
-	const postApproval = workflow.postApproval
+	// Serialize node-level post-approval routes.
+	const nodePostApproval = workflow.nodes
+		.filter((n) => n.postApproval)
+		.map(
+			(n) => `${n.name}|${n.postApproval?.targetAgent ?? ''}|${n.postApproval?.instructions ?? ''}`
+		)
+		.sort();
+
+	// Serialize legacy workflow-level post-approval route.
+	const legacyPostApproval = workflow.postApproval
 		? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}`
 		: '';
 
@@ -171,7 +183,8 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 		gates,
 		nodePrompts,
 		completionAutonomyLevel: workflow.completionAutonomyLevel,
-		postApproval,
+		nodePostApproval,
+		legacyPostApproval,
 	};
 }
 

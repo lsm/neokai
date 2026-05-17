@@ -119,6 +119,12 @@ const exportedWorkflowChannelSchema = z.object({
 const exportedWorkflowNodeSchema = z.object({
 	agents: z.array(exportedWorkflowNodeAgentSchema).min(1),
 	name: z.string().min(1),
+	postApproval: z
+		.object({
+			targetAgent: z.string().min(1),
+			instructions: z.string(),
+		})
+		.optional(),
 });
 
 /** Validates the version field; returns an error string or null. */
@@ -289,6 +295,7 @@ export function exportWorkflow(
 			name: node.name,
 			agents: exportedAgents,
 		};
+		if (node.postApproval !== undefined) exported.postApproval = node.postApproval;
 
 		return exported;
 	});

@@ -1350,6 +1350,12 @@ export interface WorkflowNode {
 	 * Must be non-empty. Each agent runs concurrently; the node completes when all agents complete.
 	 */
 	agents: WorkflowNodeAgent[];
+	/**
+	 * Optional post-approval route for this node. When this node is the completion
+	 * node that approves/submits the task for approval, the runtime dispatches
+	 * this route after the task becomes approved.
+	 */
+	postApproval?: PostApprovalRoute;
 }
 
 /**
@@ -1366,13 +1372,15 @@ export interface WorkflowNodeInput {
 	 * Agents for parallel execution within this node. Must be non-empty.
 	 */
 	agents: WorkflowNodeAgent[];
+	/** Optional node-level post-approval route. See {@link WorkflowNode.postApproval}. */
+	postApproval?: PostApprovalRoute;
 }
 
 /**
- * Describes a post-approval route — a handoff from an end-node's approval
+ * Describes a post-approval route — a handoff from a node's approval
  * signal to a downstream executor that continues work **after** the task is
  * approved (e.g. merging a PR, publishing a release, running a verification
- * script). The route is declarative and lives on the workflow definition; the
+ * script). The route is declarative and usually lives on the workflow node; the
  * runtime routes the structured signal to `targetAgent` with a workflow-specific
  * `instructions` string that supports `{{identifier}}` template interpolation.
  * The runtime appends the universal `mark_complete` instruction separately.
@@ -1534,8 +1542,11 @@ export interface SpaceWorkflow {
 	 */
 	templateHash?: string;
 	/**
-	 * Optional post-approval route — describes which agent should act on the
-	 * end-node's approval signal, with a workflow-specific instruction template.
+	 * Legacy workflow-level post-approval route.
+	 *
+	 * New workflows should use `WorkflowNode.postApproval` so different completion
+	 * nodes can define different post-approval instructions. This field is kept as
+	 * a read/write fallback for persisted workflows that predate node-level routes.
 	 * See {@link PostApprovalRoute}.
 	 */
 	postApproval?: PostApprovalRoute;
@@ -1602,7 +1613,8 @@ export interface CreateSpaceWorkflowParams {
 	 */
 	templateHash?: string;
 	/**
-	 * Optional post-approval route. See {@link PostApprovalRoute}.
+	 * Legacy workflow-level post-approval route. New callers should set
+	 * `WorkflowNodeInput.postApproval` instead.
 	 */
 	postApproval?: PostApprovalRoute;
 	/** When true, create the workflow as disabled. */
@@ -1664,7 +1676,8 @@ export interface UpdateSpaceWorkflowParams {
 	templateName?: string | null;
 	templateHash?: string | null;
 	/**
-	 * Update the workflow's post-approval route. Pass `null` to clear.
+	 * Update the legacy workflow-level post-approval route. Pass `null` to clear.
+	 * New callers should set `WorkflowNode.postApproval` through `nodes`.
 	 */
 	postApproval?: PostApprovalRoute | null;
 	/** Pass true/false to enable or disable the workflow. Pass null to leave unchanged. */
@@ -1800,6 +1813,8 @@ export interface ExportedWorkflowNode {
 	agents: ExportedWorkflowNodeAgent[];
 	/** Human-readable node name — used as the stable cross-reference key in the export */
 	name: string;
+	/** Optional node-level post-approval route. */
+	postApproval?: PostApprovalRoute;
 }
 
 /**

@@ -385,6 +385,26 @@ describe('SpaceWorkflowManager', () => {
 			expect(wf.postApproval?.targetAgent).toBe('coder');
 		});
 
+		it('accepts a node-level postApproval route targeting a node agent name', () => {
+			const wf = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [
+					{
+						id: 'node-1',
+						name: 'Coding',
+						agents: [{ agentId: 'agent-1', name: 'coder' }],
+						postApproval: { targetAgent: 'coder', instructions: 'ship it' },
+					},
+				],
+				completionAutonomyLevel: 3,
+			});
+			expect(wf.nodes[0].postApproval).toEqual({
+				targetAgent: 'coder',
+				instructions: 'ship it',
+			});
+		});
+
 		it('rejects a postApproval route whose target does not resolve', () => {
 			expect(() =>
 				manager.createWorkflow({
@@ -425,7 +445,36 @@ describe('SpaceWorkflowManager', () => {
 						},
 					],
 				})
-			).toThrow('existing postApproval route is no longer valid');
+			).toThrow('"reviewer"');
+		});
+
+		it('re-validates an existing node-level postApproval route when stable nodes are updated', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [
+					{
+						id: 'node-1',
+						name: 'Coding',
+						agents: [{ agentId: 'agent-1', name: 'reviewer' }],
+						postApproval: { targetAgent: 'reviewer', instructions: '' },
+					},
+				],
+				completionAutonomyLevel: 3,
+			});
+
+			expect(() =>
+				manager.updateWorkflow(created.id, {
+					nodes: [
+						{
+							id: 'node-1',
+							name: 'Coding',
+							agents: [{ agentId: 'agent-2', name: 'coder' }],
+							postApproval: { targetAgent: 'reviewer', instructions: '' },
+						},
+					],
+				})
+			).toThrow('node "Coding"');
 		});
 
 		it('allows clearing the postApproval route with null', () => {
@@ -472,6 +521,35 @@ describe('SpaceWorkflowManager', () => {
 			const fetched = manager.getWorkflow(wf.id);
 			expect(fetched).not.toBeNull();
 			expect(fetched?.postApproval).toBeUndefined();
+		});
+
+		it('strips a stale node-level postApproval route on read instead of failing', () => {
+			const wf = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [
+					{
+						id: 'node-1',
+						name: 'Coding',
+						agents: [{ agentId: 'agent-1', name: 'reviewer' }],
+						postApproval: { targetAgent: 'reviewer', instructions: '' },
+					},
+				],
+				completionAutonomyLevel: 3,
+			});
+
+			const staleCfg = JSON.stringify({
+				agents: [{ agentId: 'agent-1', name: 'coder' }],
+				postApproval: { targetAgent: 'reviewer', instructions: '' },
+			});
+			db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE workflow_id = ?`).run(
+				staleCfg,
+				wf.id
+			);
+
+			const fetched = manager.getWorkflow(wf.id);
+			expect(fetched).not.toBeNull();
+			expect(fetched?.nodes[0].postApproval).toBeUndefined();
 		});
 	});
 

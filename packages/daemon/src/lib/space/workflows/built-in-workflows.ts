@@ -675,6 +675,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
+			// After this node approves, spawn a fresh reviewer session that runs
+			// the PR merge using the shared post-approval merge instructions.
+			postApproval: {
+				targetAgent: 'reviewer',
+				instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+			},
 		},
 	],
 	startNodeId: CODING_CODE_NODE,
@@ -685,14 +691,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	// Default coding loop — reviewer may auto-close when space runs at the
 	// standard "trusted but supervised" tier (3).
 	completionAutonomyLevel: 3,
-	// Post-approval routing: after `approve_task()` fires, spawn a fresh
-	// `reviewer` session that runs the PR merge using the shared merge-template
-	// instructions. The completion-action pipeline that previously handled this
-	// was deleted in PR 4/5 — `postApproval` is now the sole post-approval path.
-	postApproval: {
-		targetAgent: 'reviewer',
-		instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-	},
 	gates: [
 		{
 			id: 'code-ready-gate',
@@ -855,6 +853,12 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
+			// After this node approves, spawn a fresh reviewer session that runs
+			// the PR merge using the shared post-approval merge instructions.
+			postApproval: {
+				targetAgent: 'reviewer',
+				instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+			},
 		},
 	],
 	startNodeId: RESEARCH_RESEARCH_NODE,
@@ -865,12 +869,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	// Research is low-risk (read-only investigation + PR of findings) — permit
 	// auto-close at a more conservative autonomy tier than coding loops.
 	completionAutonomyLevel: 2,
-	// Post-approval routing (PR 3/5): analogous to Coding — the `reviewer` role
-	// runs the PR merge in a fresh session using the shared merge template.
-	postApproval: {
-		targetAgent: 'reviewer',
-		instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-	},
 	gates: [
 		{
 			id: 'research-ready-gate',
@@ -1326,6 +1324,12 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
+			// After QA approves, spawn a fresh reviewer session that runs the PR
+			// merge and worktree sync.
+			postApproval: {
+				targetAgent: 'reviewer',
+				instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+			},
 		},
 	],
 	startNodeId: FULLSTACK_CODING_NODE,
@@ -1338,12 +1342,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	// "work is good" signal. Post-approval runs only after that approval has
 	// already happened.
 	completionAutonomyLevel: 3,
-	// Post-approval routing (PR 3/5): after QA approves, spawn a fresh
-	// `reviewer` session that runs the PR merge + worktree sync.
-	postApproval: {
-		targetAgent: 'reviewer',
-		instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-	},
 	gates: [
 		{
 			id: 'code-pr-gate',
@@ -1460,7 +1458,7 @@ export interface SeedBuiltInWorkflowsResult {
 	seeded: string[];
 	/**
 	 * Workflows whose existing DB row was re-stamped on template drift.
-	 * PR 3/5 uses this path to land new `postApproval` routes, updated
+	 * PR 3/5 uses this path to land `postApproval` routes, updated
 	 * `completionAutonomyLevel`, and refreshed `templateHash` values onto
 	 * existing spaces without rewriting user-customisable fields (node
 	 * UUIDs, prompt text, channels, gates).
@@ -1476,19 +1474,21 @@ export interface SeedBuiltInWorkflowsResult {
 }
 
 /**
- * Merge `toolGuards` from template agent slots onto matching existing agent slots.
+ * Merge node-level structural fields from template nodes onto matching existing nodes.
  *
  * Unlike `customPrompt` (user-configurable), `toolGuards` are structural enforcement
- * metadata that must stay in sync with the template. This function only touches the
- * `toolGuards` field on each agent slot — all other fields (customPrompt, model,
- * disabledSkillIds, etc.) are preserved from the existing row.
+ * metadata that must stay in sync with the template. `postApproval` is also structural
+ * routing metadata for the terminal node. This function only touches `postApproval`
+ * on the node and `toolGuards` on each agent slot — all other fields (customPrompt,
+ * model, disabledSkillIds, etc.) are preserved from the existing row.
  *
  * Matching is by node name + agent name, which are stable identifiers.
  */
-function mergeToolGuardsFromTemplate(
+function mergeNodeStructuralFieldsFromTemplate(
 	existingNodes: WorkflowNode[],
-	templateNodes: Pick<WorkflowNode, 'name' | 'agents'>[]
+	templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval'>[]
 ): WorkflowNode[] {
+	const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
 	const templateAgentsByKey = new Map<string, DeclarativeToolGuard[] | undefined>();
 	for (const node of templateNodes) {
 		for (const agent of node.agents) {
@@ -1498,6 +1498,7 @@ function mergeToolGuardsFromTemplate(
 
 	return existingNodes.map((node) => ({
 		...node,
+		postApproval: templateNodesByName.get(node.name)?.postApproval,
 		agents: node.agents.map((agent) => {
 			const key = `${node.name}::${agent.name}`;
 			const templateGuards = templateAgentsByKey.get(key);
@@ -1512,10 +1513,10 @@ function mergeToolGuardsFromTemplate(
  * Fields that the built-in seeder re-stamps when it detects template drift
  * on an already-seeded row.
  *
- * - `postApproval`, `completionAutonomyLevel`, and `templateHash` are
- *   updated. Persisted node agent `customPrompt.value` is deliberately left
- *   untouched so daemon restart / startup seed passes cannot replace
- *   user-configured runtime prompts.
+ * - Node-level `postApproval`, `completionAutonomyLevel`, and `templateHash`
+ *   are updated. The legacy workflow-level `postApproval` is cleared. Persisted
+ *   node agent `customPrompt.value` is deliberately left untouched so daemon
+ *   restart / startup seed passes cannot replace user-configured runtime prompts.
  * - Agent `toolGuards` are merged onto matching agent slots (by node name +
  *   agent name) so structural enforcement metadata stays in sync with the
  *   template. Other node fields (customPrompt, model, disabledSkillIds, etc.)
@@ -1526,10 +1527,10 @@ function mergeToolGuardsFromTemplate(
  *   `toolGuards` are updated in-place on existing node configs instead.
  */
 const RESTAMP_FIELDS = [
-	'postApproval',
+	'legacy postApproval(clear)',
 	'completionAutonomyLevel',
 	'templateHash',
-	'nodes(toolGuards in-place)',
+	'nodes(postApproval + toolGuards in-place)',
 ] as const;
 
 /**
@@ -1549,7 +1550,7 @@ const RESTAMP_FIELDS = [
  *     with the narrow field set listed in {@link RESTAMP_FIELDS} — see the
  *     constant's doc-comment for details. Agent `toolGuards` are merged onto
  *     matching slots (preserving user-configured prompts). This is how new
- *     `postApproval` routes and `toolGuards` land on pre-existing spaces.
+ *     node-level `postApproval` routes and `toolGuards` land on pre-existing spaces.
  *   - Rows without a `templateName` (user-created workflows) are ignored.
  *
  * Individual workflow creation / re-stamp errors are captured per-workflow
@@ -1577,8 +1578,8 @@ export function seedBuiltInWorkflows(
 
 	// Branch 1 (re-stamp path): rows already exist. Walk them and update any
 	// template-seeded rows whose stored `templateHash` no longer matches the
-	// current template. This is the PR 3/5 migration path — new `postApproval`
-	// routes land here on spaces that were seeded before PR 3/5.
+	// current template. This migration path moves built-in post-approval routes
+	// onto nodes for spaces that were seeded before node-level routes existed.
 	if (existing.length > 0) {
 		const restamped: string[] = [];
 		const errors: Array<{ name: string; error: string }> = [];
@@ -1594,21 +1595,20 @@ export function seedBuiltInWorkflows(
 				// Targeted merge of toolGuards from template onto existing agent slots.
 				// Unlike prompts (user-configurable), toolGuards are structural enforcement
 				// metadata that must stay in sync with the template.
-				const mergedNodes = mergeToolGuardsFromTemplate(row.nodes, template.nodes);
+				const mergedNodes = mergeNodeStructuralFieldsFromTemplate(row.nodes, template.nodes);
 
 				workflowManager.updateWorkflow(row.id, {
 					completionAutonomyLevel: template.completionAutonomyLevel,
-					// Pass `null` (not `undefined`) when the template clears the route,
-					// so the repository writes the new value rather than leaving the
-					// old one in place.
-					postApproval: template.postApproval ?? null,
+					// Built-ins now store routes on terminal nodes. Clear any legacy
+					// workflow-level value while the node updater writes node routes.
+					postApproval: null,
 					templateHash: expectedHash,
 				});
 				workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
 				restamped.push(template.name);
 				builtInSeederLog.info(
 					`re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +
-						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')} (toolGuards merged onto agent slots)`
+						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')}`
 				);
 			} catch (err) {
 				errors.push({
@@ -1669,6 +1669,7 @@ export function seedBuiltInWorkflows(
 					...a,
 					agentId: resolvedIds.get(a.agentId)!,
 				})),
+				...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
 			}));
 
 			const startNodeId = nodeIdMap.get(template.startNodeId);
@@ -1705,10 +1706,6 @@ export function seedBuiltInWorkflows(
 					: undefined,
 				gates: template.gates ? [...template.gates] : undefined,
 				completionAutonomyLevel: template.completionAutonomyLevel,
-				// Thread postApproval through so the route actually lands in the DB.
-				// Without this, PR 3/5 would silently strip the field and no post-
-				// approval routing would fire for freshly seeded spaces.
-				...(template.postApproval ? { postApproval: template.postApproval } : {}),
 				// Pin the canonical handle so it is stable even if the name is later reworded.
 				...(template.handle ? { handle: template.handle } : {}),
 				templateName: template.name,
