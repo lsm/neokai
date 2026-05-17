@@ -262,6 +262,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 			'Space-native long-horizon goals with rolling state, progress, and recurring check-in schedules.',
 	},
 	{
+		tableName: 'space_goal_events',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Append-only history events for Space goals, including state diffs, source metadata, and linked task IDs.',
+	},
+	{
 		tableName: 'space_worktrees',
 		scopeColumn: 'space_id',
 		blacklistedColumns: [],
