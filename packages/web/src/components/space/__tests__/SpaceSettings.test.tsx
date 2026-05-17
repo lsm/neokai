@@ -326,7 +326,7 @@ describe('SpaceSettings', () => {
 		expect(getByDisplayValue('Bun + Hono backend')).toBeTruthy();
 		// Check labels are rendered
 		expect(getByText('Instructions')).toBeTruthy();
-		expect(getByText('Background Context')).toBeTruthy();
+		expect(getByText('Background context', { exact: false })).toBeTruthy();
 	});
 
 	it('shows Save Changes when instructions is changed', () => {

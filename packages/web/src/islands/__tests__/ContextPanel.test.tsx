@@ -291,8 +291,8 @@ describe('ContextPanel', () => {
 	it('keeps global navigation available in the sidebar switcher', () => {
 		render(<ContextPanel />);
 
-		fireEvent.click(screen.getByRole('tab', { name: 'Spaces' }));
-		fireEvent.click(screen.getByRole('tab', { name: 'Chats' }));
+		fireEvent.click(screen.getAllByRole('tab', { name: 'Spaces' })[0]);
+		fireEvent.click(screen.getAllByRole('tab', { name: 'Chats' })[0]);
 		fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
 
 		expect(mockNavigateToSpaces).toHaveBeenCalledTimes(1);

@@ -211,17 +211,25 @@ describe('SessionsSidebar', () => {
 		expect(await screen.findByText('new-project')).toBeTruthy();
 	});
 
-	it('keeps native browsing available from the add-project form', async () => {
+	it('uses native browsing from the add-project control when available', async () => {
 		mockSessionsSignal.value = [
 			createMockSession('session-1', 'Project Chat', '/workspace/neokai'),
 		];
+		Object.defineProperty(window, 'isTauri', { value: true, configurable: true });
 
-		render(<SessionsSidebar />);
-		fireEvent.click(screen.getByTestId('add-project-button'));
-		fireEvent.click(screen.getByTestId('add-project-browse-button'));
+		try {
+			render(<SessionsSidebar />);
+			fireEvent.click(screen.getByTestId('add-project-button'));
 
-		await waitFor(() => expect(mockHubRequest).toHaveBeenCalledWith('dialog.pickFolder'));
-		expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/new-project');
+			await waitFor(() =>
+				expect(mockHubRequest).toHaveBeenCalledWith('dialog.pickFolder', undefined, {
+					timeout: expect.any(Number),
+				})
+			);
+			expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/new-project');
+		} finally {
+			Reflect.deleteProperty(window, 'isTauri');
+		}
 	});
 
 	it('archives a chat after the inline confirmation click', async () => {

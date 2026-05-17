@@ -383,7 +383,7 @@ describe('ChatContainer Loading Skeleton CLS Prevention', () => {
 		// The absolutely-positioned footer needs a positioned ancestor.
 		// Verify `relative` is present in the skeleton's outer container class.
 		expect(source).toMatch(
-			/flex-1 flex flex-col bg-dark-900 overflow-hidden relative[\s\S]*?Skeleton header/
+			/flex-1 flex flex-col bg-app-content overflow-hidden relative[\s\S]*?Skeleton header/
 		);
 	});
 });

@@ -129,6 +129,10 @@ function makeSpace(id: string, overrides: Partial<Space> = {}): Space {
 	} as unknown as Space;
 }
 
+function getTaskTab(label: string): HTMLButtonElement {
+	return screen.getByText(label).closest('button') as HTMLButtonElement;
+}
+
 describe('SpaceDetailPanel', () => {
 	beforeEach(() => {
 		cleanup();
@@ -185,14 +189,14 @@ describe('SpaceDetailPanel', () => {
 	it('highlights Overview when neither session nor task is selected', () => {
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		const button = screen.getByText('Overview').closest('button');
-		expect(button?.className).toContain('bg-dark-700');
+		expect(button?.className).toContain('bg-white/10');
 	});
 
 	it('highlights Space Agent when its synthetic session is selected', () => {
 		mockCurrentSpaceSessionIdSignal.value = 'space:chat:space-1';
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		const button = screen.getByText('Space Agent').closest('button');
-		expect(button?.className).toContain('bg-dark-700');
+		expect(button?.className).toContain('bg-white/10');
 	});
 
 	it('shows Action tasks by default and includes counters on task tabs', () => {
@@ -206,8 +210,8 @@ describe('SpaceDetailPanel', () => {
 		expect(screen.getByText('Blocked Task')).toBeTruthy();
 		expect(screen.queryByText('Queued Task')).toBeNull();
 
-		const activeTab = screen.getByRole('button', { name: /Active/i });
-		const actionTab = screen.getByRole('button', { name: /Action/i });
+		const activeTab = getTaskTab('Active');
+		const actionTab = getTaskTab('Action');
 		expect(within(activeTab).getByText('2')).toBeTruthy();
 		expect(within(actionTab).getByText('1')).toBeTruthy();
 	});
@@ -219,7 +223,7 @@ describe('SpaceDetailPanel', () => {
 		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 
-		fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+		fireEvent.click(getTaskTab('Active'));
 		expect(screen.getByText('Queued Task')).toBeTruthy();
 		expect(screen.queryByText('Blocked Task')).toBeNull();
 	});
@@ -307,7 +311,7 @@ describe('SpaceDetailPanel', () => {
 			expect(screen.queryByText('Done Task')).toBeNull();
 
 			// Switch to Active — shows open + in_progress
-			fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+			fireEvent.click(getTaskTab('Active'));
 			expect(screen.getByText('Open Task')).toBeTruthy();
 			expect(screen.getByText('In Progress Task')).toBeTruthy();
 			expect(screen.queryByText('Blocked Task')).toBeNull();
@@ -317,12 +321,11 @@ describe('SpaceDetailPanel', () => {
 			mockTasksSignal.value = [];
 			const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
 
-			// Switch to Active tab and verify empty
-			fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+			// Verify empty state before an action-required task arrives.
 			expect(screen.getByText('No tasks')).toBeTruthy();
 
 			// Simulate new task arriving via event (signal update)
-			mockTasksSignal.value = [makeTask('t-new', 'New Task', 'open')];
+			mockTasksSignal.value = [makeTask('t-new', 'New Task', 'blocked')];
 			rerender(<SpaceDetailPanel spaceId="space-1" />);
 
 			expect(screen.getByText('New Task')).toBeTruthy();
@@ -435,13 +438,13 @@ describe('SpaceDetailPanel', () => {
 			];
 			render(<SpaceDetailPanel spaceId="space-1" />);
 
-			fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+			fireEvent.click(getTaskTab('Active'));
 			expect(screen.getByText('Approved Task')).toBeTruthy();
 			expect(screen.getByText('Open Task')).toBeTruthy();
 			expect(screen.queryByText('Blocked Task')).toBeNull();
 
 			// Active count should include the approved task (2 = open + approved)
-			const activeTab = screen.getByRole('button', { name: /Active/i });
+			const activeTab = getTaskTab('Active');
 			expect(within(activeTab).getByText('2')).toBeTruthy();
 		});
 
@@ -459,7 +462,7 @@ describe('SpaceDetailPanel', () => {
 			render(<SpaceDetailPanel spaceId="space-1" />);
 
 			// Switch to Active tab
-			fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+			fireEvent.click(getTaskTab('Active'));
 
 			// All three tasks should appear regardless of creation path
 			expect(screen.getByText('UI Dialog Task')).toBeTruthy();

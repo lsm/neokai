@@ -399,9 +399,6 @@ export class SessionLifecycle {
 				branchName,
 				'HEAD'
 			);
-			if (!worktreeMetadata) {
-				throw new Error(`Failed to create worktree for session ${sessionId}`);
-			}
 
 			this.logger.info(
 				`[SessionLifecycle] Worktree choice completed: created worktree for session ${sessionId}`

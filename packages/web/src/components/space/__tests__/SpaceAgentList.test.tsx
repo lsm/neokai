@@ -6,7 +6,7 @@
  * - Loading state
  * - Empty state: "No custom agents yet. Create one to get started."
  * - Agent cards render name, model, description preview
- * - Tool tags shown (up to 4, then +N more)
+ * - Tool count and preview tags render
  * - Create Agent button opens editor
  * - Edit button opens editor for that agent
  * - Delete button behavior:
@@ -307,19 +307,21 @@ describe('SpaceAgentList', () => {
 		expect(getByText('Specialist in frontend code')).toBeTruthy();
 	});
 
-	it('renders tool tags up to 4', () => {
+	it('renders tool count and preview tags', () => {
 		mockAgents.value = [makeAgent({ tools: ['Read', 'Write', 'Edit', 'Bash'] })];
-		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		const { getByText, queryByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		expect(getByText('4 tools')).toBeTruthy();
 		expect(getByText('Read')).toBeTruthy();
 		expect(getByText('Write')).toBeTruthy();
 		expect(getByText('Edit')).toBeTruthy();
-		expect(getByText('Bash')).toBeTruthy();
+		expect(queryByText('Bash')).toBeNull();
 	});
 
-	it('renders "+N more" when agent has more than 4 tools', () => {
+	it('renders total tool count when agent has more tools than the preview', () => {
 		mockAgents.value = [makeAgent({ tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'] })];
-		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		expect(getByText('+2 more')).toBeTruthy();
+		const { getByText, queryByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		expect(getByText('6 tools')).toBeTruthy();
+		expect(queryByText('+2 more')).toBeNull();
 	});
 
 	it('does not render tool tags when tools is empty', () => {
@@ -567,7 +569,7 @@ describe('SpaceAgentList', () => {
 		expect(queryByText('Out of sync')).toBeNull();
 	});
 
-	it('clicking "Sync from template" calls spaceAgent.syncFromTemplate and clears badge', async () => {
+	it('clicking "Sync" calls spaceAgent.syncFromTemplate and clears badge', async () => {
 		const agent = makeAgent({ id: 'agent-1', name: 'Coder', templateName: 'Coder' });
 		mockAgents.value = [agent];
 
@@ -597,7 +599,7 @@ describe('SpaceAgentList', () => {
 		});
 
 		const { findByText, queryByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		const syncButton = await findByText('Sync from template');
+		const syncButton = await findByText('Sync');
 
 		fireEvent.click(syncButton);
 
