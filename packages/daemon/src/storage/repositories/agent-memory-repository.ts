@@ -51,9 +51,13 @@ export class AgentMemoryRepository {
 	}): AgentMemoryEntry {
 		const key = normalizeKey(params.key);
 		const content = normalizeContent(params.content);
+		const tagsProvided = params.tags !== undefined;
 		const tags = normalizeTags(params.tags ?? []);
 		const now = Date.now();
 
+		// On conflict (existing row): preserve `tags` when caller did not supply them
+		// and never overwrite `created_by_session` so provenance stays with the
+		// original author.
 		const row = this.db
 			.prepare(
 				`INSERT INTO space_agent_memory
@@ -61,8 +65,7 @@ export class AgentMemoryRepository {
 				 VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)
 				 ON CONFLICT(space_id, key) DO UPDATE SET
 					content = excluded.content,
-					tags = excluded.tags,
-					created_by_session = COALESCE(excluded.created_by_session, space_agent_memory.created_by_session),
+					tags = CASE WHEN ? = 1 THEN excluded.tags ELSE space_agent_memory.tags END,
 					updated_at = excluded.updated_at
 				 RETURNING *`
 			)
@@ -73,7 +76,8 @@ export class AgentMemoryRepository {
 				serializeTags(tags),
 				params.createdBySession ?? null,
 				now,
-				now
+				now,
+				tagsProvided ? 1 : 0
 			) as AgentMemoryRow;
 
 		this.reactiveDb?.notifyChange('space_agent_memory');
@@ -246,7 +250,10 @@ function buildFtsQuery(query: string): string | null {
 		.trim()
 		.toLowerCase()
 		.split(/\s+/)
-		.map((term) => term.replace(/[^\p{L}\p{N}_.-]/gu, ''))
+		// Preserve hyphens, dots, slashes, and colons so paths, URLs, and
+		// dashed identifiers (e.g. `src/lib/main.ts`, `pre-commit`) remain
+		// intact for trigram matching.
+		.map((term) => term.replace(/[^\p{L}\p{N}_./:-]/gu, ''))
 		// Trigram FTS cannot match terms shorter than three characters.
 		.filter((term) => term.length >= 3);
 	if (terms.length === 0) return null;

@@ -96,6 +96,71 @@ describe('AgentMemoryRepository', () => {
 		).toThrow('Memory content must be 10000 characters or fewer.');
 	});
 
+	test('preserves existing tags when update omits tags', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.api',
+			content: 'Original content.',
+			tags: ['api', 'http'],
+		});
+
+		const updated = repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.api',
+			content: 'Updated content without tag changes.',
+		});
+
+		expect(updated.content).toBe('Updated content without tag changes.');
+		expect(updated.tags).toEqual(['api', 'http']);
+	});
+
+	test('clears tags when update explicitly passes empty array', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.lint',
+			content: 'Original.',
+			tags: ['lint'],
+		});
+
+		const updated = repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.lint',
+			content: 'Original.',
+			tags: [],
+		});
+
+		expect(updated.tags).toEqual([]);
+	});
+
+	test('keeps original creator session when later sessions update', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.auth',
+			content: 'Initial note.',
+			createdBySession: 'session-original',
+		});
+
+		const updated = repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.auth',
+			content: 'Revised note.',
+			createdBySession: 'session-later',
+		});
+
+		expect(updated.createdBySession).toBe('session-original');
+	});
+
+	test('search matches path identifiers', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'modules.entry',
+			content: 'Entry point is src/lib/main.ts.',
+		});
+
+		const results = repo.search('space-a', 'src/lib/main.ts', 5);
+		expect(results.map((result) => result.memory.key)).toEqual(['modules.entry']);
+	});
+
 	test('filtered list honors limit and offset above search limit', () => {
 		for (let index = 0; index < 25; index++) {
 			repo.write({
