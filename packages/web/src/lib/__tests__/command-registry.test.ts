@@ -43,6 +43,16 @@ describe('fuzzyScore', () => {
 	it('is case-insensitive', () => {
 		expect(fuzzyScore('Hello World', 'HELLO')).toBeGreaterThan(0);
 	});
+
+	it('returns positive score for substring match far into long text', () => {
+		const haystack = 'a'.repeat(500) + 'needle' + 'b'.repeat(500);
+		expect(fuzzyScore(haystack, 'needle')).toBeGreaterThan(0);
+	});
+
+	it('returns positive score for word-start match far into long text', () => {
+		const haystack = 'a'.repeat(500) + ' needle' + 'b'.repeat(500);
+		expect(fuzzyScore(haystack, 'needle')).toBeGreaterThan(0);
+	});
 });
 
 describe('CommandRegistry', () => {

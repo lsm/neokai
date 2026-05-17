@@ -67,10 +67,10 @@ export function fuzzyScore(haystack: string, query: string): number {
 	const needle = query.toLowerCase();
 
 	if (hay === needle) return 1000;
-	if (hay.startsWith(needle)) return 500 - (hay.length - needle.length);
+	if (hay.startsWith(needle)) return Math.max(1, 500 - (hay.length - needle.length));
 	const wordStart = hay.indexOf(` ${needle}`);
-	if (wordStart >= 0) return 400 - wordStart;
-	if (hay.includes(needle)) return 300 - hay.indexOf(needle);
+	if (wordStart >= 0) return Math.max(1, 400 - wordStart);
+	if (hay.includes(needle)) return Math.max(1, 300 - hay.indexOf(needle));
 
 	// subsequence walk
 	let hi = 0;
