@@ -58,6 +58,12 @@ export type OpenAIChatBridgeConfig = {
 	toolUseSupported?: boolean;
 	/** Whether the active model supports vision. Images are dropped when false. */
 	visionSupported?: boolean;
+	/**
+	 * Whether the active model supports extended thinking / reasoning. When
+	 * true, the bridge maps `AnthropicRequest.thinking` to OpenAI
+	 * `reasoning_effort` so the upstream actually sees the request.
+	 */
+	thinkingSupported?: boolean;
 	/** Max context window for the active model (used in usage events). */
 	modelContextWindow?: number;
 };
@@ -104,6 +110,13 @@ type OpenAIChatRequest = {
 	max_tokens?: number;
 	stream: true;
 	stream_options?: { include_usage: boolean };
+	/**
+	 * Maps from Anthropic `thinking.budget_tokens`. Forwarded only when the
+	 * caller declared the model `thinkingSupported`. Most OpenAI-compatible
+	 * endpoints either honour this (o-series, modern reasoning models) or
+	 * ignore unknown fields silently.
+	 */
+	reasoning_effort?: 'low' | 'medium' | 'high';
 };
 
 type OpenAIChatStreamChoice = {
@@ -296,7 +309,8 @@ function buildChatRequest(
 	body: AnthropicRequest,
 	model: string,
 	toolUseSupported: boolean,
-	visionSupported: boolean
+	visionSupported: boolean,
+	thinkingSupported: boolean
 ): OpenAIChatRequest {
 	const request: OpenAIChatRequest = {
 		model,
@@ -311,7 +325,53 @@ function buildChatRequest(
 		const choice = toOpenAIToolChoice(body);
 		if (choice) request.tool_choice = choice;
 	}
+	if (thinkingSupported) {
+		const effort = thinkingToReasoningEffort(body.thinking);
+		if (effort) request.reasoning_effort = effort;
+	}
 	return request;
+}
+
+/**
+ * Map Anthropic thinking config to OpenAI `reasoning_effort`. Anthropic's
+ * config is a token budget; OpenAI uses a coarse three-step enum. We bucket
+ * by budget so the upstream still gets *some* signal even though the
+ * granularity is lost.
+ */
+function thinkingToReasoningEffort(
+	thinking: AnthropicRequest['thinking']
+): 'low' | 'medium' | 'high' | undefined {
+	if (!thinking) return undefined;
+	if (thinking.type === 'adaptive') return 'medium';
+	if (thinking.type === 'enabled') {
+		const budget = thinking.budget_tokens;
+		if (!Number.isFinite(budget) || budget <= 0) return undefined;
+		if (budget < 4000) return 'low';
+		if (budget < 16000) return 'medium';
+		return 'high';
+	}
+	return undefined;
+}
+
+/**
+ * Normalise the user-supplied baseUrl into the form `${prefix}` so that
+ * `${prefix}/chat/completions` is the correct Chat Completions endpoint.
+ *
+ * Users routinely paste either:
+ *   - the OpenAI-style root, e.g. `https://api.example.com/v1`
+ *   - the full chat endpoint, e.g. `https://api.example.com/v1/chat/completions`
+ *
+ * Without normalisation the latter becomes `.../chat/completions/chat/completions`
+ * and every request fails with 404. Strip a trailing `/chat/completions`
+ * (with optional trailing slash) and any trailing slashes.
+ */
+export function normaliseChatBaseUrl(input: string): string {
+	let url = input.trim();
+	// Strip trailing slashes once up front so the suffix regex matches both
+	// `.../chat/completions` and `.../chat/completions/`.
+	url = url.replace(/\/+$/, '');
+	url = url.replace(/\/chat\/completions$/i, '');
+	return url;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {
@@ -448,7 +508,9 @@ async function streamChatToAnthropic(params: {
 	try {
 		if (!upstreamResponse.body) throw new Error('Upstream returned empty stream body');
 
+		let sawAnyChunk = false;
 		for await (const chunk of readChatStream(upstreamResponse.body)) {
+			sawAnyChunk = true;
 			if (chunk.error?.message) throw new Error(chunk.error.message);
 			if (chunk.usage) {
 				finalPromptTokens = chunk.usage.prompt_tokens ?? finalPromptTokens;
@@ -507,8 +569,18 @@ async function streamChatToAnthropic(params: {
 			}
 		}
 
-		ensureStarted();
+		if (!sawAnyChunk) {
+			// Upstream returned 200 but the body contained no SSE `data:` chunks
+			// (e.g. a non-streaming endpoint that ignored `stream: true` and
+			// returned a one-shot JSON object, or a misconfigured proxy that
+			// stripped the SSE framing). Fail loudly instead of emitting an
+			// empty `end_turn` that hides the incompatibility from the user.
+			throw new Error(
+				'Upstream returned a non-SSE 200 response. Check that the endpoint supports streaming Chat Completions and that any proxy preserves text/event-stream framing.'
+			);
+		}
 
+		ensureStarted();
 		// Flush any tool calls that received a name but never closed via finish_reason.
 		for (const call of pendingByIdx.values()) {
 			if (!call.opened && call.name) {
@@ -560,9 +632,10 @@ export function createOpenAIChatBridgeServer(
 	config: OpenAIChatBridgeConfig
 ): OpenAIChatBridgeServer {
 	const fetchImpl = config.fetchImpl ?? fetch;
-	const baseUrl = config.baseUrl.replace(/\/$/, '');
+	const baseUrl = normaliseChatBaseUrl(config.baseUrl);
 	const toolUseSupported = config.toolUseSupported ?? true;
 	const visionSupported = config.visionSupported ?? false;
+	const thinkingSupported = config.thinkingSupported ?? false;
 	const modelContextWindow = config.modelContextWindow;
 
 	const server = Bun.serve({
@@ -624,7 +697,13 @@ export function createOpenAIChatBridgeServer(
 				);
 			}
 
-			const chatRequest = buildChatRequest(body, body.model, toolUseSupported, visionSupported);
+			const chatRequest = buildChatRequest(
+				body,
+				body.model,
+				toolUseSupported,
+				visionSupported,
+				thinkingSupported
+			);
 			const inputTokens = estimateAnthropicInputTokens(body);
 
 			let upstreamResponse: Response;
@@ -694,4 +773,6 @@ export const _openAIChatBridgeTesting = {
 	toOpenAIToolChoice,
 	buildChatRequest,
 	streamChatToAnthropic,
+	normaliseChatBaseUrl,
+	thinkingToReasoningEffort,
 };

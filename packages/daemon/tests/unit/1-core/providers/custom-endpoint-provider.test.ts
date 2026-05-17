@@ -137,6 +137,7 @@ describe('CustomEndpointProvider', () => {
 			baseUrl: 'http://localhost:1234/v1',
 			toolUseSupported: true,
 			visionSupported: false,
+			thinkingSupported: false,
 			modelContextWindow: 32000,
 		});
 	});
@@ -149,6 +150,25 @@ describe('CustomEndpointProvider', () => {
 			toolUseSupported: false,
 			visionSupported: true,
 		});
+	});
+
+	it('forwards thinkingSupported when the model declares thinking=true', () => {
+		const fake = makeFakeBridge();
+		const p = new CustomEndpointProvider(
+			{
+				...baseConfig,
+				models: [
+					{
+						id: 'reasoner',
+						capabilities: { toolUse: true, vision: false, thinking: true },
+					},
+				],
+				defaultModelId: 'reasoner',
+			},
+			{ bridgeFactory: fake.factory }
+		);
+		p.buildSdkConfig('reasoner');
+		expect(fake.configs[0]).toMatchObject({ thinkingSupported: true });
 	});
 
 	it('reuses the bridge for the same (baseUrl, apiKey, model) tuple', () => {
