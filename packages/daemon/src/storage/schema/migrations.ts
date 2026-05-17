@@ -5002,6 +5002,18 @@ function runMigration65(db: BunDatabase): void {
  *   created_at  - ISO 8601 timestamp (default: current UTC time)
  */
 export function runMigration66(db: BunDatabase): void {
+	// Skip the entire migration if Neo support has already been removed by M131
+	// (or the table was created fresh at the M131 tip without 'neo' in the CHECK).
+	// Re-running the legacy probe-and-rebuild here would rebuild `sessions` with a
+	// stale CHECK that rejects post-M66 types like 'space_chat', crashing startup
+	// on any DB created or upgraded under the M131 schema.
+	if (tableExists(db, 'sessions')) {
+		const sessionsSql = tableCreateSql(db, 'sessions');
+		if (sessionsSql && !sessionsSql.includes("'neo'")) {
+			return;
+		}
+	}
+
 	// --- Part 1: Expand sessions.type CHECK constraint to include 'neo' ---
 	if (tableExists(db, 'sessions')) {
 		try {
@@ -8817,17 +8829,45 @@ export function runMigration127(db: BunDatabase): void {
  * extension configuration.
  */
 export function runMigration128(db: BunDatabase): void {
+	const hadLegacyGlobalConfigTable = tableExists(db, 'external_event_source_configs');
+
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS external_event_source_configs (
+		CREATE TABLE IF NOT EXISTS external_event_extension_configs (
 			source TEXT PRIMARY KEY,
-			globally_enabled INTEGER NOT NULL DEFAULT 0,
-			capabilities_json TEXT NOT NULL,
-			secrets_ref TEXT,
-			settings_json TEXT,
+			globally_enabled INTEGER NOT NULL DEFAULT 0 CHECK(globally_enabled IN (0, 1)),
+			capabilities_json TEXT NOT NULL DEFAULT '{}',
+			secrets_ref TEXT DEFAULT NULL,
+			settings_json TEXT NOT NULL DEFAULT '{}',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)
 	`);
+
+	if (hadLegacyGlobalConfigTable) {
+		db.exec(`
+			INSERT OR IGNORE INTO external_event_extension_configs (
+				source, globally_enabled, capabilities_json, secrets_ref,
+				settings_json, created_at, updated_at
+			)
+			SELECT
+				source,
+				globally_enabled,
+				json_set(
+						CASE
+							WHEN json_valid(capabilities_json) AND json_type(capabilities_json) = 'object'
+								THEN capabilities_json
+							ELSE '{}'
+						END,
+						'$.rpcConfig',
+						json('true')
+					),
+				secrets_ref,
+				COALESCE(settings_json, '{}'),
+				created_at,
+				updated_at
+			FROM external_event_source_configs
+		`);
+	}
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
@@ -8841,6 +8881,13 @@ export function runMigration128(db: BunDatabase): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
+
+	const now = Date.now();
+	db.prepare(
+		`INSERT OR IGNORE INTO external_event_extension_configs
+		 (source, globally_enabled, capabilities_json, secrets_ref, settings_json, created_at, updated_at)
+		 VALUES ('github', 1, ?, NULL, '{}', ?, ?)`
+	).run(JSON.stringify({ webhooks: true, polling: false, rpcConfig: true }), now, now);
 }
 
 /**
