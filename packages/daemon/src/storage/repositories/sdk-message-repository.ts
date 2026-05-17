@@ -1137,20 +1137,26 @@ export class SDKMessageRepository {
 			rank: number;
 		}>;
 
-		const results: MessageSearchResult[] = rows.map((row) => ({
-			kind: row.kind,
-			sourceId: row.source_id,
-			messageId: row.message_id ?? undefined,
-			sessionId: row.session_id ?? undefined,
-			taskId: row.task_id ?? undefined,
-			spaceId: row.space_id ?? undefined,
-			taskNumber: row.task_number ?? undefined,
-			messageType: row.message_type ?? undefined,
-			title: row.title ?? (row.kind === 'task' ? 'Task' : 'Session'),
-			snippet: row.snippet ?? '',
-			timestamp: parseSearchTimestamp(row.timestamp),
-			rank: row.rank,
-		}));
+		const results: MessageSearchResult[] = rows.map((row) => {
+			const timestamp = parseSearchTimestamp(row.timestamp);
+			return {
+				kind: row.kind,
+				sourceId: row.source_id,
+				messageId: row.message_id ?? undefined,
+				sessionId: row.session_id ?? undefined,
+				taskId: row.task_id ?? undefined,
+				spaceId: row.space_id ?? undefined,
+				taskNumber: row.task_number ?? undefined,
+				messageType: row.message_type ?? undefined,
+				title: row.title ?? (row.kind === 'task' ? 'Task' : 'Session'),
+				snippet: row.snippet ?? '',
+				timestamp,
+				loadTarget: row.session_id
+					? { sessionId: row.session_id, before: timestamp + 1 }
+					: undefined,
+				rank: row.rank,
+			};
+		});
 
 		return { results, limit, offset };
 	}

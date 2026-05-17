@@ -54,9 +54,15 @@ export const spaceOverlayAgentNameSignal = signal<string | null>(null);
 export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
 
 // Message selected from search results. ChatContainer consumes this after routing to target session.
+export interface SearchMessageLoadTarget {
+	sessionId: string;
+	before?: number;
+}
+
 export interface SearchHighlightTarget {
 	sessionId: string;
 	messageId: string;
+	loadTarget?: SearchMessageLoadTarget;
 }
 export const searchHighlightMessageIdSignal = signal<SearchHighlightTarget | null>(null);
 // Task messaging context for live workflow node-agent overlays. When set, sends

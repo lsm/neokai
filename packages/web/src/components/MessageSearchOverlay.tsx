@@ -18,7 +18,13 @@ export interface MessageSearchResult {
 	title: string;
 	snippet: string;
 	timestamp: number;
+	loadTarget?: MessageSearchLoadTarget;
 	rank: number;
+}
+
+interface MessageSearchLoadTarget {
+	sessionId: string;
+	before?: number;
 }
 
 interface MessageSearchResponse {
@@ -31,7 +37,7 @@ interface MessageSearchOverlayProps {
 	isOpen: boolean;
 	onClose: () => void;
 	currentSessionId: string;
-	onSelectMessage: (messageId: string) => void;
+	onSelectMessage: (messageId: string, loadTarget?: MessageSearchLoadTarget) => void;
 }
 
 export function MessageSearchOverlay({
@@ -45,6 +51,7 @@ export function MessageSearchOverlay({
 	const [loading, setLoading] = useState(false);
 	const [results, setResults] = useState<MessageSearchResult[]>([]);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const requestIdRef = useRef(0);
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -54,7 +61,9 @@ export function MessageSearchOverlay({
 	useEffect(() => {
 		if (!isOpen) return;
 		const trimmed = query.trim();
+		const requestId = ++requestIdRef.current;
 		if (!trimmed) {
+			setLoading(false);
 			setResults([]);
 			return;
 		}
@@ -72,11 +81,17 @@ export function MessageSearchOverlay({
 					sessionId: searchAll ? undefined : currentSessionId,
 					limit: 25,
 				});
-				setResults(response.results);
+				if (requestId === requestIdRef.current) {
+					setResults(response.results);
+				}
 			} catch (error) {
-				toast.error(error instanceof Error ? error.message : 'Search failed');
+				if (requestId === requestIdRef.current) {
+					toast.error(error instanceof Error ? error.message : 'Search failed');
+				}
 			} finally {
-				setLoading(false);
+				if (requestId === requestIdRef.current) {
+					setLoading(false);
+				}
 			}
 		}, 250);
 
@@ -96,10 +111,11 @@ export function MessageSearchOverlay({
 				searchHighlightMessageIdSignal.value = {
 					sessionId: result.sessionId,
 					messageId: targetMessageId,
+					loadTarget: result.loadTarget,
 				};
 				navigateToSession(result.sessionId);
 			} else {
-				onSelectMessage(targetMessageId);
+				onSelectMessage(targetMessageId, result.loadTarget);
 			}
 			onClose();
 		},

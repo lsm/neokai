@@ -940,6 +940,8 @@ describe('SDKMessageRepository', () => {
 			expect(result.results).toHaveLength(1);
 			expect(result.results[0].messageType).toBe('assistant');
 			expect(result.results[0].snippet).toContain('<mark>beacon</mark>');
+			expect(result.results[0].loadTarget).toMatchObject({ sessionId: 'session-1' });
+			expect(result.results[0].loadTarget?.before).toBeGreaterThan(result.results[0].timestamp);
 		});
 
 		it('returns task search rows from indexed titles and descriptions', () => {

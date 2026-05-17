@@ -70,7 +70,7 @@ import {
 	replaceOverlayHistory,
 } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
-import { searchHighlightMessageIdSignal } from '../lib/signals.ts';
+import { searchHighlightMessageIdSignal, type SearchMessageLoadTarget } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -287,6 +287,7 @@ export default function ChatContainer({
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
 	const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
+	const searchLoadTargetRef = useRef<SearchMessageLoadTarget | null>(null);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -636,10 +637,18 @@ export default function ChatContainer({
 		setSandboxEnabled,
 	});
 
+	const selectSearchMessage = useCallback(
+		(messageId: string, loadTarget?: SearchMessageLoadTarget) => {
+			searchLoadTargetRef.current = loadTarget ?? null;
+			setSearchTargetMessageId(messageId);
+		},
+		[]
+	);
+
 	useSignalEffect(() => {
 		const target = searchHighlightMessageIdSignal.value;
 		if (target?.sessionId === sessionId && sessionStore.activeSessionId.value === sessionId) {
-			setSearchTargetMessageId(target.messageId);
+			selectSearchMessage(target.messageId, target.loadTarget);
 			searchHighlightMessageIdSignal.value = null;
 		}
 	});
@@ -823,9 +832,43 @@ export default function ChatContainer({
 	// deep-link scroll.
 	useEffect(() => {
 		if (!searchTargetMessageId || isInitialLoad) return;
-		const timeout = setTimeout(() => setSearchTargetMessageId(null), 750);
-		return () => clearTimeout(timeout);
-	}, [searchTargetMessageId, isInitialLoad]);
+		const isLoaded = messages.some((message) => message.uuid === searchTargetMessageId);
+		if (isLoaded) return;
+
+		const loadTarget = searchLoadTargetRef.current;
+		if (!loadTarget?.before) {
+			const timeout = setTimeout(() => setSearchTargetMessageId(null), 750);
+			return () => clearTimeout(timeout);
+		}
+
+		let cancelled = false;
+		setLoadingOlder(true);
+		sessionStore
+			.loadOlderMessages(loadTarget.before, 100, loadTarget.sessionId)
+			.then(({ messages: targetWindow, hasMore }) => {
+				if (cancelled) return;
+				if (targetWindow.length === 0) {
+					setHasMoreMessages(false);
+					setSearchTargetMessageId(null);
+					return;
+				}
+				sessionStore.prependMessages(targetWindow);
+				setHasMoreMessages(hasMore);
+				searchLoadTargetRef.current = null;
+			})
+			.catch(() => {
+				if (!cancelled) {
+					toast.error('Failed to load search result context');
+					setSearchTargetMessageId(null);
+				}
+			})
+			.finally(() => {
+				if (!cancelled) setLoadingOlder(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [searchTargetMessageId, isInitialLoad, messages]);
 
 	useScrollToMessage({
 		containerRef: messagesContainerRef,
@@ -1446,7 +1489,7 @@ export default function ChatContainer({
 				isOpen={searchModal.isOpen}
 				onClose={searchModal.close}
 				currentSessionId={sessionId}
-				onSelectMessage={setSearchTargetMessageId}
+				onSelectMessage={selectSearchMessage}
 			/>
 
 			{/* Delete Modal */}

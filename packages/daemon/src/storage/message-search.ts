@@ -10,6 +10,11 @@ export interface MessageSearchParams {
 	messageType?: string;
 }
 
+export interface MessageSearchLoadTarget {
+	sessionId: string;
+	before?: number;
+}
+
 export interface MessageSearchResult {
 	kind: 'message' | 'task';
 	sourceId: string;
@@ -22,6 +27,7 @@ export interface MessageSearchResult {
 	title: string;
 	snippet: string;
 	timestamp: number;
+	loadTarget?: MessageSearchLoadTarget;
 	rank: number;
 }
 

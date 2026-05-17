@@ -9133,7 +9133,7 @@ function backfillMessageSearchFts(db: BunDatabase): void {
 				space_id,
 				task_number,
 				title,
-				description,
+				TRIM(COALESCE(title, '') || ' ' || COALESCE(description, '')),
 				updated_at
 			FROM space_tasks
 			WHERE TRIM(COALESCE(title, '') || ' ' || COALESCE(description, '')) != ''

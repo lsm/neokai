@@ -60,15 +60,7 @@ export class SpaceTaskRepository {
 					kind, source_id, task_id, space_id, task_number, title, body, timestamp
 				) VALUES ('task', ?, ?, ?, ?, ?, ?, ?)`
 			)
-			.run(
-				row.id,
-				row.id,
-				row.space_id,
-				row.task_number,
-				row.title,
-				row.description,
-				row.updated_at
-			);
+			.run(row.id, row.id, row.space_id, row.task_number, row.title, body, row.updated_at);
 	}
 
 	private deleteTaskSearchRow(taskId: string): void {
