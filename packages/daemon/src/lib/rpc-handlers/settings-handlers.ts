@@ -66,6 +66,10 @@ export function registerSettingsHandlers(
 			if (data.updates.providerModelAllowlists !== undefined) {
 				await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
 			}
+			if (data.updates.customEndpoints !== undefined) {
+				const { syncCustomEndpointProviders } = await import('../providers/factory.js');
+				await syncCustomEndpointProviders(data.updates.customEndpoints);
+			}
 			// Emit event for StateManager to broadcast (global event)
 			internalEventBus.publishAsync('settings.updated', {
 				namespaceId: 'global',
@@ -86,6 +90,8 @@ export function registerSettingsHandlers(
 		if (data.settings.providerModelAllowlists !== undefined) {
 			await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
 		}
+		const { syncCustomEndpointProviders } = await import('../providers/factory.js');
+		await syncCustomEndpointProviders(data.settings.customEndpoints);
 		// Emit event for StateManager to broadcast (global event)
 		internalEventBus.publishAsync('settings.updated', {
 			namespaceId: 'global',

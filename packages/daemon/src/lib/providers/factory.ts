@@ -15,9 +15,18 @@ import { OpenRouterProvider } from './openrouter-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
+import {
+	CustomEndpointProvider,
+	customProviderIdFor,
+	isCustomEndpointProviderId,
+} from './custom-endpoint-provider.js';
+import type { CustomEndpointConfig } from '@neokai/shared';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
+import { Logger } from '../logger.js';
+
+const logger = new Logger('providers:factory');
 
 /**
  * Initialization state
@@ -83,6 +92,62 @@ export function initializeProviders(): ProviderRegistry {
 	initialized = true;
 
 	return registry;
+}
+
+/**
+ * Synchronise registered custom-endpoint providers with the given config list.
+ *
+ * Re-entrant: safe to call after `initializeProviders()` whenever the user
+ * adds/removes/updates a custom endpoint via the RPC handlers. Existing
+ * `CustomEndpointProvider` instances whose config is no longer present are
+ * shut down and unregistered.
+ */
+export async function syncCustomEndpointProviders(
+	configs: CustomEndpointConfig[] | undefined
+): Promise<void> {
+	const registry = initializeProviders();
+	const wanted = new Map<string, CustomEndpointConfig>();
+	for (const config of configs ?? []) {
+		if (!config?.id || !config.baseUrl || !config.models?.length) continue;
+		wanted.set(customProviderIdFor(config.id), config);
+	}
+
+	const toRemove: string[] = [];
+	for (const provider of registry.getAll()) {
+		if (!isCustomEndpointProviderId(provider.id)) continue;
+		if (!wanted.has(provider.id)) toRemove.push(provider.id);
+	}
+	for (const id of toRemove) {
+		const provider = registry.get(id);
+		if (provider?.shutdown) {
+			try {
+				await provider.shutdown();
+			} catch (err) {
+				logger.warn(`Failed to shut down custom endpoint provider ${id}: ${err}`);
+			}
+		}
+		registry.unregister(id);
+	}
+
+	for (const [providerId, config] of wanted) {
+		const existing = registry.get(providerId);
+		if (existing) {
+			// Replace with fresh instance so changes (baseUrl, models, apiKey) take effect.
+			if (existing.shutdown) {
+				try {
+					await existing.shutdown();
+				} catch (err) {
+					logger.warn(`Failed to shut down custom endpoint provider ${providerId}: ${err}`);
+				}
+			}
+			registry.unregister(providerId);
+		}
+		try {
+			registry.register(new CustomEndpointProvider(config));
+		} catch (err) {
+			logger.warn(`Skipping invalid custom endpoint '${config.id}': ${err}`);
+		}
+	}
 }
 
 /**
