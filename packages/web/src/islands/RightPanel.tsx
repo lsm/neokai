@@ -217,14 +217,14 @@ export function RightPanel() {
 			/>
 			<div
 				class={cn(
-					'fixed right-0 top-0 z-30 h-safe-screen overflow-hidden bg-dark-800 shadow-2xl lg:relative lg:top-auto lg:z-auto lg:h-full lg:flex-shrink-0 lg:bg-transparent lg:shadow-none',
+					'fixed right-0 top-0 z-30 h-safe-screen overflow-hidden bg-transparent lg:relative lg:top-auto lg:z-auto lg:h-full lg:flex-shrink-0',
 					!resizing && 'transition-[width] duration-200 ease-out'
 				)}
 				style={{ width: open ? panelWidthValue : '0px' }}
 			>
 				<div
 					class={cn(
-						'relative h-full overflow-hidden rounded-l-[28px] pt-safe transition-transform duration-200 ease-out lg:pt-0',
+						'relative h-full overflow-hidden rounded-l-[28px] border-l border-dark-700 bg-dark-800 pt-safe shadow-2xl transition-transform duration-200 ease-out lg:pt-0 lg:shadow-none',
 						open ? 'translate-x-0' : 'translate-x-full'
 					)}
 					style={{ width: panelWidthValue }}
