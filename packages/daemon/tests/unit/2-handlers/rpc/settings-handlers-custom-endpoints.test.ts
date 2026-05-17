@@ -123,6 +123,14 @@ describe('settings handlers — custom endpoints integration', () => {
 			expect(syncCalls).toHaveLength(0);
 			expect(clearModelsCacheCalls).toHaveLength(0);
 		});
+
+		it('rejects a null customEndpoints payload', async () => {
+			const handler = hubData.handlers.get('settings.global.update')!;
+			await expect(
+				handler({ updates: { customEndpoints: null as unknown as CustomEndpointConfig[] } }, {})
+			).rejects.toThrow(/customEndpoints must be an array/);
+			expect(syncCalls).toHaveLength(0);
+		});
 	});
 
 	describe('settings.global.save', () => {
@@ -133,6 +141,25 @@ describe('settings handlers — custom endpoints integration', () => {
 			// Must not unregister any custom provider.
 			expect(syncCalls).toHaveLength(0);
 			expect(clearModelsCacheCalls).toHaveLength(0);
+			// And must not wipe the persisted customEndpoints from disk —
+			// otherwise the next daemon startup would load the saved settings,
+			// see no endpoints, and never re-register them.
+			expect(settings.state.settings.customEndpoints).toEqual([validEndpoint]);
+		});
+
+		it('rejects a null customEndpoints payload instead of silently wiping providers', async () => {
+			const handler = hubData.handlers.get('settings.global.save')!;
+			await expect(
+				handler(
+					{
+						settings: { customEndpoints: null } as unknown as GlobalSettings,
+					},
+					{}
+				)
+			).rejects.toThrow(/customEndpoints must be an array/);
+			// Persisted state untouched.
+			expect(settings.state.settings.customEndpoints).toEqual([validEndpoint]);
+			expect(syncCalls).toHaveLength(0);
 		});
 
 		it('explicitly clears endpoints when payload sets customEndpoints to []', async () => {

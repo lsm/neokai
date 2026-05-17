@@ -115,12 +115,23 @@ export function registerSettingsHandlers(
 			data.settings,
 			'customEndpoints'
 		);
+		// When the payload omits the field, merge the currently-persisted
+		// list back into what we write to disk. Otherwise `saveGlobalSettings`
+		// replaces the JSON row and deletes the previously persisted endpoints
+		// — on next startup `syncCustomEndpointProviders` would see an empty
+		// list and unregister all custom providers.
+		const settingsToPersist: GlobalSettings = customEndpointsProvided
+			? data.settings
+			: {
+					...data.settings,
+					customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
+				};
 		const run = async () => {
 			if (customEndpointsProvided) {
 				const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
 				validateCustomEndpoints(data.settings.customEndpoints);
 			}
-			settingsManager.saveGlobalSettings(data.settings);
+			settingsManager.saveGlobalSettings(settingsToPersist);
 			if (data.settings.providerModelAllowlists !== undefined) {
 				await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
 			}
@@ -133,7 +144,7 @@ export function registerSettingsHandlers(
 			// Emit event for StateManager to broadcast (global event)
 			internalEventBus.publishAsync('settings.updated', {
 				namespaceId: 'global',
-				settings: data.settings,
+				settings: settingsToPersist,
 			});
 			return { success: true };
 		};
