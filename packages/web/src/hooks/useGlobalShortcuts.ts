@@ -37,7 +37,7 @@ function isMacPlatform(): boolean {
 }
 
 function isPaletteToggle(event: KeyboardEvent, isMac: boolean): boolean {
-	if (event.shiftKey) return false;
+	if (event.shiftKey || event.altKey) return false;
 	if (event.key.toLowerCase() !== 'k') return false;
 	// On mac, only Cmd+K toggles. Ctrl+K is a native editing shortcut.
 	// On non-mac, only Ctrl+K toggles.

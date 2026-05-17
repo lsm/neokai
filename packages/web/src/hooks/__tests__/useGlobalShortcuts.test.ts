@@ -73,6 +73,13 @@ describe('useGlobalShortcuts', () => {
 		expect(commandPaletteOpenSignal.value).toBe(false);
 	});
 
+	it('does not toggle when altKey is held', () => {
+		setPlatform('MacIntel');
+		renderHook(() => useGlobalShortcuts());
+		fireKey({ key: 'k', metaKey: true, altKey: true });
+		expect(commandPaletteOpenSignal.value).toBe(false);
+	});
+
 	it('runs registered command shortcut', () => {
 		setPlatform('MacIntel');
 		let ran = 0;
@@ -137,6 +144,23 @@ describe('useGlobalShortcuts', () => {
 		input.focus();
 		fireKey({ key: '.', metaKey: true, target: input });
 		input.remove();
+		expect(ran).toBe(0);
+	});
+
+	it('ignores command shortcuts when altKey is held', () => {
+		setPlatform('MacIntel');
+		let ran = 0;
+		commandRegistry.register({
+			id: 'test',
+			label: 'Test',
+			category: 'help',
+			shortcut: { display: '⌘.', key: '.', mod: true },
+			run: () => {
+				ran += 1;
+			},
+		});
+		renderHook(() => useGlobalShortcuts());
+		fireKey({ key: '.', metaKey: true, altKey: true });
 		expect(ran).toBe(0);
 	});
 

@@ -99,20 +99,85 @@ describe('CommandRegistry', () => {
 	});
 
 	it('findByShortcut matches mod+key combos via metaKey (mac)', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
 		const c = cmd('a', { shortcut: { display: '⌘K', key: 'k', mod: true } });
 		reg.register(c);
-		const event = { metaKey: true, ctrlKey: false, shiftKey: false, key: 'K' } as KeyboardEvent;
+		const event = {
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			key: 'K',
+		} as KeyboardEvent;
 		expect(reg.findByShortcut(event)).toBe(c);
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
 	});
 
 	it('findByShortcut matches mod+key combos via ctrlKey (non-mac)', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
 		const c = cmd('a', { shortcut: { display: 'Ctrl+K', key: 'k', mod: true } });
 		reg.register(c);
-		const event = { metaKey: false, ctrlKey: true, shiftKey: false, key: 'k' } as KeyboardEvent;
+		const event = {
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: false,
+			altKey: false,
+			key: 'k',
+		} as KeyboardEvent;
 		expect(reg.findByShortcut(event)).toBe(c);
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
+	});
+
+	it('findByShortcut rejects opposite modifier on mac', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
+		reg.register(cmd('a', { shortcut: { display: '⌘K', key: 'k', mod: true } }));
+		const event = {
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: false,
+			altKey: false,
+			key: 'k',
+		} as KeyboardEvent;
+		expect(reg.findByShortcut(event)).toBeUndefined();
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
+	});
+
+	it('findByShortcut rejects opposite modifier on non-mac', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
+		reg.register(cmd('a', { shortcut: { display: 'Ctrl+K', key: 'k', mod: true } }));
+		const event = {
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			key: 'k',
+		} as KeyboardEvent;
+		expect(reg.findByShortcut(event)).toBeUndefined();
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
+	});
+
+	it('findByShortcut rejects altKey for commands without alt', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
+		reg.register(cmd('a', { shortcut: { display: '⌘K', key: 'k', mod: true } }));
+		const event = {
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: true,
+			key: 'k',
+		} as KeyboardEvent;
+		expect(reg.findByShortcut(event)).toBeUndefined();
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
 	});
 
 	it('findByShortcut returns the first matching command on shortcut collision', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
 		const first = cmd('a', {
 			label: 'First',
 			shortcut: { display: '⌘.', key: '.', mod: true },
@@ -123,9 +188,16 @@ describe('CommandRegistry', () => {
 		});
 		reg.register(first);
 		reg.register(second);
-		const event = { metaKey: true, ctrlKey: false, shiftKey: false, key: '.' } as KeyboardEvent;
+		const event = {
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			key: '.',
+		} as KeyboardEvent;
 		// Insertion order is preserved by Map.values(); first-registered wins.
 		expect(reg.findByShortcut(event)).toBe(first);
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
 	});
 
 	it('findByShortcut ignores wrong modifier', () => {
@@ -140,21 +212,26 @@ describe('CommandRegistry', () => {
 	});
 
 	it('findByShortcut enforces shift requirement', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
 		reg.register(cmd('a', { shortcut: { display: '⌘⇧N', key: 'n', mod: true, shift: true } }));
 		const without = {
 			metaKey: true,
 			ctrlKey: false,
 			shiftKey: false,
+			altKey: false,
 			key: 'n',
 		} as KeyboardEvent;
 		const withShift = {
 			metaKey: true,
 			ctrlKey: false,
 			shiftKey: true,
+			altKey: false,
 			key: 'n',
 		} as KeyboardEvent;
 		expect(reg.findByShortcut(without)).toBeUndefined();
 		expect(reg.findByShortcut(withShift)?.id).toBe('a');
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
 	});
 });
 

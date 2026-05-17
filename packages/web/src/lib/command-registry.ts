@@ -169,16 +169,33 @@ export class CommandRegistry {
 	/**
 	 * Find a command that matches the given keyboard event via its shortcut.
 	 * Returns undefined for commands without a registered shortcut.
+	 *
+	 * Matching is strict:
+	 * - `mod` requires the platform-specific modifier (metaKey on macOS,
+	 *   ctrlKey elsewhere) and rejects the opposite modifier.
+	 * - `altKey` must be false for commands that do not declare `alt`.
+	 * - `shiftKey` must match exactly.
 	 */
 	findByShortcut(event: KeyboardEvent): CommandDescriptor | undefined {
-		const isMod = event.metaKey || event.ctrlKey;
 		const key = event.key.toLowerCase();
+		const isMac =
+			/Mac|iPhone|iPad|iPod/i.test(navigator.platform ?? '') ||
+			/Mac|iPhone|iPad|iPod/i.test(navigator.userAgent ?? '');
 		for (const cmd of this.commands.values()) {
 			const sc = cmd.shortcut;
 			if (!sc) continue;
 			if (sc.key !== key) continue;
-			if (!!sc.mod !== isMod) continue;
+			if (sc.mod) {
+				if (isMac) {
+					if (!event.metaKey || event.ctrlKey) continue;
+				} else {
+					if (!event.ctrlKey || event.metaKey) continue;
+				}
+			} else {
+				if (event.metaKey || event.ctrlKey) continue;
+			}
 			if (!!sc.shift !== event.shiftKey) continue;
+			if (event.altKey) continue;
 			return cmd;
 		}
 		return undefined;
