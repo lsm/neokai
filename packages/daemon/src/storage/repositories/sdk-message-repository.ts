@@ -333,7 +333,7 @@ export class SDKMessageRepository {
 	} {
 		// Step 1: Get top-level messages (excluding subagent messages)
 		// Show user messages that were consumed to SDK, plus any that failed to deliver.
-		let query = `SELECT sdk_message, timestamp, send_status, origin FROM sdk_messages
+		let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
@@ -368,6 +368,7 @@ export class SDKMessageRepository {
 			const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 			const timestamp = new Date(r.timestamp as string).getTime();
 			const extra: Record<string, unknown> = {
+				id: r.id,
 				timestamp,
 				// DB origin wins; undefined explicitly clears any SDK-level origin object.
 				origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
@@ -404,7 +405,7 @@ export class SDKMessageRepository {
 			const placeholders = Array.from(toolUseIds)
 				.map(() => '?')
 				.join(',');
-			const subagentQuery = `SELECT sdk_message, timestamp FROM sdk_messages
+			const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
@@ -419,7 +420,12 @@ export class SDKMessageRepository {
 				const timestamp = new Date(r.timestamp as string).getTime();
 				// Subagent messages have no DB origin column; explicitly set undefined to strip
 				// any SDK-level origin object from the JSON blob (same reasoning as top-level).
-				return { ...sdkMessage, timestamp, origin: undefined } as SDKMessage & {
+				return {
+					...sdkMessage,
+					id: r.id,
+					timestamp,
+					origin: undefined,
+				} as unknown as SDKMessage & {
 					timestamp: number;
 				};
 			});

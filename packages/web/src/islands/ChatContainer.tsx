@@ -832,7 +832,11 @@ export default function ChatContainer({
 	// deep-link scroll.
 	useEffect(() => {
 		if (!searchTargetMessageId || isInitialLoad) return;
-		const isLoaded = messages.some((message) => message.uuid === searchTargetMessageId);
+		const isLoaded = messages.some(
+			(message) =>
+				message.uuid === searchTargetMessageId ||
+				(message as ChatMessage & { id?: string }).id === searchTargetMessageId
+		);
 		if (isLoaded) return;
 
 		const loadTarget = searchLoadTargetRef.current;

@@ -234,6 +234,7 @@ describe('SDKMessageRepository', () => {
 
 			// Should include both top-level and subagent messages
 			expect(messages.length).toBe(3);
+			expect(messages.every((message) => (message as { id?: string }).id)).toBe(true);
 		});
 
 		it('should exclude subagent messages without matching parent', () => {
@@ -249,12 +250,13 @@ describe('SDKMessageRepository', () => {
 			expect(messages.length).toBe(1);
 		});
 
-		it('should inject timestamp into returned messages', () => {
+		it('should inject id and timestamp into returned messages', () => {
 			repository.saveSDKMessage('session-1', createUserMessage('Test'));
 
 			const { messages } = repository.getSDKMessages('session-1');
 
 			expect(messages.length).toBe(1);
+			expect((messages[0] as { id?: string }).id).toBeDefined();
 			expect((messages[0] as { timestamp?: number }).timestamp).toBeDefined();
 			expect(typeof (messages[0] as { timestamp?: number }).timestamp).toBe('number');
 		});
