@@ -9029,7 +9029,7 @@ function createMessageSearchFtsTable(db: BunDatabase): void {
 			space_id UNINDEXED,
 			task_number UNINDEXED,
 			message_type UNINDEXED,
-			title UNINDEXED,
+			title,
 			body,
 			timestamp UNINDEXED,
 			tokenize = 'unicode61'

@@ -96,7 +96,7 @@ describe('SDKMessageRepository', () => {
 				space_id UNINDEXED,
 				task_number UNINDEXED,
 				message_type UNINDEXED,
-				title UNINDEXED,
+				title,
 				body,
 				timestamp UNINDEXED,
 				tokenize = 'unicode61'
@@ -906,6 +906,62 @@ describe('SDKMessageRepository', () => {
 			expect(result.results.length).toBe(1);
 			expect(result.results[0].sessionId).toBe('session-1');
 			expect(result.results[0].snippet).toContain('<mark>alpha</mark>');
+		});
+
+		it('returns cross-session matches when no session filter is provided', () => {
+			createSearchIndex();
+			repository.saveSDKMessage('session-1', createUserMessage('global comet marker'));
+			repository.saveSDKMessage('session-2', createUserMessage('global comet marker'));
+
+			const result = repository.searchMessages({ query: 'comet' });
+
+			expect(result.results.map((row) => row.sessionId).sort()).toEqual(['session-1', 'session-2']);
+		});
+
+		it('filters by message type and date range', async () => {
+			createSearchIndex();
+			const oldId = repository.saveUserMessage(
+				'session-1',
+				createUserMessage('filter beacon old'),
+				'consumed'
+			);
+			repository.updateMessageTimestamp(oldId, Date.now() - 10_000);
+			const from = Date.now() - 1_000;
+			repository.saveSDKMessage('session-1', createAssistantMessage('filter beacon current'));
+			repository.saveSDKMessage('session-1', createUserMessage('filter beacon user'));
+
+			const result = repository.searchMessages({
+				query: 'beacon',
+				messageType: 'assistant',
+				from,
+				to: Date.now() + 1_000,
+			});
+
+			expect(result.results).toHaveLength(1);
+			expect(result.results[0].messageType).toBe('assistant');
+			expect(result.results[0].snippet).toContain('<mark>beacon</mark>');
+		});
+
+		it('returns task search rows from indexed titles and descriptions', () => {
+			createSearchIndex();
+			db.prepare(
+				`INSERT INTO message_search_fts (
+					kind, source_id, task_id, space_id, task_number, title, body, timestamp
+				) VALUES ('task', ?, ?, ?, ?, ?, ?, ?)`
+			).run('task-1', 'task-1', 'space-1', 12, 'Orion title', 'Task description', Date.now());
+
+			const titleResult = repository.searchMessages({ query: 'orion' });
+			const bodyResult = repository.searchMessages({ query: 'description' });
+
+			expect(titleResult.results).toHaveLength(1);
+			expect(bodyResult.results).toHaveLength(1);
+			expect(titleResult.results[0]).toMatchObject({
+				kind: 'task',
+				taskId: 'task-1',
+				spaceId: 'space-1',
+				taskNumber: 12,
+				title: 'Orion title',
+			});
 		});
 
 		it('removes deleted messages from search index', () => {
