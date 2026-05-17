@@ -874,7 +874,10 @@ export default function ChatContainer({
 					searchLoadTarget.sessionId
 				);
 				if (cancelled) return;
-				if (sessionStore.activeSessionId.value !== searchLoadTarget.sessionId) return;
+				if (sessionStore.activeSessionId.value !== searchLoadTarget.sessionId) {
+					resetSearchTarget();
+					return;
+				}
 				if (targetWindow.length === 0) {
 					setHasMoreMessages(false);
 					resetSearchTarget();
@@ -901,10 +904,11 @@ export default function ChatContainer({
 		};
 		applyTargetWindow()
 			.catch(() => {
-				if (!cancelled && sessionStore.activeSessionId.value === searchLoadTarget.sessionId) {
+				if (cancelled) return;
+				if (sessionStore.activeSessionId.value === searchLoadTarget.sessionId) {
 					toast.error('Failed to load search result context');
-					resetSearchTarget();
 				}
+				resetSearchTarget();
 			})
 			.finally(() => {
 				if (!cancelled) setLoadingOlder(false);
