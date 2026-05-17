@@ -63,6 +63,7 @@ describe('scope-config', () => {
 				'space_workflow_nodes',
 				'space_workflow_runs',
 				'space_tasks',
+				'space_goals',
 				'space_worktrees',
 				'gate_data',
 				'channel_cycles',
