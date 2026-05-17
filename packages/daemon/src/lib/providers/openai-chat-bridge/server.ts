@@ -354,24 +354,52 @@ function thinkingToReasoningEffort(
 }
 
 /**
- * Normalise the user-supplied baseUrl into the form `${prefix}` so that
- * `${prefix}/chat/completions` is the correct Chat Completions endpoint.
+ * Build the final Chat Completions request URL from a user-supplied baseUrl.
  *
  * Users routinely paste either:
  *   - the OpenAI-style root, e.g. `https://api.example.com/v1`
  *   - the full chat endpoint, e.g. `https://api.example.com/v1/chat/completions`
+ *   - Azure-style URLs with a query string, e.g.
+ *     `https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview`
  *
- * Without normalisation the latter becomes `.../chat/completions/chat/completions`
- * and every request fails with 404. Strip a trailing `/chat/completions`
- * (with optional trailing slash) and any trailing slashes.
+ * Naive string concatenation produces malformed targets like
+ * `.../chat/completions/chat/completions` (404) or
+ * `...?api-version=.../chat/completions` (also broken). Parse the URL,
+ * strip a trailing `/chat/completions` from the path, reattach the chat
+ * suffix to the path, and preserve any query string by re-serialising via
+ * the `URL` API.
+ */
+export function buildChatCompletionsUrl(input: string): string {
+	const trimmed = input.trim();
+	let parsed: URL;
+	try {
+		parsed = new URL(trimmed);
+	} catch (err) {
+		throw new Error(
+			`Custom endpoint baseUrl is not a valid URL: ${err instanceof Error ? err.message : String(err)}`
+		);
+	}
+	// Strip trailing slashes from the path, then any trailing `/chat/completions`,
+	// then re-add a single `/chat/completions` suffix. This keeps `?api-version=...`
+	// and any other query string intact since we only mutate `pathname`.
+	let path = parsed.pathname.replace(/\/+$/, '');
+	path = path.replace(/\/chat\/completions$/i, '');
+	parsed.pathname = `${path}/chat/completions`;
+	return parsed.toString();
+}
+
+/**
+ * Legacy export retained for the rare caller that wanted the "base prefix"
+ * (everything except `/chat/completions`). Now expressed in terms of the
+ * URL-aware builder so query strings are preserved consistently.
  */
 export function normaliseChatBaseUrl(input: string): string {
-	let url = input.trim();
-	// Strip trailing slashes once up front so the suffix regex matches both
-	// `.../chat/completions` and `.../chat/completions/`.
-	url = url.replace(/\/+$/, '');
-	url = url.replace(/\/chat\/completions$/i, '');
-	return url;
+	const full = buildChatCompletionsUrl(input);
+	// Strip the `/chat/completions` suffix that buildChatCompletionsUrl just
+	// added, leaving the base prefix (with any query string preserved).
+	const parsed = new URL(full);
+	parsed.pathname = parsed.pathname.replace(/\/chat\/completions$/i, '');
+	return parsed.toString().replace(/\/$/, '');
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {
@@ -659,7 +687,7 @@ export function createOpenAIChatBridgeServer(
 	config: OpenAIChatBridgeConfig
 ): OpenAIChatBridgeServer {
 	const fetchImpl = config.fetchImpl ?? fetch;
-	const baseUrl = normaliseChatBaseUrl(config.baseUrl);
+	const chatCompletionsUrl = buildChatCompletionsUrl(config.baseUrl);
 	const toolUseSupported = config.toolUseSupported ?? true;
 	const visionSupported = config.visionSupported ?? false;
 	const thinkingSupported = config.thinkingSupported ?? false;
@@ -735,7 +763,7 @@ export function createOpenAIChatBridgeServer(
 
 			let upstreamResponse: Response;
 			try {
-				upstreamResponse = await fetchImpl(`${baseUrl}/chat/completions`, {
+				upstreamResponse = await fetchImpl(chatCompletionsUrl, {
 					method: 'POST',
 					headers: {
 						'Content-Type': 'application/json',
@@ -801,5 +829,6 @@ export const _openAIChatBridgeTesting = {
 	buildChatRequest,
 	streamChatToAnthropic,
 	normaliseChatBaseUrl,
+	buildChatCompletionsUrl,
 	thinkingToReasoningEffort,
 };

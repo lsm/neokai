@@ -694,6 +694,56 @@ describe('OpenAI Chat Completions bridge server', () => {
 			});
 			expect(capturedUrl).toBe('http://upstream.test/v1/chat/completions');
 		});
+
+		it('preserves a query string on the baseUrl when appending /chat/completions', () => {
+			// Azure-style URL: deployment path + ?api-version=... query string.
+			const azure =
+				'https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview';
+			expect(_openAIChatBridgeTesting.buildChatCompletionsUrl(azure)).toBe(
+				'https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview'
+			);
+			// Base prefix without the chat suffix — query string must survive too.
+			const azureBase =
+				'https://x.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-08-01-preview';
+			expect(_openAIChatBridgeTesting.buildChatCompletionsUrl(azureBase)).toBe(
+				'https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview'
+			);
+		});
+
+		it('rejects an invalid baseUrl up front instead of producing a malformed target', () => {
+			expect(() => _openAIChatBridgeTesting.buildChatCompletionsUrl('not a url')).toThrow(
+				/not a valid URL/
+			);
+		});
+
+		it('actually sends requests to a query-bearing baseUrl with /chat/completions appended once', async () => {
+			let capturedUrl = '';
+			const fetchMock = mock(async (url: string) => {
+				capturedUrl = url;
+				return new Response(
+					sseBody([{ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] }]),
+					{ status: 200 }
+				);
+			});
+			const server = createOpenAIChatBridgeServer({
+				baseUrl:
+					'https://x.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-08-01-preview',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'm',
+					messages: [{ role: 'user', content: 'hi' }],
+					stream: true,
+				}),
+			});
+			expect(capturedUrl).toBe(
+				'https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview'
+			);
+		});
 	});
 
 	describe('thinking forwarding', () => {

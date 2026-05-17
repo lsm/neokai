@@ -63,10 +63,12 @@ export function registerSettingsHandlers(
 		'settings.global.update',
 		async (data: { updates: Partial<GlobalSettings> }) => {
 			const touchesCustomEndpoints = data.updates.customEndpoints !== undefined;
-			// Route customEndpoints-touching writes through the same in-process
-			// queue that customEndpoints.add/update/remove use, otherwise a
-			// concurrent settings RPC could interleave with a CRUD call and
-			// last-writer-wins would drop one mutation.
+			// Always serialise through the customEndpoints lock. Even when the
+			// update payload omits `customEndpoints`, `updateGlobalSettings`
+			// performs a full read-merge-write of the settings row that includes
+			// the customEndpoints field — without the lock a concurrent
+			// `customEndpoints.add/update/remove` could persist a stale snapshot
+			// and silently drop the other mutation.
 			const run = async () => {
 				if (touchesCustomEndpoints) {
 					const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
@@ -94,11 +96,8 @@ export function registerSettingsHandlers(
 
 				return { success: true, settings: updated };
 			};
-			if (touchesCustomEndpoints) {
-				const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
-				return withCustomEndpointsLock(run);
-			}
-			return run();
+			const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
+			return withCustomEndpointsLock(run);
 		}
 	);
 
@@ -115,22 +114,22 @@ export function registerSettingsHandlers(
 			data.settings,
 			'customEndpoints'
 		);
-		// When the payload omits the field, merge the currently-persisted
-		// list back into what we write to disk. Otherwise `saveGlobalSettings`
-		// replaces the JSON row and deletes the previously persisted endpoints
-		// — on next startup `syncCustomEndpointProviders` would see an empty
-		// list and unregister all custom providers.
-		const settingsToPersist: GlobalSettings = customEndpointsProvided
-			? data.settings
-			: {
-					...data.settings,
-					customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
-				};
 		const run = async () => {
 			if (customEndpointsProvided) {
 				const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
 				validateCustomEndpoints(data.settings.customEndpoints);
 			}
+			// When the payload omits the field, merge the currently-persisted
+			// list back into what we write to disk. Snapshot INSIDE the lock so
+			// a concurrent customEndpoints.add/update/remove cannot land between
+			// the snapshot and the saveGlobalSettings call — otherwise that
+			// mutation would be overwritten by this stale copy.
+			const settingsToPersist: GlobalSettings = customEndpointsProvided
+				? data.settings
+				: {
+						...data.settings,
+						customEndpoints: settingsManager.getGlobalSettings().customEndpoints,
+					};
 			settingsManager.saveGlobalSettings(settingsToPersist);
 			if (data.settings.providerModelAllowlists !== undefined) {
 				await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
@@ -148,13 +147,11 @@ export function registerSettingsHandlers(
 			});
 			return { success: true };
 		};
-		// Same rationale as settings.global.update — keep all customEndpoints
-		// writes ordered with the dedicated CRUD RPCs.
-		if (customEndpointsProvided) {
-			const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
-			return withCustomEndpointsLock(run);
-		}
-		return run();
+		// Always serialise through the customEndpoints lock — even when the
+		// payload omits the field we read+merge the persisted list inside `run`,
+		// and that read-modify-write must be ordered with concurrent CRUD RPCs.
+		const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
+		return withCustomEndpointsLock(run);
 	});
 
 	/**
