@@ -241,8 +241,7 @@ function buildFtsQuery(query: string): string | null {
 		.trim()
 		.toLowerCase()
 		.split(/\s+/)
-		.map((term) => term.replace(/[^\p{L}\p{N}_-]/gu, ''))
-		.map((term) => term.replace(/-/g, ''))
+		.map((term) => term.replace(/[^\p{L}\p{N}_.-]/gu, ''))
 		.filter((term) => term.length >= 3);
 	if (terms.length === 0) return null;
 	return terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(' ');

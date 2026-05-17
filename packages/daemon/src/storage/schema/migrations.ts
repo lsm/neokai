@@ -9042,6 +9042,7 @@ function createAgentMemoryTables(db: BunDatabase): void {
 
 	db.exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS space_agent_memory_fts USING fts5(
+			key,
 			content,
 			tags,
 			content='space_agent_memory',
@@ -9053,24 +9054,24 @@ function createAgentMemoryTables(db: BunDatabase): void {
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
 		AFTER INSERT ON space_agent_memory BEGIN
-			INSERT INTO space_agent_memory_fts(rowid, content, tags)
-			VALUES (new.rowid, new.content, new.tags);
+			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
+			VALUES (new.rowid, new.key, new.content, new.tags);
 		END
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
 		AFTER DELETE ON space_agent_memory BEGIN
-			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, content, tags)
-			VALUES ('delete', old.rowid, old.content, old.tags);
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
+			VALUES ('delete', old.rowid, old.key, old.content, old.tags);
 		END
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
-		AFTER UPDATE ON space_agent_memory BEGIN
-			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, content, tags)
-			VALUES ('delete', old.rowid, old.content, old.tags);
-			INSERT INTO space_agent_memory_fts(rowid, content, tags)
-			VALUES (new.rowid, new.content, new.tags);
+		AFTER UPDATE OF key, content, tags ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
+			VALUES ('delete', old.rowid, old.key, old.content, old.tags);
+			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
+			VALUES (new.rowid, new.key, new.content, new.tags);
 		END
 	`);
 

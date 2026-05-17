@@ -122,6 +122,49 @@ describe('AgentMemoryRepository', () => {
 		expect(results[0].rank).not.toBe(1000);
 	});
 
+	test('search matches hyphenated identifiers', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'tooling.hooks',
+			content: 'Run pre-commit before pushing.',
+		});
+
+		const results = repo.search('space-a', 'pre-commit', 5);
+		expect(results.map((result) => result.memory.key)).toEqual(['tooling.hooks']);
+	});
+
+	test('search matches memory keys', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.forms',
+			content: 'Use zod schemas.',
+		});
+
+		const results = repo.search('space-a', 'conventions.forms', 5);
+		expect(results.map((result) => result.memory.key)).toEqual(['conventions.forms']);
+	});
+
+	test('access updates do not rewrite FTS rows', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'access.fts',
+			content: 'Keep access telemetry cheap.',
+		});
+		const before = db
+			.prepare(`SELECT count(*) AS count FROM space_agent_memory_fts_data`)
+			.get() as {
+			count: number;
+		};
+
+		repo.read('space-a', 'access.fts');
+		repo.search('space-a', 'telemetry', 5);
+
+		const after = db.prepare(`SELECT count(*) AS count FROM space_agent_memory_fts_data`).get() as {
+			count: number;
+		};
+		expect(after.count).toBe(before.count);
+	});
+
 	test('delete removes memory from FTS index', () => {
 		repo.write({ spaceId: 'space-a', key: 'obsolete', content: 'Old Flowbite convention.' });
 		expect(repo.search('space-a', 'Flowbite', 10)).toHaveLength(1);
