@@ -66,6 +66,14 @@ export type OpenAIChatBridgeConfig = {
 	thinkingSupported?: boolean;
 	/** Max context window for the active model (used in usage events). */
 	modelContextWindow?: number;
+	/**
+	 * Whether the upstream accepts `stream_options: { include_usage: true }`.
+	 * Off by default because many strict OpenAI-compatible backends reject
+	 * unknown request fields with HTTP 400/422 before any generation. When
+	 * false the bridge still produces usage events using a token estimator
+	 * — accuracy degrades but the endpoint remains usable.
+	 */
+	streamUsageSupported?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -310,14 +318,22 @@ function buildChatRequest(
 	model: string,
 	toolUseSupported: boolean,
 	visionSupported: boolean,
-	thinkingSupported: boolean
+	thinkingSupported: boolean,
+	streamUsageSupported = false
 ): OpenAIChatRequest {
 	const request: OpenAIChatRequest = {
 		model,
 		messages: toOpenAIMessages(body, visionSupported),
 		stream: true,
-		stream_options: { include_usage: true },
 	};
+	// `stream_options` is opt-in. Strict OpenAI-compatible backends reject
+	// unknown request fields with HTTP 400/422, which would break the entire
+	// endpoint. The bridge still emits usage events via a token estimator when
+	// the upstream doesn't echo `usage` chunks, so omitting this field only
+	// degrades accuracy, not availability.
+	if (streamUsageSupported) {
+		request.stream_options = { include_usage: true };
+	}
 	if (body.max_tokens && body.max_tokens > 0) request.max_tokens = body.max_tokens;
 	if (toolUseSupported) {
 		const tools = toOpenAITools(body);
@@ -691,6 +707,7 @@ export function createOpenAIChatBridgeServer(
 	const toolUseSupported = config.toolUseSupported ?? true;
 	const visionSupported = config.visionSupported ?? false;
 	const thinkingSupported = config.thinkingSupported ?? false;
+	const streamUsageSupported = config.streamUsageSupported ?? false;
 	const modelContextWindow = config.modelContextWindow;
 
 	const server = Bun.serve({
@@ -757,7 +774,8 @@ export function createOpenAIChatBridgeServer(
 				body.model,
 				toolUseSupported,
 				visionSupported,
-				thinkingSupported
+				thinkingSupported,
+				streamUsageSupported
 			);
 			const inputTokens = estimateAnthropicInputTokens(body);
 
