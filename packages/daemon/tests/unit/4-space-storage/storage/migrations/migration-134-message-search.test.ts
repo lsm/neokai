@@ -128,7 +128,7 @@ describe('Migration 134: message search FTS', () => {
 	});
 
 	test('does not backfill populated FTS table when source rows lack searchable text', () => {
-		runMigration132(db);
+		runMigration133(db);
 		db.prepare(
 			`INSERT INTO message_search_fts (kind, source_id, title, body, timestamp)
 			 VALUES ('task', 'sentinel', 'sentinel', 'sentinel body', ?)`
@@ -144,7 +144,7 @@ describe('Migration 134: message search FTS', () => {
 			new Date().toISOString()
 		);
 
-		runMigration132(db);
+		runMigration133(db);
 
 		const rows = db
 			.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
