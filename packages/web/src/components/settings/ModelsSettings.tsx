@@ -663,7 +663,7 @@ export function ModelsSettings() {
 
 	return (
 		<SettingsSection title="Models">
-			<div class="mb-6 space-y-2">
+			<div class="space-y-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3">
 				<div>
 					<h4 class="text-sm font-medium text-gray-300">OpenRouter Model Allowlist</h4>
 					<p class="text-xs text-gray-500 mt-0.5">
@@ -676,7 +676,7 @@ export function ModelsSettings() {
 					value={openRouterAllowlistText}
 					onInput={(e) => setOpenRouterAllowlistText(e.currentTarget.value)}
 					placeholder={`xai/grok-4.3\nqwen/qwen3.6-max-preview\ndeepseek/deepseek-v4-pro`}
-					class="w-full h-28 bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500 font-mono"
+					class="w-full h-28 bg-dark-950/60 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500 font-mono"
 				/>
 				<Button
 					variant="primary"
@@ -688,9 +688,9 @@ export function ModelsSettings() {
 					Save OpenRouter allowlist
 				</Button>
 			</div>
-			<div class="flex items-center gap-2 mb-4">
+			<div class="flex items-center justify-end">
 				<Button
-					variant="ghost"
+					variant="secondary"
 					size="xs"
 					onClick={handleRefresh}
 					disabled={loading || refreshing}
@@ -699,9 +699,9 @@ export function ModelsSettings() {
 					Refresh models
 				</Button>
 			</div>
-			<div class="space-y-6">
+			<div class="space-y-3">
 				{/* ── Section 1: Default fallback chain ──────────────────────────────── */}
-				<div class="space-y-3">
+				<div class="space-y-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3">
 					<div>
 						<h4 class="text-sm font-medium text-gray-300">Default Fallback Chain</h4>
 						<p class="text-xs text-gray-500 mt-0.5">
@@ -737,7 +737,7 @@ export function ModelsSettings() {
 				</div>
 
 				{/* ── Section 2: Model-specific overrides ────────────────────────────── */}
-				<div class="space-y-3">
+				<div class="space-y-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3">
 					<div>
 						<h4 class="text-sm font-medium text-gray-300">Model-Specific Overrides</h4>
 						<p class="text-xs text-gray-500 mt-0.5">

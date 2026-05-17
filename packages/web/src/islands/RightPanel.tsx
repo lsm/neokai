@@ -224,7 +224,7 @@ export function RightPanel() {
 			>
 				<div
 					class={cn(
-						'relative h-full pt-safe transition-transform duration-200 ease-out lg:pt-0',
+						'relative h-full overflow-hidden rounded-l-[28px] pt-safe transition-transform duration-200 ease-out lg:pt-0',
 						open ? 'translate-x-0' : 'translate-x-full'
 					)}
 					style={{ width: panelWidthValue }}

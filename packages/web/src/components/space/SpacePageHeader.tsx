@@ -10,7 +10,7 @@ export function SpacePageHeader({ pageTitle, actions }: SpacePageHeaderProps) {
 	return (
 		<div
 			data-tauri-drag-region
-			class="relative z-10 flex h-[52px] flex-shrink-0 items-center bg-dark-900 px-4"
+			class="relative z-10 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4"
 		>
 			<div class="flex-1 flex items-center gap-3" data-tauri-drag-region>
 				<MobileMenuButton />

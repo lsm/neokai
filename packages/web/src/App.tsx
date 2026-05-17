@@ -212,7 +212,7 @@ export function App() {
 				{/* Main Content — rounded-left "card" on desktop; the dark-950 shell
 				    behind shows through the corners to separate it from the panels.
 				    BottomTabBar is inline (flex-shrink-0) so no extra padding needed. */}
-				<div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-dark-900 md:rounded-l-2xl">
+				<div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-app-content md:rounded-l-[28px]">
 					<MainContent />
 				</div>
 

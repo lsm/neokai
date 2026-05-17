@@ -55,14 +55,14 @@ const ShortcutsSettings = lazy(() =>
 
 /** Shared Suspense fallback for lazy-loaded route components. */
 const lazyFallback = (
-	<div class="flex-1 flex items-center justify-center bg-dark-900">
+	<div class="flex-1 flex items-center justify-center bg-app-content">
 		<div class="text-xs text-gray-600">Loading...</div>
 	</div>
 );
 
 function SpacesWelcome() {
 	return (
-		<div class="relative flex-1 flex flex-col bg-dark-900 overflow-hidden">
+		<div class="relative flex-1 flex flex-col bg-app-content overflow-hidden">
 			<div class="desktop-empty-drag-strip" data-tauri-drag-region />
 
 			<div class="md:hidden flex items-center px-3 py-2">
@@ -169,27 +169,36 @@ export default function MainContent() {
 		// If Settings is selected, show the selected settings section content
 		if (navSection === 'settings') {
 			return (
-				<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
+				<div class="flex-1 flex flex-col bg-app-content overflow-hidden">
 					{/* Settings Header */}
-					<div class="px-6 py-4 border-b border-dark-700 flex items-center gap-3">
-						<MobileMenuButton />
-						<div>
-							<h2 class="text-lg font-semibold text-gray-100">Global Settings</h2>
-							<p class="text-sm text-gray-400">Default configurations for new sessions</p>
+					<div
+						class="relative z-10 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4"
+						data-tauri-drag-region
+					>
+						<div class="flex min-w-0 flex-1 items-center gap-3" data-tauri-drag-region>
+							<MobileMenuButton />
+							<h2
+								class="min-w-0 truncate text-sm font-semibold text-gray-100"
+								data-tauri-drag-region
+							>
+								Global Settings
+							</h2>
 						</div>
 					</div>
 					{/* Settings Content */}
-					<div class="flex-1 overflow-y-auto p-6">
-						<Suspense fallback={lazyFallback}>
-							{settingsSection === 'general' && <GeneralSettings />}
-							{settingsSection === 'providers' && <ProvidersSettings />}
-							{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
-							{settingsSection === 'skills' && <SkillsRegistry />}
-							{settingsSection === 'models' && <ModelsSettings />}
-							{settingsSection === 'usage' && <UsageAnalytics />}
-							{settingsSection === 'shortcuts' && <ShortcutsSettings />}
-							{settingsSection === 'about' && <AboutSection />}
-						</Suspense>
+					<div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto px-4 py-4 pr-3 sm:px-6 sm:py-5 sm:pr-4">
+						<div class="mx-auto w-full max-w-5xl">
+							<Suspense fallback={lazyFallback}>
+								{settingsSection === 'general' && <GeneralSettings />}
+								{settingsSection === 'providers' && <ProvidersSettings />}
+								{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
+								{settingsSection === 'skills' && <SkillsRegistry />}
+								{settingsSection === 'models' && <ModelsSettings />}
+								{settingsSection === 'usage' && <UsageAnalytics />}
+								{settingsSection === 'shortcuts' && <ShortcutsSettings />}
+								{settingsSection === 'about' && <AboutSection />}
+							</Suspense>
+						</div>
 					</div>
 				</div>
 			);

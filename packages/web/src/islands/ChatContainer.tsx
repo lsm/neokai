@@ -991,12 +991,12 @@ export default function ChatContainer({
 	if (pendingAgent) {
 		return (
 			<div
-				class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative"
+				class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
 				data-testid="pending-agent-overlay"
 				aria-label={`${pendingAgent.agentName} chat (starting)`}
 			>
 				{/* Header — mirrors ChatHeader height (h-[52px]) for visual consistency */}
-				<div class="px-4 min-h-[52px] flex-shrink-0 bg-dark-900 flex items-center gap-3">
+				<div class="px-4 min-h-[52px] flex-shrink-0 bg-app-content flex items-center gap-3">
 					{onBack && (
 						<button
 							type="button"
@@ -1057,7 +1057,7 @@ export default function ChatContainer({
 				</div>
 
 				{/* Minimal Composer */}
-				<div class={cn('flex-shrink-0 border-t bg-dark-900 px-3 py-3', borderColors.ui.default)}>
+				<div class={cn('flex-shrink-0 border-t bg-app-content px-3 py-3', borderColors.ui.default)}>
 					{pendingErrorMessage && (
 						<p class="mb-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
 							{pendingErrorMessage}
@@ -1102,7 +1102,7 @@ export default function ChatContainer({
 	if (loading) {
 		if (loadTimedOut) {
 			return (
-				<div class="flex-1 flex items-center justify-center bg-dark-900">
+				<div class="flex-1 flex items-center justify-center bg-app-content">
 					<div class="text-center">
 						<div class="text-5xl mb-4">⚠️</div>
 						<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
@@ -1117,7 +1117,7 @@ export default function ChatContainer({
 		return (
 			// `relative` is required so the absolutely-positioned footer skeleton is
 			// anchored to this container, matching the real ChatComposer positioning.
-			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
+			<div class="flex-1 flex flex-col bg-app-content overflow-hidden relative">
 				{/* Skeleton header — h-[52px] matches ChatHeader's fixed height exactly */}
 				<div class="flex items-center gap-3 px-4 h-[52px] flex-shrink-0">
 					<div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
@@ -1146,7 +1146,7 @@ export default function ChatContainer({
 		sessionStore.sessionState.value?.sessionInfo === null;
 	if (error && (!session || storeHasNoSessionInfo)) {
 		return (
-			<div class="flex-1 flex items-center justify-center bg-dark-900">
+			<div class="flex-1 flex items-center justify-center bg-app-content">
 				<div class="text-center">
 					<div class="text-5xl mb-4">⚠️</div>
 					<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
@@ -1159,7 +1159,7 @@ export default function ChatContainer({
 
 	return (
 		<div
-			class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative"
+			class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
 			data-testid="chat-container"
 		>
 			{/* Loading overlay for archive/delete operations */}

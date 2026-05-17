@@ -70,7 +70,7 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
 			aria-label={statusLabel}
 			aria-pressed={isConnected}
 			class={`
-				${showLabel ? 'h-9 px-2.5 gap-2' : 'w-12 h-12'}
+				${showLabel ? 'h-9 px-2.5 gap-2' : 'h-9 w-9'}
 				flex items-center justify-center rounded-lg text-sm text-gray-400
 				transition-colors
 				${canReconnect ? 'cursor-pointer hover:bg-dark-800' : 'cursor-default'}

@@ -33,15 +33,21 @@ const SETTINGS_SECTIONS: Array<{
 	id: SettingsSection;
 	label: string;
 	icon: string;
+	accent: string;
 }> = [
-	{ id: 'general', label: 'General', icon: 'settings' },
-	{ id: 'providers', label: 'Providers', icon: 'cloud' },
-	{ id: 'app-mcp-servers', label: 'MCP Servers', icon: 'server' },
-	{ id: 'skills', label: 'Skills', icon: 'skills' },
-	{ id: 'models', label: 'Models', icon: 'swap' },
-	{ id: 'usage', label: 'Usage', icon: 'chart' },
-	{ id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' },
-	{ id: 'about', label: 'About', icon: 'info' },
+	{ id: 'general', label: 'General', icon: 'settings', accent: 'text-blue-300 bg-blue-500/15' },
+	{ id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-sky-300 bg-sky-500/15' },
+	{
+		id: 'app-mcp-servers',
+		label: 'MCP Servers',
+		icon: 'server',
+		accent: 'text-violet-300 bg-violet-500/15',
+	},
+	{ id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-emerald-300 bg-emerald-500/15' },
+	{ id: 'models', label: 'Models', icon: 'swap', accent: 'text-cyan-300 bg-cyan-500/15' },
+	{ id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-amber-300 bg-amber-500/15' },
+	{ id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-pink-300 bg-pink-500/15' },
+	{ id: 'about', label: 'About', icon: 'info', accent: 'text-gray-300 bg-white/10' },
 ];
 
 // Helper component for section icons
@@ -326,7 +332,7 @@ export function ContextPanel() {
 					fixed md:relative
 					top-0 left-0 md:left-auto
 					h-safe-screen md:h-full w-70
-					bg-dark-800
+					bg-app-sidebar
 					flex flex-col
 					pt-safe md:pt-0
 					z-40 md:z-auto
@@ -419,8 +425,11 @@ export function ContextPanel() {
 						</>
 					)}
 					{navSection === 'settings' && (
-						<div class="flex-1 overflow-y-auto">
-							<nav class="py-2">
+						<div class="flex-1 overflow-y-auto scrollbar-dark px-2 py-3">
+							<div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+								Settings
+							</div>
+							<nav class="space-y-1" aria-label="Settings sections">
 								{SETTINGS_SECTIONS.map((section) => {
 									const isActive = activeSettingsSection === section.id;
 									return (
@@ -429,14 +438,21 @@ export function ContextPanel() {
 											type="button"
 											onClick={() => handleSettingsNav(section.id)}
 											class={cn(
-												'w-full px-4 py-3 flex items-center gap-3 text-left transition-colors duration-150',
+												'w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-left transition-colors duration-150',
 												isActive
 													? 'bg-white/10 text-gray-100'
 													: 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
 											)}
 										>
-											<SectionIcon type={section.icon} />
-											<span class="truncate">{section.label}</span>
+											<span
+												class={cn(
+													'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md',
+													isActive ? section.accent : 'bg-white/[0.03] text-gray-500'
+												)}
+											>
+												<SectionIcon type={section.icon} />
+											</span>
+											<span class="truncate text-sm font-medium">{section.label}</span>
 										</button>
 									);
 								})}
@@ -445,12 +461,14 @@ export function ContextPanel() {
 					)}
 				</div>
 
-				<div class={`flex items-center gap-1 p-2 border-t ${borderColors.ui.default}`}>
+				<div
+					class={`flex h-[53px] flex-shrink-0 items-center gap-2 px-2 border-t ${borderColors.ui.default}`}
+				>
 					<button
 						type="button"
 						onClick={() => handleSettingsNav()}
 						class={cn(
-							'flex-1 flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors',
+							'flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors',
 							navSection === 'settings'
 								? 'bg-white/10 text-gray-100'
 								: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
