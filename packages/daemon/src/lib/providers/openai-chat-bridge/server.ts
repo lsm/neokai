@@ -395,12 +395,38 @@ function parseUpstreamError(status: number, text: string): string {
 	return text || `Upstream API request failed with status ${status}`;
 }
 
-/** Parse a single SSE `data: ...` line into a chunk (returns null for [DONE] / blanks). */
-function parseSseDataLine(data: string): OpenAIChatStreamChunk | null {
+/** Parse a single SSE `data:` payload (possibly multi-line, already joined). */
+function parseSseDataPayload(data: string): OpenAIChatStreamChunk | null {
 	const trimmed = data.trim();
 	if (!trimmed || trimmed === '[DONE]') return null;
 	const parsed = parseJsonObject(trimmed);
 	return parsed ? (parsed as OpenAIChatStreamChunk) : null;
+}
+
+/**
+ * Collect all `data:` lines from a single SSE event block into one payload.
+ *
+ * Per the SSE spec one event may carry multiple consecutive `data:` lines,
+ * which the parser MUST concatenate with `\n` before treating the result as
+ * the event payload. Some OpenAI-compatible proxies wrap-fold large JSON
+ * chunks across lines; parsing each line independently would fail JSON
+ * decoding and silently drop the event (and could trigger our "non-SSE 200"
+ * guard against an otherwise valid stream).
+ *
+ * Lines that are not `data:` (e.g. `event:`, `id:`, `:keepalive` comments)
+ * are ignored — we only consume Chat Completions data frames.
+ */
+function joinSseDataLines(block: string): string | null {
+	const parts: string[] = [];
+	for (const rawLine of block.split(/\r?\n/)) {
+		if (!rawLine.startsWith('data:')) continue;
+		// Per the spec, a single space immediately after the colon is stripped;
+		// anything else is preserved.
+		let value = rawLine.slice('data:'.length);
+		if (value.startsWith(' ')) value = value.slice(1);
+		parts.push(value);
+	}
+	return parts.length === 0 ? null : parts.join('\n');
 }
 
 /** Read an OpenAI Chat Completions SSE stream as chunks. */
@@ -417,18 +443,19 @@ async function* readChatStream(
 		const blocks = buffer.split(/\r?\n\r?\n/);
 		buffer = blocks.pop() ?? '';
 		for (const block of blocks) {
-			for (const line of block.split(/\r?\n/)) {
-				if (!line.startsWith('data:')) continue;
-				const chunk = parseSseDataLine(line.slice('data:'.length));
-				if (chunk) yield chunk;
-			}
+			const payload = joinSseDataLines(block);
+			if (payload === null) continue;
+			const chunk = parseSseDataPayload(payload);
+			if (chunk) yield chunk;
 		}
 	}
 	buffer += decoder.decode();
-	for (const line of buffer.split(/\r?\n/)) {
-		if (!line.startsWith('data:')) continue;
-		const chunk = parseSseDataLine(line.slice('data:'.length));
-		if (chunk) yield chunk;
+	if (buffer.length > 0) {
+		const payload = joinSseDataLines(buffer);
+		if (payload !== null) {
+			const chunk = parseSseDataPayload(payload);
+			if (chunk) yield chunk;
+		}
 	}
 }
 

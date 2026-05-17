@@ -795,4 +795,80 @@ describe('OpenAI Chat Completions bridge server', () => {
 			expect(text).toContain('non-SSE');
 		});
 	});
+
+	describe('SSE multi-line data: events', () => {
+		it('concatenates consecutive data: lines within one event before JSON parsing', async () => {
+			// Some proxies pretty-print JSON across multiple `data:` lines.
+			// The SSE spec mandates that the parser join them with `\n` before
+			// treating the result as the event payload. Without this the
+			// bridge would JSON.parse each fragment, silently drop the event,
+			// and (with the new non-SSE 200 guard) potentially raise a bogus
+			// error on a valid stream.
+			const body =
+				`data: {\n` +
+				`data:   "choices": [{ "index": 0, "delta": { "content": "hello" }, "finish_reason": "stop" }]\n` +
+				`data: }\n\n` +
+				`data: [DONE]\n\n`;
+			const fetchMock = mock(
+				async () =>
+					new Response(body, {
+						status: 200,
+						headers: { 'Content-Type': 'text/event-stream' },
+					})
+			);
+			const server = createOpenAIChatBridgeServer({
+				baseUrl: 'http://upstream.test/v1',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'm',
+					messages: [{ role: 'user', content: 'hi' }],
+					stream: true,
+				}),
+			});
+			const text = await response.text();
+			// Must not trigger the non-SSE guard.
+			expect(text).not.toContain('non-SSE');
+			// The content from the joined payload should have surfaced.
+			expect(text).toContain('"text":"hello"');
+			expect(text).toContain('"stop_reason":"end_turn"');
+		});
+
+		it('ignores non-data lines (event:, id:, comments) within an event block', async () => {
+			const body =
+				`:keepalive\n` +
+				`event: chunk\n` +
+				`id: 1\n` +
+				`data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] })}\n\n` +
+				`data: [DONE]\n\n`;
+			const fetchMock = mock(
+				async () =>
+					new Response(body, {
+						status: 200,
+						headers: { 'Content-Type': 'text/event-stream' },
+					})
+			);
+			const server = createOpenAIChatBridgeServer({
+				baseUrl: 'http://upstream.test/v1',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'm',
+					messages: [{ role: 'user', content: 'hi' }],
+					stream: true,
+				}),
+			});
+			const text = await response.text();
+			expect(text).toContain('"text":"hi"');
+			expect(text).not.toContain('non-SSE');
+		});
+	});
 });

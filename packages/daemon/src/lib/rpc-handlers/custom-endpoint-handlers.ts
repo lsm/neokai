@@ -59,9 +59,16 @@ export function validateCustomEndpoint(config: CustomEndpointConfig): void {
  * Validate a list of endpoints, rejecting on duplicate ids in addition to all
  * per-entry checks. Used by the generic settings RPCs to keep stored settings
  * in sync with what the provider registry will accept.
+ *
+ * `undefined` means "field not provided" and is accepted as a no-op so callers
+ * can pass `updates.customEndpoints` straight through; `null` is rejected
+ * explicitly because it's a malformed payload (the field exists with a value
+ * that is neither an array nor "not provided") that would otherwise sync as
+ * empty and unregister all custom providers.
  */
 export function validateCustomEndpoints(configs: CustomEndpointConfig[] | undefined): void {
-	if (!configs) return;
+	if (configs === undefined) return;
+	if (configs === null) throw new Error('customEndpoints must be an array, got null');
 	if (!Array.isArray(configs)) throw new Error('customEndpoints must be an array');
 	const ids = new Set<string>();
 	for (const config of configs) {
