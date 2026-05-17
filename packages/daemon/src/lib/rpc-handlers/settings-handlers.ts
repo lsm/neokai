@@ -97,7 +97,16 @@ export function registerSettingsHandlers(
 	 * Save global settings (full replace)
 	 */
 	messageHub.onRequest('settings.global.save', async (data: { settings: GlobalSettings }) => {
-		if (data.settings.customEndpoints !== undefined) {
+		// `customEndpoints` is optional in GlobalSettings, so a legacy caller
+		// that sends a partial payload would otherwise unregister every custom
+		// endpoint at runtime (and overwrite persisted state) just by omitting
+		// the field. Only touch the registry when the payload actually
+		// declares the key, even if its value is `[]` (explicit clear).
+		const customEndpointsProvided = Object.prototype.hasOwnProperty.call(
+			data.settings,
+			'customEndpoints'
+		);
+		if (customEndpointsProvided) {
 			const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
 			validateCustomEndpoints(data.settings.customEndpoints);
 		}
@@ -105,10 +114,12 @@ export function registerSettingsHandlers(
 		if (data.settings.providerModelAllowlists !== undefined) {
 			await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
 		}
-		const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-		await syncCustomEndpointProviders(data.settings.customEndpoints);
-		const { clearModelsCache } = await import('../model-service');
-		clearModelsCache();
+		if (customEndpointsProvided) {
+			const { syncCustomEndpointProviders } = await import('../providers/factory.js');
+			await syncCustomEndpointProviders(data.settings.customEndpoints);
+			const { clearModelsCache } = await import('../model-service');
+			clearModelsCache();
+		}
 		// Emit event for StateManager to broadcast (global event)
 		internalEventBus.publishAsync('settings.updated', {
 			namespaceId: 'global',

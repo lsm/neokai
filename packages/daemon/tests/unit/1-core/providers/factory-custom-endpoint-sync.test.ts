@@ -50,6 +50,39 @@ describe('syncCustomEndpointProviders - diff skip', () => {
 		expect(second).not.toBe(first);
 	});
 
+	it('rebuilds the provider when a nested model capability changes', async () => {
+		await syncCustomEndpointProviders([baseConfig]);
+		const first = getProviderRegistry().get('custom:lmstudio');
+		await syncCustomEndpointProviders([
+			{
+				...baseConfig,
+				models: [{ id: 'qwen2.5-7b', capabilities: { toolUse: false, vision: true } }],
+			},
+		]);
+		const second = getProviderRegistry().get('custom:lmstudio');
+		expect(second).not.toBe(first);
+	});
+
+	it('rebuilds the provider when headers change', async () => {
+		await syncCustomEndpointProviders([{ ...baseConfig, headers: { 'X-Org': 'acme' } }]);
+		const first = getProviderRegistry().get('custom:lmstudio');
+		await syncCustomEndpointProviders([{ ...baseConfig, headers: { 'X-Org': 'beta' } }]);
+		const second = getProviderRegistry().get('custom:lmstudio');
+		expect(second).not.toBe(first);
+	});
+
+	it('rebuilds the provider when providerModelId on a model changes', async () => {
+		await syncCustomEndpointProviders([
+			{ ...baseConfig, models: [{ id: 'm', providerModelId: 'upstream-a' }] },
+		]);
+		const first = getProviderRegistry().get('custom:lmstudio');
+		await syncCustomEndpointProviders([
+			{ ...baseConfig, models: [{ id: 'm', providerModelId: 'upstream-b' }] },
+		]);
+		const second = getProviderRegistry().get('custom:lmstudio');
+		expect(second).not.toBe(first);
+	});
+
 	it('leaves untouched providers in place when an unrelated endpoint is edited', async () => {
 		const other: CustomEndpointConfig = {
 			id: 'vllm',
