@@ -190,6 +190,8 @@ export interface SpaceAgentToolsConfig {
 	 * session instead of the canonical space:chat: session.
 	 */
 	replyRoutingRegistry?: ReplyRoutingRegistry;
+	/** Goal service for terminal goal-task side effects. */
+	goalService?: import('../goals/goal-service').SpaceGoalService;
 }
 
 // ---------------------------------------------------------------------------
@@ -1361,6 +1363,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 					},
 				});
+
+				// Best-effort goal terminal handling — must not block approve_task.
+				try {
+					config.goalService?.handleTaskTerminal(updated.id);
+				} catch (err) {
+					log.warn(
+						`Goal terminal handling threw for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
 
 				logAudit(
 					'approve_task',

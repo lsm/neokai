@@ -18,11 +18,14 @@ import {
 	type SpaceTaskStatus,
 	type UpdateSpaceTaskParams,
 } from '@neokai/shared';
+
+const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>(['done', 'cancelled', 'archived']);
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import type { SpaceGoalService } from '../space/goals/goal-service';
 
 const log = new Logger('space-task-handlers');
 
@@ -37,11 +40,12 @@ export function setupSpaceTaskHandlers(
 	spaceManager: SpaceManager,
 	taskManagerFactory: SpaceTaskManagerFactory,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-	spaceRuntimeService?: SpaceRuntimeService
+	spaceRuntimeService?: SpaceRuntimeService,
+	spaceGoalService?: Pick<SpaceGoalService, 'handleTaskTerminal'>
 ): void {
 	// ─── spaceTask.create ───────────────────────────────────────────────────────
 	messageHub.onRequest('spaceTask.create', async (data) => {
-		const params = data as CreateSpaceTaskParams & { draft?: boolean };
+		const params = data as CreateSpaceTaskParams & { draft?: boolean; goalId?: unknown };
 
 		if (!params.spaceId) {
 			throw new Error('spaceId is required');
@@ -61,7 +65,14 @@ export function setupSpaceTaskHandlers(
 		}
 
 		const taskManager = taskManagerFactory(params.spaceId);
-		const { spaceId, draft, createdBy: _cb, createdBySession: _cbs, ...rest } = params;
+		const {
+			spaceId,
+			draft,
+			goalId: _goalId,
+			createdBy: _cb,
+			createdBySession: _cbs,
+			...rest
+		} = params;
 
 		// The draft flag is an alias for status: 'draft'. Reject contradictory
 		// input instead of silently allowing status to override draft: true.
@@ -201,7 +212,11 @@ export function setupSpaceTaskHandlers(
 
 	// ─── spaceTask.update ───────────────────────────────────────────────────────
 	messageHub.onRequest('spaceTask.update', async (data) => {
-		const params = data as { spaceId: string; taskId: string } & UpdateSpaceTaskParams;
+		const params = data as {
+			spaceId: string;
+			taskId: string;
+			goalId?: unknown;
+		} & UpdateSpaceTaskParams;
 
 		if (!params.spaceId) {
 			throw new Error('spaceId is required');
@@ -210,7 +225,7 @@ export function setupSpaceTaskHandlers(
 			throw new Error('taskId is required');
 		}
 
-		const { spaceId, taskId, ...updateParams } = params;
+		const { spaceId, taskId, goalId: _goalId, ...updateParams } = params;
 
 		// Verify space exists — consistent with create/list/get validation.
 		// Without this check, a bad spaceId would surface as "Task not found" rather
@@ -383,6 +398,17 @@ export function setupSpaceTaskHandlers(
 			task = await taskManager.updateTask(taskId, updateParams, {
 				onCascadedTasks: emitCascadedTasks,
 			});
+		}
+
+		// Best-effort goal terminal handling — must not abort the RPC response.
+		if (spaceGoalService && TERMINAL_TASK_STATUSES.has(task.status)) {
+			try {
+				spaceGoalService.handleTaskTerminal(task.id);
+			} catch (err) {
+				log.warn(
+					`Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
 		}
 
 		if (emitTaskUpdated) {

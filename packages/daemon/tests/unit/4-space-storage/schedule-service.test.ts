@@ -74,6 +74,7 @@ describe('ScheduleService', () => {
 			});
 
 			expect(schedule.status).toBe('active');
+			expect(schedule.goalId).toBeNull();
 			expect(schedule.nextRunAt).not.toBeNull();
 			expect(schedule.pendingJobId).not.toBeNull();
 
@@ -82,6 +83,30 @@ describe('ScheduleService', () => {
 			expect(job).not.toBeNull();
 			expect(job?.queue).toBe('taskSchedule.fire');
 			expect((job?.payload as { scheduleId: string }).scheduleId).toBe(schedule.id);
+		});
+
+		it('ignores hidden goalId fields on public schedule creation', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Public schedule',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+				goalId: 'goal-1',
+			} as Parameters<ScheduleService['createSchedule']>[0] & { goalId: string });
+
+			expect(schedule.goalId).toBeNull();
+		});
+
+		it('links goals only through the internal goal schedule path', () => {
+			const schedule = service.createGoalSchedule({
+				spaceId,
+				title: 'Goal schedule',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+				goalId: 'goal-1',
+			});
+
+			expect(schedule.goalId).toBe('goal-1');
 		});
 
 		it('rejects an invalid cron expression', () => {

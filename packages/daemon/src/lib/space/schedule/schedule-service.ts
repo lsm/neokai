@@ -41,6 +41,10 @@ export interface CreateScheduleInput {
 	createdBySession?: string | null;
 }
 
+export interface CreateGoalScheduleInput extends CreateScheduleInput {
+	goalId: string;
+}
+
 export interface UpdateScheduleInput {
 	title?: string;
 	description?: string;
@@ -121,6 +125,14 @@ export class ScheduleService {
 	 * schedule (row + job + pendingJobId) or a clean failure.
 	 */
 	createSchedule(input: CreateScheduleInput): TaskSchedule {
+		return this.createScheduleInternal(input, null);
+	}
+
+	createGoalSchedule(input: CreateGoalScheduleInput): TaskSchedule {
+		return this.createScheduleInternal(input, input.goalId);
+	}
+
+	private createScheduleInternal(input: CreateScheduleInput, goalId: string | null): TaskSchedule {
 		this.validateCreateTrigger(input);
 
 		const { spaceRepo, db, scheduleRepo, jobQueue } = this.deps;
@@ -152,6 +164,7 @@ export class ScheduleService {
 				nextRunAt,
 				createdByAgent: input.createdByAgent,
 				createdBySession: input.createdBySession,
+				goalId,
 			});
 
 			const job = jobQueue.enqueue({

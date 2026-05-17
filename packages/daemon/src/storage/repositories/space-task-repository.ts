@@ -10,8 +10,8 @@ import type {
 	SpaceTask,
 	SpaceBlockReason,
 	SpaceTaskStatus,
-	CreateSpaceTaskParams,
-	UpdateSpaceTaskParams,
+	InternalCreateSpaceTaskParams,
+	InternalUpdateSpaceTaskParams,
 } from '@neokai/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
@@ -25,7 +25,7 @@ export class SpaceTaskRepository {
 	/**
 	 * Create a new space task
 	 */
-	createTask(params: CreateSpaceTaskParams): SpaceTask {
+	createTask(params: InternalCreateSpaceTaskParams): SpaceTask {
 		const id = generateUUID();
 		const now = Date.now();
 
@@ -44,8 +44,8 @@ export class SpaceTaskRepository {
 
 			this.db
 				.prepare(
-					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					id,
@@ -59,6 +59,7 @@ export class SpaceTaskRepository {
 					params.workflowRunId ?? null,
 					params.preferredWorkflowId ?? null,
 					params.createdByTaskId ?? null,
+					params.goalId ?? null,
 					JSON.stringify(params.dependsOn ?? []),
 					params.taskAgentSessionId ?? null,
 					params.createdBy ?? null,
@@ -264,7 +265,7 @@ export class SpaceTaskRepository {
 	/**
 	 * Update a task with partial updates
 	 */
-	updateTask(id: string, params: UpdateSpaceTaskParams): SpaceTask | null {
+	updateTask(id: string, params: InternalUpdateSpaceTaskParams): SpaceTask | null {
 		const fields: string[] = [];
 		const values: SQLiteValue[] = [];
 
@@ -322,6 +323,10 @@ export class SpaceTaskRepository {
 		if (params.preferredWorkflowId !== undefined) {
 			fields.push('preferred_workflow_id = ?');
 			values.push(params.preferredWorkflowId ?? null);
+		}
+		if (params.goalId !== undefined) {
+			fields.push('goal_id = ?');
+			values.push(params.goalId ?? null);
 		}
 		if (params.createdByTaskId !== undefined) {
 			fields.push('created_by_task_id = ?');
@@ -513,22 +518,18 @@ export class SpaceTaskRepository {
 	 * terminal states have their sessions torn down, and `'open'` tasks have
 	 * no Task Agent yet.
 	 */
-	listActiveWithTaskAgentSession(): SpaceTask[] {
+	/** List all tasks with non-terminal statuses (in_progress, review, blocked, approved). */
+	listActive(): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved') AND task_agent_session_id IS NOT NULL`
+			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved')`
 		);
 		const rows = stmt.all() as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
 	}
 
-	/**
-	 * List all active (non-terminal) tasks regardless of task_agent_session_id.
-	 * Used by TaskAgentManager.rehydrate() to restore sub-sessions for all
-	 * active workflow runs after a daemon restart.
-	 */
-	listActive(): SpaceTask[] {
+	listActiveWithTaskAgentSession(): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved')`
+			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved') AND task_agent_session_id IS NOT NULL`
 		);
 		const rows = stmt.all() as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
@@ -588,6 +589,7 @@ export class SpaceTaskRepository {
 			createdBy: (row.created_by as string | null) ?? undefined,
 			createdBySession: (row.created_by_session as string | null) ?? undefined,
 			createdByTaskScheduleId: (row.created_by_task_schedule_id as string | null) ?? undefined,
+			goalId: (row.goal_id as string | null) ?? undefined,
 			result: (row.result as string | null) ?? null,
 			dependsOn: JSON.parse((row.depends_on as string | null) ?? '[]') as string[],
 			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,

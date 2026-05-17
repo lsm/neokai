@@ -98,6 +98,8 @@ export { runMigration128 } from './migrations';
 // knip-ignore-next-line
 export { runMigration129 } from './migrations';
 // knip-ignore-next-line
+export { runMigration130 } from './migrations';
+// knip-ignore-next-line
 export { runMigration131 } from './migrations';
 // knip-ignore-next-line
 export { runMigration132 } from './migrations';
@@ -128,7 +130,7 @@ export function createTables(db: BunDatabase): void {
         processing_state TEXT,
         archived_at TEXT,
         parent_id TEXT,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat', 'neo')),
         session_context TEXT
       )
     `);
@@ -168,7 +170,7 @@ export function createTables(db: BunDatabase): void {
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
-        origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
+        origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
         is_renderable INTEGER NOT NULL DEFAULT 1,
         is_terminal INTEGER NOT NULL DEFAULT 0,
         parent_tool_use_id TEXT,
@@ -264,6 +266,41 @@ export function createTables(db: BunDatabase): void {
         short_id TEXT,
         restrictions TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Space-native long-horizon goals. These intentionally do not couple to
+	// the legacy room `goals` / mission execution tables above: goal state lives
+	// here, concrete execution happens through linked `space_tasks` rows.
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS space_goals (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK(status IN ('active', 'paused', 'completed', 'archived')),
+        type TEXT NOT NULL DEFAULT 'one_shot'
+          CHECK(type IN ('one_shot', 'measurable', 'recurring')),
+        priority TEXT NOT NULL DEFAULT 'normal'
+          CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+        labels TEXT NOT NULL DEFAULT '[]',
+        metrics TEXT NOT NULL DEFAULT '{}',
+        summary TEXT NOT NULL DEFAULT '',
+        progress INTEGER NOT NULL DEFAULT 0,
+        next_steps TEXT NOT NULL DEFAULT '[]',
+        preferred_workflow_id TEXT,
+        task_schedule_id TEXT,
+        auto_trigger_next INTEGER NOT NULL DEFAULT 0,
+        pending_next_run INTEGER NOT NULL DEFAULT 0,
+        active_task_id TEXT,
+        last_task_id TEXT,
+        last_check_in_at INTEGER,
+        next_check_in_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
       )
     `);
 
@@ -562,6 +599,23 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// Neo activity log — audit log of all Neo agent tool invocations
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS neo_activity_log (
+        id          TEXT PRIMARY KEY,
+        tool_name   TEXT NOT NULL,
+        input       TEXT,
+        output      TEXT,
+        status      TEXT NOT NULL DEFAULT 'success' CHECK(status IN ('success', 'error', 'cancelled')),
+        error       TEXT,
+        target_type TEXT,
+        target_id   TEXT,
+        undoable    INTEGER DEFAULT 0,
+        undo_data   TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+
 	db.exec(`
       CREATE TABLE IF NOT EXISTS job_queue (
         id TEXT PRIMARY KEY,
@@ -733,6 +787,12 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goals_next_check_in ON space_goals(status, next_check_in_at)`
+	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
 	db.exec(
@@ -778,6 +838,9 @@ function createIndexes(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
 	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`
+	);
 	// Workspace history index — supports ORDER BY last_used_at DESC in list()
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`

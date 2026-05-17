@@ -56,6 +56,27 @@ export interface SpaceConfig {
 }
 
 /**
+ * Per-space overrides for the built-in Task Agent.
+ *
+ * The Task Agent is not a seeded SpaceAgent — it has no row in the `space_agents`
+ * table. Its prompt is generated in code at `task-agent.ts`. This config allows
+ * per-space customization of model and prompt additions without mutating code.
+ */
+export interface TaskAgentConfig {
+	/** Model override for the Task Agent. Falls back to `space.defaultModel` then `DEFAULT_TASK_AGENT_MODEL`. */
+	model?: string;
+	/** Thinking-level override for the Task Agent. Falls back to the app default when unset. */
+	thinkingLevel?: ThinkingLevel;
+	/** Custom prompt additions appended after the contract sections (similar to SpaceAgent.customPrompt). */
+	customPrompt?: string;
+	/**
+	 * Setting sources to load for the Task Agent.
+	 * Falls back to the global default (['user', 'project', 'local']) when unset.
+	 */
+	settingSources?: SettingSource[];
+}
+
+/**
  * A Space — a workspace-first context for multi-agent workflows.
  * Unlike Rooms, a Space has a single required workspace path and is
  * designed around workflow execution with customizable agents.
@@ -96,6 +117,8 @@ export interface Space {
 	maxConcurrentTasks: number;
 	/** Runtime configuration (taskTimeoutMs, legacy maxConcurrentTasks, etc.) */
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent (model and custom prompt). */
+	taskAgentConfig?: TaskAgentConfig;
 	/**
 	 * Default setting sources for all agents in this Space.
 	 * Used as fallback when an agent (task or custom) does not define its own.
@@ -145,6 +168,8 @@ export interface CreateSpaceParams {
 	maxConcurrentTasks?: number;
 	/** Runtime configuration */
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent */
+	taskAgentConfig?: TaskAgentConfig;
 	/**
 	 * Default setting sources for all agents in this Space.
 	 * Pass `null` to explicitly clear (revert to global default).
@@ -166,6 +191,8 @@ export interface UpdateSpaceParams {
 	/** Maximum number of Space tasks that may run concurrently (1–10) */
 	maxConcurrentTasks?: number;
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent. Pass null to clear. */
+	taskAgentConfig?: TaskAgentConfig | null;
 	/**
 	 * Default setting sources for all agents in this Space.
 	 * Pass null to clear (revert to global default).
@@ -239,6 +266,88 @@ export type SpaceBlockReason =
 export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 // ============================================================================
+// SpaceGoal Types
+// ============================================================================
+
+export type SpaceGoalStatus = 'active' | 'paused' | 'completed' | 'archived';
+export type SpaceGoalType = 'one_shot' | 'measurable' | 'recurring';
+
+export type SpaceGoalMetrics = Record<string, string | number | boolean | null>;
+
+export interface SpaceGoal {
+	id: string;
+	spaceId: string;
+	title: string;
+	description: string;
+	status: SpaceGoalStatus;
+	type: SpaceGoalType;
+	priority: SpaceTaskPriority;
+	labels: string[];
+	metrics: SpaceGoalMetrics;
+	summary: string;
+	progress: number;
+	nextSteps: string[];
+	preferredWorkflowId: string | null;
+	taskScheduleId: string | null;
+	autoTriggerNext: boolean;
+	pendingNextRun: boolean;
+	activeTaskId: string | null;
+	lastTaskId: string | null;
+	lastCheckInAt: number | null;
+	nextCheckInAt: number | null;
+	createdAt: number;
+	updatedAt: number;
+	completedAt: number | null;
+}
+
+export interface CreateSpaceGoalParams {
+	spaceId: string;
+	title: string;
+	description?: string;
+	type?: SpaceGoalType;
+	priority?: SpaceTaskPriority;
+	labels?: string[];
+	metrics?: SpaceGoalMetrics;
+	summary?: string;
+	progress?: number;
+	nextSteps?: string[];
+	preferredWorkflowId?: string | null;
+	autoTriggerNext?: boolean;
+	checkInCronExpression?: string | null;
+	checkInTimezone?: string;
+	triggerImmediately?: boolean;
+}
+
+export interface UpdateSpaceGoalParams {
+	title?: string;
+	description?: string;
+	status?: SpaceGoalStatus;
+	type?: SpaceGoalType;
+	priority?: SpaceTaskPriority;
+	labels?: string[];
+	metrics?: SpaceGoalMetrics;
+	summary?: string;
+	progress?: number;
+	nextSteps?: string[];
+	preferredWorkflowId?: string | null;
+	autoTriggerNext?: boolean;
+	pendingNextRun?: boolean;
+	activeTaskId?: string | null;
+	lastTaskId?: string | null;
+	lastCheckInAt?: number | null;
+	nextCheckInAt?: number | null;
+	completedAt?: number | null;
+}
+
+export interface SpaceGoalListParams {
+	spaceId: string;
+	status?: SpaceGoalStatus;
+	includeArchived?: boolean;
+	label?: string;
+	search?: string;
+}
+
+// ============================================================================
 // TaskSchedule Types
 // ============================================================================
 
@@ -291,12 +400,14 @@ export interface TaskSchedule {
 	createdBySession: string | null;
 	/** Creation timestamp (ms since epoch) */
 	createdAt: number;
+	/** SpaceGoal this schedule belongs to, when used for recurring goal check-ins. */
+	goalId?: string | null;
 	/** Last update timestamp (ms since epoch) */
 	updatedAt: number;
 }
 
 /**
- * Runtime activity state for a live task activity member.
+ * Runtime activity state for a live task-agent member.
  * This is more user-facing than raw session processing states.
  */
 export type SpaceTaskActivityState =
@@ -304,7 +415,6 @@ export type SpaceTaskActivityState =
 	| 'queued'
 	| 'idle'
 	| 'waiting_for_input'
-	| 'cooldown'
 	| 'completed'
 	| 'failed'
 	| 'interrupted';
@@ -361,6 +471,8 @@ export interface SpaceTask {
 	 * Null for manually created tasks.
 	 */
 	createdByTaskScheduleId?: string | null;
+	/** ID of the SpaceGoal this task is executing toward. */
+	goalId?: string | null;
 	/**
 	 * Which agent session is currently active (generating output).
 	 * Cleared when the session reaches a terminal state.
@@ -478,14 +590,7 @@ export interface SpaceTaskActivityMember {
 	/** Derived user-facing activity state */
 	state: SpaceTaskActivityState;
 	/** Raw session processing status when the session is live in memory */
-	processingStatus?:
-		| 'idle'
-		| 'queued'
-		| 'processing'
-		| 'waiting_for_input'
-		| 'rate_limit_cooldown'
-		| 'interrupted'
-		| null;
+	processingStatus?: 'idle' | 'queued' | 'processing' | 'waiting_for_input' | 'interrupted' | null;
 	/** Raw processing phase when the session is actively processing */
 	processingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
 	/** Number of persisted SDK messages seen in the backing session */
@@ -565,6 +670,14 @@ export interface CreateSpaceTaskParams {
 }
 
 /**
+ * Internal parameters for creating SpaceTask rows with system-owned linkage.
+ */
+export interface InternalCreateSpaceTaskParams extends CreateSpaceTaskParams {
+	/** ID of the SpaceGoal this task should be linked to. */
+	goalId?: string | null;
+}
+
+/**
  * Parameters for updating a SpaceTask
  */
 export interface UpdateSpaceTaskParams {
@@ -636,6 +749,14 @@ export interface UpdateSpaceTaskParams {
 	 * Schema only in PR 1; no runtime consumer yet.
 	 */
 	postApprovalBlockedReason?: string | null;
+}
+
+/**
+ * Internal parameters for updating SpaceTask rows with system-owned linkage.
+ */
+export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
+	/** ID of the SpaceGoal this task is linked to; null to clear. */
+	goalId?: string | null;
 }
 
 // ============================================================================
@@ -1248,7 +1369,15 @@ export interface WorkflowNodeAgent {
 	 */
 	extraMcpServers?: Record<string, McpServerConfig>;
 	/**
-	 * Optional per-slot timeout (milliseconds) for runtime monitoring.
+	 * Optional per-slot timeout (milliseconds) used by the runtime to decide
+	 * when an agent that is still alive but apparently stuck should be
+	 * auto-completed.
+	 *
+	 * When unset, the runtime falls back to its `DEFAULT_NODE_TIMEOUT_MS`
+	 * default. Per-node overrides belong with the workflow definition itself —
+	 * the runtime does not embed a role-name → timeout lookup. To give a
+	 * specific node a longer or shorter timeout than the default, set this on
+	 * the agent slot in the workflow definition.
 	 *
 	 * Must be a positive integer when present.
 	 */
@@ -1764,8 +1893,9 @@ export interface ExportedWorkflowNodeAgent {
 	 */
 	extraMcpServers?: Record<string, unknown>;
 	/**
-	 * Optional per-slot timeout (milliseconds) for runtime monitoring.
-	 * Mirrors `WorkflowNodeAgent.timeoutMs`.
+	 * Optional per-slot timeout (milliseconds) for runtime auto-completion of
+	 * stuck-but-alive agents. Mirrors `WorkflowNodeAgent.timeoutMs`. When unset,
+	 * the runtime applies its `DEFAULT_NODE_TIMEOUT_MS` default.
 	 *
 	 * Must be a positive integer when present.
 	 */

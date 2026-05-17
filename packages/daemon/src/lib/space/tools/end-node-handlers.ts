@@ -27,6 +27,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceGoalService } from '../goals/goal-service';
 import type {
 	ApproveTaskInput,
 	MarkCompleteInput,
@@ -92,6 +93,8 @@ export interface MarkCompleteHandlerDeps {
 	taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
 	/** Optional hub for emitting `space.task.updated` events. */
 	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
+	/** Optional goal service for processing terminal goal-task side effects. */
+	goalService?: Pick<SpaceGoalService, 'handleTaskTerminal'>;
 }
 
 /**
@@ -102,7 +105,18 @@ export interface MarkCompleteHandlerDeps {
 export function createMarkCompleteHandler(
 	deps: MarkCompleteHandlerDeps
 ): (args: MarkCompleteInput) => Promise<ToolResult> {
-	const { taskId, spaceId, taskRepo, taskManager, internalEventBus } = deps;
+	const { taskId, spaceId, taskRepo, taskManager, internalEventBus, goalService } = deps;
+
+	const handleGoalTerminal = (task: SpaceTask): void => {
+		if (!goalService) return;
+		try {
+			goalService.handleTaskTerminal(task.id);
+		} catch (err) {
+			log.warn(
+				`Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	};
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
 		if (!internalEventBus) return;
@@ -139,6 +153,7 @@ export function createMarkCompleteHandler(
 					for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 				},
 			});
+			handleGoalTerminal(updated);
 			emitTaskUpdated(updated);
 			log.info(
 				`post-approval.complete: spaceId=${spaceId} taskId=${taskId} outcome=done mode=${task.postApprovalSessionId ? 'spawn' : 'inline'}`

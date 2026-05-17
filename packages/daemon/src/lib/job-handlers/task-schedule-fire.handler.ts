@@ -24,6 +24,7 @@ import type { TaskScheduleRepository } from '../../storage/repositories/task-sch
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
+import type { SpaceGoalService } from '../space/goals/goal-service';
 
 const log = new Logger('task-schedule-fire-handler');
 
@@ -59,6 +60,7 @@ export interface TaskScheduleFireHandlerDeps {
 	jobQueue: JobQueueRepository;
 	spaceRepo: SpaceRepository;
 	taskRepo: SpaceTaskRepository;
+	goalService?: SpaceGoalService;
 	/**
 	 * Optional event emitter for broadcasting schedule/task changes.
 	 * When provided, the handler emits `space.task.created` and
@@ -76,7 +78,7 @@ export async function handleTaskScheduleFire(
 	deps: TaskScheduleFireHandlerDeps
 ): Promise<TaskScheduleFireResult> {
 	const { scheduleId } = job.payload as TaskScheduleFirePayload;
-	const { db, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub } = deps;
+	const { db, scheduleRepo, jobQueue, spaceRepo, taskRepo, goalService, eventHub } = deps;
 
 	const schedule = scheduleRepo.getById(scheduleId);
 
@@ -185,16 +187,6 @@ export async function handleTaskScheduleFire(
 
 	try {
 		const result = db.transaction(() => {
-			const task = taskRepo.createTask({
-				spaceId: schedule.spaceId,
-				title: schedule.title,
-				description: schedule.description,
-				priority: schedule.priority,
-				preferredWorkflowId: schedule.preferredWorkflowId,
-				labels: schedule.labels,
-				createdByTaskScheduleId: schedule.id,
-			});
-
 			let computedNextRunAt: number | null = null;
 			let pendingJobId: string | null = null;
 			let nextStatus: 'active' | 'completed' = 'completed';
@@ -213,6 +205,40 @@ export async function handleTaskScheduleFire(
 				}
 			}
 
+			if (goalService && schedule.goalId) {
+				const claimCheck = goalService.canClaimScheduledTask({
+					spaceId: schedule.spaceId,
+					goalId: schedule.goalId,
+				});
+				if (!claimCheck.claimable) {
+					const applied = scheduleRepo.updateAfterFireIfPending(scheduleId, job.id, {
+						lastCreatedTaskId: schedule.lastCreatedTaskId,
+						lastRunAt: now,
+						nextRunAt: computedNextRunAt,
+						status: nextStatus,
+						pendingJobId,
+					});
+					if (!applied) {
+						throw new ScheduleSupersededError(scheduleId, job.id);
+					}
+					if (claimCheck.goal && computedNextRunAt !== claimCheck.goal.nextCheckInAt) {
+						goalService.updateScheduledCheckIn(claimCheck.goal.id, computedNextRunAt);
+					}
+					return { taskId: null, nextRunAt: computedNextRunAt, skipped: true as const };
+				}
+			}
+
+			const task = taskRepo.createTask({
+				spaceId: schedule.spaceId,
+				title: schedule.title,
+				description: schedule.description,
+				priority: schedule.priority,
+				preferredWorkflowId: schedule.preferredWorkflowId,
+				labels: schedule.labels,
+				createdByTaskScheduleId: schedule.id,
+				goalId: schedule.goalId,
+			});
+
 			// Compare-and-swap: only commit if the schedule's pending_job_id is
 			// still our job id. If a concurrent pause/delete/reschedule happened
 			// between the initial read and now, the precondition fails and we
@@ -228,29 +254,41 @@ export async function handleTaskScheduleFire(
 			if (!applied) {
 				throw new ScheduleSupersededError(scheduleId, job.id);
 			}
+			if (goalService && schedule.goalId) {
+				const claimed = goalService.claimScheduledTask(task.id, computedNextRunAt);
+				if (!claimed.claimed) {
+					throw new Error(`Goal ${schedule.goalId} already has an active task`);
+				}
+			}
 
-			return { taskId: task.id, nextRunAt: computedNextRunAt };
+			return { taskId: task.id, nextRunAt: computedNextRunAt, skipped: false as const };
 		})();
 
 		taskId = result.taskId;
 		nextRunAt = result.nextRunAt;
-		log.debug('task-schedule-fire: created task', { scheduleId, taskId, nextRunAt });
+		if (result.skipped) {
+			log.debug('task-schedule-fire: skipped goal contention', { scheduleId, nextRunAt });
+		} else {
+			log.debug('task-schedule-fire: created task', { scheduleId, taskId, nextRunAt });
+		}
 
 		// Emit events so the web client can refresh its state without polling.
 		// Fire-and-forget — handler success must not depend on event delivery.
 		if (eventHub) {
-			const emittedTask = taskRepo.getTask(taskId);
-			if (emittedTask) {
-				eventHub
-					.publish('space.task.created', {
-						sessionId: 'global',
-						spaceId: schedule.spaceId,
-						taskId,
-						task: emittedTask,
-					})
-					.catch(() => {
-						// Swallow — event emission is best-effort.
-					});
+			if (taskId) {
+				const emittedTask = taskRepo.getTask(taskId);
+				if (emittedTask) {
+					eventHub
+						.publish('space.task.created', {
+							sessionId: 'global',
+							spaceId: schedule.spaceId,
+							taskId,
+							task: emittedTask,
+						})
+						.catch(() => {
+							// Swallow — event emission is best-effort.
+						});
+				}
 			}
 			const emittedSchedule = scheduleRepo.getById(scheduleId);
 			if (emittedSchedule) {
@@ -295,8 +333,13 @@ export async function handleTaskScheduleFire(
 	}
 
 	if (taskId === null) {
-		// Defensive: the transaction body always assigns taskId on the success path.
-		throw new Error(`task-schedule-fire: taskId unexpectedly null for ${scheduleId}`);
+		return {
+			scheduleId,
+			taskId: null,
+			skipped: true,
+			skipReason: 'goal_task_already_active',
+			nextRunAt,
+		};
 	}
 
 	return { scheduleId, taskId, skipped: false, nextRunAt };

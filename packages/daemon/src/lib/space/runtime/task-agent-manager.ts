@@ -261,6 +261,8 @@ export interface TaskAgentManagerConfig {
 	replyRoutingRegistry?: ReplyRoutingRegistry;
 	/** Persistent per-space agent memory repository. */
 	memoryRepo?: AgentMemoryRepository;
+	/** Goal service for terminal goal-task side effects. */
+	goalService?: import('../goals/goal-service').SpaceGoalService;
 }
 
 // ---------------------------------------------------------------------------
@@ -3636,6 +3638,7 @@ export class TaskAgentManager {
 			taskRepo: this.config.taskRepo,
 			taskManager: boundTaskManager,
 			internalEventBus: this.config.internalEventBus,
+			goalService: this.config.goalService,
 		});
 
 		// Self-heal callback for the agent-callable `restore_node_agent` tool.
