@@ -545,6 +545,10 @@ export function createOpenAIChatBridgeServer(
 	const modelContextWindow = config.modelContextWindow;
 
 	const server = Bun.serve({
+		// Bind to loopback so other local users cannot probe the ephemeral port
+		// and reach this bridge with the configured upstream API key. The SDK
+		// connects via ANTHROPIC_BASE_URL=http://127.0.0.1:<port>.
+		hostname: '127.0.0.1',
 		port: 0,
 		idleTimeout: 0,
 		async fetch(req: Request): Promise<Response> {

@@ -50,7 +50,7 @@ import type { McpEnablementRepository } from '../../storage/repositories/mcp-ena
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { getSessionModelInfo } from '../model-service.js';
 import { requireModelContextWindow } from '../providers/codex-models';
-import { getProviderContextManager } from '../providers/factory.js';
+import { getProviderContextManager, getProviderRegistry } from '../providers/factory.js';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
 import {
@@ -614,11 +614,21 @@ export class QueryOptionsBuilder {
 		}
 
 		// Resolve provider thinking mode so we can skip thinking config for
-		// providers that do not support it. Use the static map rather than
-		// instantiating a provider context to avoid API-key failures in CI.
+		// providers that do not support it. Prefer the live registry capability
+		// (so custom OpenAI-compatible endpoints honour their per-config
+		// `thinkingModes`) and fall back to the static map for built-ins. Static
+		// fallback avoids API-key probes in CI when the registry is empty.
 		const providerId = this.ctx.session.config.provider;
-		let thinkingModes =
+		let thinkingModes: 'off' | 'on' | 'granular' =
 			PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
+		try {
+			if (providerId) {
+				const liveMode = getProviderRegistry().get(providerId)?.capabilities?.thinkingModes;
+				if (liveMode) thinkingModes = liveMode;
+			}
+		} catch {
+			// Registry not initialised (unit tests with reset registry) — keep static fallback.
+		}
 		// Add thinking configuration based on the session override, falling back to the app default.
 		// Backward compatibility: legacy 'auto' is treated as 'off'.
 		const globalSettings = this.ctx.settingsManager.getGlobalSettings();

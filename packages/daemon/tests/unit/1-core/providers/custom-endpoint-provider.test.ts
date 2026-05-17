@@ -201,4 +201,65 @@ describe('CustomEndpointProvider', () => {
 			maxContextTokens: 128000,
 		});
 	});
+
+	it('isAvailable returns true when baseUrl is set', async () => {
+		const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
+		expect(await p.isAvailable()).toBe(true);
+	});
+
+	it('getAuthStatus reports authenticated with api_key method', async () => {
+		const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
+		const status = await p.getAuthStatus();
+		expect(status.isAuthenticated).toBe(true);
+		expect(status.method).toBe('api_key');
+	});
+
+	it('translateModelIdForSdk always returns "default" (SDK tier alias)', () => {
+		const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
+		expect(p.translateModelIdForSdk('qwen2.5-7b')).toBe('default');
+		expect(p.translateModelIdForSdk('anything')).toBe('default');
+	});
+
+	it('forwards custom headers into the bridge', () => {
+		const fake = makeFakeBridge();
+		const p = new CustomEndpointProvider(
+			{
+				...baseConfig,
+				headers: { 'X-Org': 'acme', Authorization: 'Bearer override' },
+			},
+			{ bridgeFactory: fake.factory }
+		);
+		p.buildSdkConfig('qwen2.5-7b');
+		expect(fake.configs[0].headers).toEqual({
+			'X-Org': 'acme',
+			Authorization: 'Bearer override',
+		});
+	});
+
+	it('falls back to the first model when modelId is unknown', () => {
+		const fake = makeFakeBridge();
+		const p = new CustomEndpointProvider(
+			{
+				...baseConfig,
+				defaultModelId: undefined,
+			},
+			{ bridgeFactory: fake.factory }
+		);
+		const cfg = p.buildSdkConfig('not-a-real-model');
+		// First model id wins when no defaultModelId is configured.
+		expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('qwen2.5-7b');
+	});
+
+	it('honours sessionConfig overrides for baseUrl and apiKey', () => {
+		const fake = makeFakeBridge();
+		const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
+		p.buildSdkConfig('qwen2.5-7b', {
+			baseUrl: 'http://override.test/v1',
+			apiKey: 'session-key',
+		});
+		expect(fake.configs[0]).toMatchObject({
+			baseUrl: 'http://override.test/v1',
+			apiKey: 'session-key',
+		});
+	});
 });
