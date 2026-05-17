@@ -39,44 +39,44 @@ describe('useGlobalShortcuts', () => {
 	it('toggles command palette on Cmd+K on mac', () => {
 		setPlatform('MacIntel');
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: 'k', metaKey: true });
+		fireKey({ code: 'KeyK', metaKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(true);
-		fireKey({ key: 'k', metaKey: true });
+		fireKey({ code: 'KeyK', metaKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(false);
 	});
 
 	it('does not toggle on Ctrl+K on mac (native editing shortcut)', () => {
 		setPlatform('MacIntel');
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: 'k', ctrlKey: true });
+		fireKey({ code: 'KeyK', ctrlKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(false);
 	});
 
 	it('toggles on Ctrl+K on non-mac', () => {
 		setPlatform('Win32');
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: 'k', ctrlKey: true });
+		fireKey({ code: 'KeyK', ctrlKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(true);
 	});
 
 	it('does not toggle on Cmd+K on non-mac', () => {
 		setPlatform('Win32');
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: 'k', metaKey: true });
+		fireKey({ code: 'KeyK', metaKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(false);
 	});
 
 	it('does not toggle on plain k', () => {
 		setPlatform('MacIntel');
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: 'k' });
+		fireKey({ code: 'KeyK' });
 		expect(commandPaletteOpenSignal.value).toBe(false);
 	});
 
 	it('does not toggle when altKey is held', () => {
 		setPlatform('MacIntel');
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: 'k', metaKey: true, altKey: true });
+		fireKey({ code: 'KeyK', metaKey: true, altKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(false);
 	});
 
@@ -87,13 +87,13 @@ describe('useGlobalShortcuts', () => {
 			id: 'test',
 			label: 'Test',
 			category: 'help',
-			shortcut: { display: '⌘.', key: '.', mod: true },
+			shortcut: { display: '⌘.', code: 'Period', mod: true },
 			run: () => {
 				ran += 1;
 			},
 		});
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: '.', metaKey: true });
+		fireKey({ code: 'Period', metaKey: true });
 		expect(ran).toBe(1);
 	});
 
@@ -104,24 +104,24 @@ describe('useGlobalShortcuts', () => {
 			id: 'test',
 			label: 'Test',
 			category: 'help',
-			shortcut: { display: '⌘.', key: '.', mod: true },
+			shortcut: { display: '⌘.', code: 'Period', mod: true },
 			run: () => {
 				ran += 1;
 			},
 		});
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: '.', metaKey: true });
-		fireKey({ key: '.', metaKey: true, repeat: true });
-		fireKey({ key: '.', metaKey: true, repeat: true });
+		fireKey({ code: 'Period', metaKey: true });
+		fireKey({ code: 'Period', metaKey: true, repeat: true });
+		fireKey({ code: 'Period', metaKey: true, repeat: true });
 		expect(ran).toBe(1);
 	});
 
 	it('ignores auto-repeat keydown for palette toggle', () => {
 		setPlatform('MacIntel');
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: 'k', metaKey: true });
+		fireKey({ code: 'KeyK', metaKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(true);
-		fireKey({ key: 'k', metaKey: true, repeat: true });
+		fireKey({ code: 'KeyK', metaKey: true, repeat: true });
 		expect(commandPaletteOpenSignal.value).toBe(true);
 	});
 
@@ -132,7 +132,7 @@ describe('useGlobalShortcuts', () => {
 			id: 'test',
 			label: 'Test',
 			category: 'help',
-			shortcut: { display: '⌘.', key: '.', mod: true },
+			shortcut: { display: '⌘.', code: 'Period', mod: true },
 			run: () => {
 				ran += 1;
 			},
@@ -142,7 +142,7 @@ describe('useGlobalShortcuts', () => {
 		input.type = 'text';
 		document.body.appendChild(input);
 		input.focus();
-		fireKey({ key: '.', metaKey: true, target: input });
+		fireKey({ code: 'Period', metaKey: true, target: input });
 		input.remove();
 		expect(ran).toBe(0);
 	});
@@ -154,13 +154,13 @@ describe('useGlobalShortcuts', () => {
 			id: 'test',
 			label: 'Test',
 			category: 'help',
-			shortcut: { display: '⌘.', key: '.', mod: true },
+			shortcut: { display: '⌘.', code: 'Period', mod: true },
 			run: () => {
 				ran += 1;
 			},
 		});
 		renderHook(() => useGlobalShortcuts());
-		fireKey({ key: '.', metaKey: true, altKey: true });
+		fireKey({ code: 'Period', metaKey: true, altKey: true });
 		expect(ran).toBe(0);
 	});
 
@@ -171,7 +171,7 @@ describe('useGlobalShortcuts', () => {
 		input.type = 'text';
 		document.body.appendChild(input);
 		input.focus();
-		fireKey({ key: 'k', metaKey: true, target: input });
+		fireKey({ code: 'KeyK', metaKey: true, target: input });
 		input.remove();
 		expect(commandPaletteOpenSignal.value).toBe(true);
 	});

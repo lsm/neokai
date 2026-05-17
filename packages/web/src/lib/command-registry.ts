@@ -14,8 +14,12 @@ export type CommandCategory = 'session' | 'navigation' | 'space' | 'settings' | 
 export interface CommandShortcut {
 	/** Display string like "⌘K" or "Ctrl+/" */
 	display: string;
-	/** Lowercase key (matches KeyboardEvent.key.toLowerCase()) */
-	key: string;
+	/**
+	 * Physical key code (e.g. "KeyK", "Period", "Comma").
+	 * Uses KeyboardEvent.code so shortcuts stay consistent across
+	 * keyboard layouts/locales.
+	 */
+	code: string;
 	/** Require meta (⌘ on mac) OR ctrl */
 	mod?: boolean;
 	/** Require shift in addition to mod */
@@ -111,7 +115,7 @@ export class CommandRegistry {
 				if (existing.id === cmd.id) continue;
 				const e = existing.shortcut;
 				if (!e) continue;
-				if (e.key === sc.key && !!e.mod === !!sc.mod && !!e.shift === !!sc.shift) {
+				if (e.code === sc.code && !!e.mod === !!sc.mod && !!e.shift === !!sc.shift) {
 					// eslint-disable-next-line no-console
 					console.warn(
 						`[command-registry] shortcut collision: "${cmd.id}" shares ${sc.display} with "${existing.id}"; first registered wins.`
@@ -177,14 +181,14 @@ export class CommandRegistry {
 	 * - `shiftKey` must match exactly.
 	 */
 	findByShortcut(event: KeyboardEvent): CommandDescriptor | undefined {
-		const key = event.key.toLowerCase();
+		const code = event.code;
 		const isMac =
 			/Mac|iPhone|iPad|iPod/i.test(navigator.platform ?? '') ||
 			/Mac|iPhone|iPad|iPod/i.test(navigator.userAgent ?? '');
 		for (const cmd of this.commands.values()) {
 			const sc = cmd.shortcut;
 			if (!sc) continue;
-			if (sc.key !== key) continue;
+			if (sc.code !== code) continue;
 			if (sc.mod) {
 				if (isMac) {
 					if (!event.metaKey || event.ctrlKey) continue;

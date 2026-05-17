@@ -38,7 +38,7 @@ function isMacPlatform(): boolean {
 
 function isPaletteToggle(event: KeyboardEvent, isMac: boolean): boolean {
 	if (event.shiftKey || event.altKey) return false;
-	if (event.key.toLowerCase() !== 'k') return false;
+	if (event.code !== 'KeyK') return false;
 	// On mac, only Cmd+K toggles. Ctrl+K is a native editing shortcut.
 	// On non-mac, only Ctrl+K toggles.
 	return isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
@@ -68,9 +68,15 @@ export function useGlobalShortcuts(): void {
 			void (async () => {
 				try {
 					await cmd.run();
-				} catch {
-					// Swallow: keyboard dispatch boundary; we don't want an async
-					// rejection in a command to become an unhandled rejection.
+				} catch (err) {
+					// Surface to toast so users see the failure; swallow to keep the
+					// boundary safe even if toast itself throws.
+					try {
+						const { toast } = await import('../lib/toast.ts');
+						toast.error(err instanceof Error ? err.message : `Command "${cmd.label}" failed`);
+					} catch {
+						// ignore
+					}
 				}
 			})();
 		};

@@ -21,12 +21,11 @@ describe('default commands', () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 
-	it('every shortcut has a display string and a key', () => {
+	it('every shortcut has a display string and a code', () => {
 		for (const cmd of DEFAULT_COMMANDS) {
 			if (!cmd.shortcut) continue;
 			expect(cmd.shortcut.display.length).toBeGreaterThan(0);
-			expect(cmd.shortcut.key.length).toBeGreaterThan(0);
-			expect(cmd.shortcut.key).toBe(cmd.shortcut.key.toLowerCase());
+			expect(cmd.shortcut.code.length).toBeGreaterThan(0);
 		}
 	});
 
@@ -37,7 +36,7 @@ describe('default commands', () => {
 	it('includes a palette.open command bound to Cmd+K', () => {
 		const palette = DEFAULT_COMMANDS.find((c) => c.id === 'palette.open');
 		expect(palette).toBeDefined();
-		expect(palette?.shortcut?.key).toBe('k');
+		expect(palette?.shortcut?.code).toBe('KeyK');
 		expect(palette?.shortcut?.mod).toBe(true);
 	});
 

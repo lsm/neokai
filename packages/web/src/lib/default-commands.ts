@@ -73,7 +73,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 		category: 'help',
 		description: 'Show the command palette',
 		keywords: ['cmd', 'search', 'palette'],
-		shortcut: { display: '⌘K', key: 'k', mod: true },
+		shortcut: { display: '⌘K', code: 'KeyK', mod: true },
 		run: () => {
 			commandPaletteOpenSignal.value = true;
 		},
@@ -84,7 +84,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 		category: 'session',
 		description: 'Create a new chat session',
 		keywords: ['create', 'chat', 'start'],
-		shortcut: { display: '⌘⇧N', key: 'n', mod: true, shift: true },
+		shortcut: { display: '⌘⇧N', code: 'KeyN', mod: true, shift: true },
 		run: async () => {
 			closePalette();
 			await runCreateSession();
@@ -128,7 +128,7 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 		label: 'Open settings',
 		category: 'settings',
 		keywords: ['preferences', 'config'],
-		shortcut: { display: '⌘,', key: ',', mod: true },
+		shortcut: { display: '⌘,', code: 'Comma', mod: true },
 		run: () => {
 			closePalette();
 			navSectionSignal.value = 'settings';

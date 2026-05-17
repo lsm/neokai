@@ -40,7 +40,7 @@ export function CommandPalette() {
 	const [query, setQuery] = useState('');
 	// version state forces a recompute of the search result when the registry
 	// changes (e.g. defaults are registered after first render).
-	const [, setRegistryVersion] = useState(0);
+	const [registryVersion, setRegistryVersion] = useState(0);
 
 	useEffect(() => {
 		// Reset query each time the palette opens.
@@ -50,7 +50,7 @@ export function CommandPalette() {
 		}
 	}, [open]);
 
-	const results = useMemo(() => commandRegistry.search(query), [query, open]);
+	const results = useMemo(() => commandRegistry.search(query), [query, open, registryVersion]);
 	const groups = useMemo(() => groupByCategory(results), [results]);
 
 	function handleClose() {
