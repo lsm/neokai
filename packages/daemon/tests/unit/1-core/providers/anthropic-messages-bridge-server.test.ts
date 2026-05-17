@@ -303,5 +303,52 @@ describe('AnthropicMessagesBridge', () => {
 			expect(capturedUrl).toBe('https://api.example.com/v1/messages/count_tokens');
 			expect(((await response.json()) as { input_tokens: number }).input_tokens).toBe(42);
 		});
+
+		it('does not duplicate /v1/messages when baseUrl already includes it', async () => {
+			// Regression for the case where users paste a full endpoint URL —
+			// the bridge must produce `.../v1/messages/count_tokens`, not
+			// `.../v1/messages/v1/messages/count_tokens`.
+			let capturedUrl = '';
+			const fetchMock = mock(async (url: string) => {
+				capturedUrl = url;
+				return new Response(JSON.stringify({ input_tokens: 7 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				});
+			});
+			const server = createAnthropicMessagesBridgeServer({
+				baseUrl: 'https://api.example.com/v1/messages',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ model: 'claude', messages: [] }),
+			});
+			expect(capturedUrl).toBe('https://api.example.com/v1/messages/count_tokens');
+		});
+
+		it('does not duplicate when baseUrl includes a trailing slash after /v1/messages', async () => {
+			let capturedUrl = '';
+			const fetchMock = mock(async (url: string) => {
+				capturedUrl = url;
+				return new Response(JSON.stringify({ input_tokens: 7 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				});
+			});
+			const server = createAnthropicMessagesBridgeServer({
+				baseUrl: 'https://api.example.com/v1/messages/',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ model: 'claude', messages: [] }),
+			});
+			expect(capturedUrl).toBe('https://api.example.com/v1/messages/count_tokens');
+		});
 	});
 });

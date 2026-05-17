@@ -267,6 +267,61 @@ describe('CustomEndpointProvider', () => {
 		expect(p.translateModelIdForSdk('anything')).toBe('default');
 	});
 
+	describe('getModelThinkingMode', () => {
+		it('returns "off" for a model that declares thinking=false', () => {
+			const p = new CustomEndpointProvider(baseConfig, {
+				bridgeFactory: makeFakeBridge().factory,
+			});
+			// `qwen2.5-7b` does not opt into thinking.
+			expect(p.getModelThinkingMode('qwen2.5-7b')).toBe('off');
+		});
+
+		it('returns "on" for a model that declares thinking=true', () => {
+			const p = new CustomEndpointProvider(
+				{
+					...baseConfig,
+					models: [
+						{
+							id: 'reasoner',
+							capabilities: { toolUse: true, vision: false, thinking: true },
+						},
+					],
+					defaultModelId: 'reasoner',
+				},
+				{ bridgeFactory: makeFakeBridge().factory }
+			);
+			expect(p.getModelThinkingMode('reasoner')).toBe('on');
+		});
+
+		it('returns undefined for an unknown model id (defers to provider aggregate)', () => {
+			const p = new CustomEndpointProvider(baseConfig, {
+				bridgeFactory: makeFakeBridge().factory,
+			});
+			expect(p.getModelThinkingMode('does-not-exist')).toBeUndefined();
+		});
+
+		it('returns "off" for non-thinking models even when a sibling model supports thinking', () => {
+			// Provider-level aggregate would advertise `thinking: on` because one
+			// sibling supports it — but the non-thinking model must still report
+			// `off` so the builder doesn't emit `thinking` payloads that the
+			// upstream would reject.
+			const p = new CustomEndpointProvider(
+				{
+					...baseConfig,
+					models: [
+						{ id: 'plain', capabilities: { toolUse: true, thinking: false } },
+						{ id: 'reasoner', capabilities: { toolUse: true, thinking: true } },
+					],
+					defaultModelId: 'plain',
+				},
+				{ bridgeFactory: makeFakeBridge().factory }
+			);
+			expect(p.capabilities.extendedThinking).toBe(true);
+			expect(p.getModelThinkingMode('plain')).toBe('off');
+			expect(p.getModelThinkingMode('reasoner')).toBe('on');
+		});
+	});
+
 	it('forwards custom headers into the bridge', () => {
 		const fake = makeFakeBridge();
 		const p = new CustomEndpointProvider(

@@ -66,8 +66,18 @@ function mapUpstreamStatus(status: number): AnthropicErrorType {
  * Build the upstream URL by appending `<suffix>` to the parsed base URL's
  * pathname while preserving any query string. Mirrors the helper used by the
  * OpenAI chat bridge — see `openai-chat-bridge/server.ts#buildChatCompletionsUrl`.
+ *
+ * `stripSuffixes` lets the caller pass extra candidate suffixes to strip from
+ * the existing pathname before appending the target suffix. This is used by
+ * the count_tokens URL builder to handle the case where a user pasted a
+ * baseUrl that already ends in `/v1/messages` — without it, the count_tokens
+ * URL would become `/v1/messages/v1/messages/count_tokens`.
  */
-export function buildUpstreamUrl(input: string, suffix: string): string {
+export function buildUpstreamUrl(
+	input: string,
+	suffix: string,
+	stripSuffixes: string[] = []
+): string {
 	const trimmed = input.trim();
 	let parsed: URL;
 	try {
@@ -77,11 +87,19 @@ export function buildUpstreamUrl(input: string, suffix: string): string {
 			`Anthropic-messages baseUrl is not a valid URL: ${err instanceof Error ? err.message : String(err)}`
 		);
 	}
-	// Strip trailing slashes plus the suffix itself if the user pasted the full
-	// endpoint, then re-append exactly once.
+	// Strip trailing slashes plus any candidate suffix the user may have pasted,
+	// then re-append the target suffix exactly once. Order matters: try the
+	// longest suffix first so we don't leave behind a tail like `/count_tokens`.
 	let path = parsed.pathname.replace(/\/+$/, '');
-	const suffixPattern = new RegExp(`${suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
-	path = path.replace(suffixPattern, '');
+	const candidates = [suffix, ...stripSuffixes].sort((a, b) => b.length - a.length);
+	for (const candidate of candidates) {
+		const pattern = new RegExp(`${candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+		const next = path.replace(pattern, '');
+		if (next !== path) {
+			path = next;
+			break;
+		}
+	}
 	parsed.pathname = `${path}${suffix}`;
 	return parsed.toString();
 }
@@ -90,8 +108,15 @@ export function createAnthropicMessagesBridgeServer(
 	config: AnthropicMessagesBridgeConfig
 ): AnthropicMessagesBridgeServer {
 	const fetchImpl = config.fetchImpl ?? fetch;
-	const messagesUrl = buildUpstreamUrl(config.baseUrl, '/v1/messages');
-	const countTokensUrl = buildUpstreamUrl(config.baseUrl, '/v1/messages/count_tokens');
+	const messagesUrl = buildUpstreamUrl(config.baseUrl, '/v1/messages', [
+		'/v1/messages/count_tokens',
+	]);
+	// Build count_tokens by stripping the shorter `/v1/messages` suffix first
+	// so a baseUrl like `https://api.example.com/v1/messages` produces
+	// `.../v1/messages/count_tokens` instead of `.../v1/messages/v1/messages/count_tokens`.
+	const countTokensUrl = buildUpstreamUrl(config.baseUrl, '/v1/messages/count_tokens', [
+		'/v1/messages',
+	]);
 
 	const server = Bun.serve({
 		hostname: '127.0.0.1',

@@ -389,7 +389,10 @@ async function streamOllamaToAnthropic(params: {
 
 export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): OllamaBridgeServer {
 	const fetchImpl = config.fetchImpl ?? fetch;
-	const baseUrl = config.baseUrl.replace(/\/$/, '');
+	// Strip trailing slashes plus `/api/chat` if the user pasted the full
+	// endpoint URL (common copy-paste from Ollama docs). Without this the
+	// upstream request would target `/api/chat/api/chat` and fail with 404.
+	const baseUrl = config.baseUrl.replace(/\/$/, '').replace(/\/api\/chat\/?$/i, '');
 	const server = Bun.serve({
 		...(config.hostname ? { hostname: config.hostname } : {}),
 		port: 0,
