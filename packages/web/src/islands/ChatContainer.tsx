@@ -637,9 +637,9 @@ export default function ChatContainer({
 	});
 
 	useSignalEffect(() => {
-		const messageId = searchHighlightMessageIdSignal.value;
-		if (messageId && sessionStore.activeSessionId.value === sessionId) {
-			setSearchTargetMessageId(messageId);
+		const target = searchHighlightMessageIdSignal.value;
+		if (target?.sessionId === sessionId && sessionStore.activeSessionId.value === sessionId) {
+			setSearchTargetMessageId(target.messageId);
 			searchHighlightMessageIdSignal.value = null;
 		}
 	});
@@ -821,6 +821,12 @@ export default function ChatContainer({
 	// Note: `enabled: autoScroll && !highlightMessageId` is also passed to
 	// `useAutoScroll` above so the initial-load tail-follow can't race the
 	// deep-link scroll.
+	useEffect(() => {
+		if (!searchTargetMessageId || isInitialLoad) return;
+		const timeout = setTimeout(() => setSearchTargetMessageId(null), 750);
+		return () => clearTimeout(timeout);
+	}, [searchTargetMessageId, isInitialLoad]);
+
 	useScrollToMessage({
 		containerRef: messagesContainerRef,
 		messageId: searchTargetMessageId || highlightMessageId,

@@ -54,7 +54,11 @@ export const spaceOverlayAgentNameSignal = signal<string | null>(null);
 export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
 
 // Message selected from search results. ChatContainer consumes this after routing to target session.
-export const searchHighlightMessageIdSignal = signal<string | null>(null);
+export interface SearchHighlightTarget {
+	sessionId: string;
+	messageId: string;
+}
+export const searchHighlightMessageIdSignal = signal<SearchHighlightTarget | null>(null);
 // Task messaging context for live workflow node-agent overlays. When set, sends
 // from AgentOverlayChat route through space.task.sendMessage instead of the
 // generic message.send RPC so they target the already-live workflow sub-session.

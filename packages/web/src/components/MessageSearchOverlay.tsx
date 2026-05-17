@@ -93,7 +93,10 @@ export function MessageSearchOverlay({
 			if (!result.sessionId) return;
 			const targetMessageId = result.messageId || result.sourceId;
 			if (result.sessionId !== currentSessionId) {
-				searchHighlightMessageIdSignal.value = targetMessageId;
+				searchHighlightMessageIdSignal.value = {
+					sessionId: result.sessionId,
+					messageId: targetMessageId,
+				};
 				navigateToSession(result.sessionId);
 			} else {
 				onSelectMessage(targetMessageId);

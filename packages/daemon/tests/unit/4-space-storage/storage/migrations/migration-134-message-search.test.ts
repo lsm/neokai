@@ -71,7 +71,7 @@ describe('Migration 134: message search FTS', () => {
 		db.prepare(
 			`INSERT INTO space_tasks (id, space_id, task_number, title, description, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`
-		).run('task-1', 'space-1', 7, 'Needle task', 'Find message search', Date.now());
+		).run('task-1', 'space-1', 7, 'Task', 'Needle message search', Date.now());
 
 		runMigration134(db);
 

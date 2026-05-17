@@ -543,12 +543,16 @@ export class SpaceTaskRepository {
 	 * Promote draft tasks created by a planning task (legacy method, kept for API compatibility)
 	 */
 	promoteDraftTasksByCreator(createdByTaskId: string): number {
+		const rows = this.db
+			.prepare(`SELECT id FROM space_tasks WHERE created_by_task_id = ? AND status = 'draft'`)
+			.all(createdByTaskId) as Array<{ id: string }>;
 		const result = this.db
 			.prepare(
 				`UPDATE space_tasks SET status = 'open', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
 			)
 			.run(Date.now(), createdByTaskId);
 		if (result.changes > 0) {
+			for (const row of rows) this.upsertTaskSearchRow(row.id);
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 		return result.changes;

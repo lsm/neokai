@@ -108,7 +108,9 @@ export class SDKMessageRepository {
 		if (!this.hasMessageSearchIndex()) return;
 		const hasSessions = this.tableExists('sessions');
 		const hasSpaceTasks = this.tableExists('space_tasks');
-		const sessionTitleSelect = hasSessions ? 's.title AS session_title' : 'NULL AS session_title';
+		const sessionTitleSelect = hasSessions
+			? 's.title AS session_title'
+			: 'sm.session_id AS session_title';
 		const spaceTaskSelect = hasSpaceTasks
 			? 'st.space_id, st.task_number'
 			: 'NULL AS space_id, NULL AS task_number';
@@ -660,6 +662,7 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
 		const ts = timestampMs !== undefined ? new Date(timestampMs) : new Date();
 		stmt.run(ts.toISOString(), messageId);
+		this.upsertMessageSearchRow(messageId);
 	}
 
 	/**
@@ -1109,11 +1112,11 @@ export class SDKMessageRepository {
 		}
 		if (params.from !== undefined) {
 			sql += ` AND timestamp >= ?`;
-			values.push(new Date(params.from).toISOString());
+			values.push(params.from);
 		}
 		if (params.to !== undefined) {
 			sql += ` AND timestamp <= ?`;
-			values.push(new Date(params.to).toISOString());
+			values.push(params.to);
 		}
 
 		sql += ` ORDER BY rank ASC, timestamp DESC LIMIT ? OFFSET ?`;

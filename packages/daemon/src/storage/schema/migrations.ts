@@ -9029,7 +9029,7 @@ function createMessageSearchFtsTable(db: BunDatabase): void {
 			space_id UNINDEXED,
 			task_number UNINDEXED,
 			message_type UNINDEXED,
-			title,
+			title UNINDEXED,
 			body,
 			timestamp UNINDEXED,
 			tokenize = 'unicode61'
@@ -9104,7 +9104,11 @@ function backfillMessageSearchFts(db: BunDatabase): void {
 					CASE
 						WHEN json_valid(sm.sdk_message)
 						 AND sm.message_type = 'neokai_action'
-						THEN json_extract(sm.sdk_message, '$.message')
+						THEN TRIM(COALESCE(json_extract(sm.sdk_message, '$.title'), '') || ' '
+							|| COALESCE(json_extract(sm.sdk_message, '$.message'), '') || ' '
+							|| COALESCE(json_extract(sm.sdk_message, '$.question'), '') || ' '
+							|| COALESCE(json_extract(sm.sdk_message, '$.prompt'), '') || ' '
+							|| COALESCE(json_extract(sm.sdk_message, '$.action'), ''))
 					END,
 					''
 				)),
@@ -9130,7 +9134,7 @@ function backfillMessageSearchFts(db: BunDatabase): void {
 				task_number,
 				title,
 				description,
-				CAST(updated_at AS TEXT)
+				updated_at
 			FROM space_tasks
 			WHERE TRIM(COALESCE(title, '') || ' ' || COALESCE(description, '')) != ''
 		`);

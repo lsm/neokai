@@ -37,17 +37,21 @@ export function setupMessageHandlers(
 			messageType?: string;
 		};
 		const query = request.query?.trim() ?? '';
+		const limit = sanitizeInteger(request.limit, 25, 1, 50);
+		const offset = sanitizeInteger(request.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+		const from = sanitizeTimestamp(request.from, 'from');
+		const to = sanitizeTimestamp(request.to, 'to');
 		if (!query) {
-			return { results: [], limit: request.limit ?? 25, offset: request.offset ?? 0 };
+			return { results: [], limit, offset };
 		}
 		const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
 		return sdkMessageRepo.searchMessages({
 			query,
 			sessionId: request.sessionId,
-			limit: request.limit,
-			offset: request.offset,
-			from: request.from,
-			to: request.to,
+			limit,
+			offset,
+			from,
+			to,
 			messageType: request.messageType,
 		}) satisfies MessageSearchResponse;
 	});
@@ -229,6 +233,20 @@ function convertToMarkdown(
 	}
 
 	return lines.join('\n');
+}
+
+function sanitizeInteger(value: unknown, fallback: number, min: number, max: number): number {
+	if (value === undefined) return fallback;
+	if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+	return Math.min(Math.max(Math.trunc(value), min), max);
+}
+
+function sanitizeTimestamp(value: unknown, fieldName: string): number | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		throw new Error(`${fieldName} must be a finite epoch millisecond timestamp`);
+	}
+	return value;
 }
 
 /**

@@ -96,7 +96,7 @@ describe('SDKMessageRepository', () => {
 				space_id UNINDEXED,
 				task_number UNINDEXED,
 				message_type UNINDEXED,
-				title,
+				title UNINDEXED,
 				body,
 				timestamp UNINDEXED,
 				tokenize = 'unicode61'
