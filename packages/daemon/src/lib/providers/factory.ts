@@ -165,11 +165,25 @@ export async function syncCustomEndpointProviders(
 
 /**
  * Stable, deterministic fingerprint of a custom endpoint config for change
- * detection. Object key order is normalised so two semantically identical
- * configs with shuffled keys compare equal.
+ * detection. Recursively sorts object keys at every depth so nested fields
+ * (e.g. `models[].capabilities`, `models[].providerModelId`, `headers.*`)
+ * are included in the fingerprint. Naively passing a sorted key list to
+ * `JSON.stringify` only whitelists top-level keys and silently drops nested
+ * ones, which would treat semantically different configs as identical.
  */
 function fingerprintCustomEndpointConfig(config: CustomEndpointConfig): string {
-	return JSON.stringify(config, Object.keys(config).sort());
+	return JSON.stringify(canonicalise(config));
+}
+
+function canonicalise(value: unknown): unknown {
+	if (value === null || typeof value !== 'object') return value;
+	if (Array.isArray(value)) return value.map(canonicalise);
+	const obj = value as Record<string, unknown>;
+	const out: Record<string, unknown> = {};
+	for (const key of Object.keys(obj).sort()) {
+		out[key] = canonicalise(obj[key]);
+	}
+	return out;
 }
 
 /** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
