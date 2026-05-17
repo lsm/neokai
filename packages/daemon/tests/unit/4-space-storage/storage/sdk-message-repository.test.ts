@@ -85,6 +85,25 @@ describe('SDKMessageRepository', () => {
 		db.close();
 	});
 
+	function createSearchIndex(): void {
+		db.exec(`
+			CREATE VIRTUAL TABLE message_search_fts USING fts5(
+				kind UNINDEXED,
+				source_id UNINDEXED,
+				message_id UNINDEXED,
+				session_id UNINDEXED,
+				task_id UNINDEXED,
+				space_id UNINDEXED,
+				task_number UNINDEXED,
+				message_type UNINDEXED,
+				title,
+				body,
+				timestamp UNINDEXED,
+				tokenize = 'unicode61'
+			)
+		`);
+	}
+
 	describe('saveSDKMessage', () => {
 		it('should save a user message and return true', () => {
 			const message = createUserMessage('Hello world');
@@ -873,6 +892,31 @@ describe('SDKMessageRepository', () => {
 			const count = repository.countMessagesAfter('session-1', middleTime);
 
 			expect(count).toBe(0);
+		});
+	});
+
+	describe('searchMessages', () => {
+		it('returns scoped matches with snippets', () => {
+			createSearchIndex();
+			repository.saveSDKMessage('session-1', createUserMessage('alpha regression bug'));
+			repository.saveSDKMessage('session-2', createUserMessage('alpha unrelated'));
+
+			const result = repository.searchMessages({ query: 'alpha', sessionId: 'session-1' });
+
+			expect(result.results.length).toBe(1);
+			expect(result.results[0].sessionId).toBe('session-1');
+			expect(result.results[0].snippet).toContain('<mark>alpha</mark>');
+		});
+
+		it('removes deleted messages from search index', () => {
+			createSearchIndex();
+			const before = Date.now() - 1000;
+			repository.saveSDKMessage('session-1', createUserMessage('temporary rollback marker'));
+
+			expect(repository.searchMessages({ query: 'rollback' }).results.length).toBe(1);
+			repository.deleteMessagesAfter('session-1', before);
+
+			expect(repository.searchMessages({ query: 'rollback' }).results.length).toBe(0);
 		});
 	});
 });

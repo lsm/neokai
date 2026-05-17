@@ -632,6 +632,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 133: Add append-only Space goal event history.
 	runMigration133(db);
+
+	// Migration 134: Add FTS5-backed message and Space task search.
+	runMigration134(db);
 }
 
 /**
@@ -9000,6 +9003,137 @@ export function runMigration131(db: BunDatabase): void {
 	}
 	if (tableExists(db, 'task_schedules')) {
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_task_schedules_goal ON task_schedules(goal_id)`);
+	}
+}
+
+/**
+ * Migration 134: Add FTS5-backed message and Space task search.
+ *
+ * `message_search_fts` is a denormalized projection rather than an external-content table because
+ * searched text is derived from SDK JSON. Repository writes maintain rows for new messages; this
+ * migration backfills existing messages and task titles/descriptions.
+ */
+export function runMigration134(db: BunDatabase): void {
+	createMessageSearchFtsTable(db);
+	backfillMessageSearchFts(db);
+}
+
+function createMessageSearchFtsTable(db: BunDatabase): void {
+	db.exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS message_search_fts USING fts5(
+			kind UNINDEXED,
+			source_id UNINDEXED,
+			message_id UNINDEXED,
+			session_id UNINDEXED,
+			task_id UNINDEXED,
+			space_id UNINDEXED,
+			task_number UNINDEXED,
+			message_type UNINDEXED,
+			title,
+			body,
+			timestamp UNINDEXED,
+			tokenize = 'unicode61'
+		)
+	`);
+}
+
+function backfillMessageSearchFts(db: BunDatabase): void {
+	db.exec(`DELETE FROM message_search_fts`);
+
+	if (tableExists(db, 'sdk_messages')) {
+		const sessionTitleSelect = tableExists(db, 'sessions')
+			? 'COALESCE(s.title, sm.session_id)'
+			: 'sm.session_id';
+		const sessionJoin = tableExists(db, 'sessions')
+			? 'LEFT JOIN sessions s ON s.id = sm.session_id'
+			: '';
+		const taskSelect = tableExists(db, 'space_tasks')
+			? 'st.space_id, st.task_number'
+			: 'NULL, NULL';
+		const taskJoin = tableExists(db, 'space_tasks')
+			? 'LEFT JOIN space_tasks st ON st.id = sm.task_id'
+			: '';
+		db.exec(`
+			INSERT INTO message_search_fts (
+				kind, source_id, message_id, session_id, task_id, space_id, task_number,
+				message_type, title, body, timestamp
+			)
+			SELECT
+				'message',
+				sm.id,
+				json_extract(sm.sdk_message, '$.uuid'),
+				sm.session_id,
+				sm.task_id,
+				${taskSelect},
+				sm.message_type,
+				${sessionTitleSelect},
+				TRIM(COALESCE(
+					CASE
+						WHEN json_valid(sm.sdk_message)
+						 AND json_type(sm.sdk_message, '$.message.content') = 'text'
+						THEN json_extract(sm.sdk_message, '$.message.content')
+					END,
+					''
+				) || ' ' || COALESCE(
+					CASE
+						WHEN json_valid(sm.sdk_message)
+						 AND json_type(sm.sdk_message, '$.message.content') = 'array'
+						THEN (
+							SELECT group_concat(
+								CASE
+									WHEN json_extract(je.value, '$.type') = 'text'
+									THEN json_extract(je.value, '$.text')
+									WHEN json_extract(je.value, '$.type') = 'thinking'
+									THEN json_extract(je.value, '$.thinking')
+								END,
+								' '
+							)
+							FROM json_each(json_extract(sm.sdk_message, '$.message.content')) je
+							WHERE json_extract(je.value, '$.type') IN ('text', 'thinking')
+						)
+					END,
+					''
+				) || ' ' || COALESCE(
+					CASE
+						WHEN json_valid(sm.sdk_message)
+						 AND sm.message_type = 'result'
+						THEN json_extract(sm.sdk_message, '$.result')
+					END,
+					''
+				) || ' ' || COALESCE(
+					CASE
+						WHEN json_valid(sm.sdk_message)
+						 AND sm.message_type = 'neokai_action'
+						THEN json_extract(sm.sdk_message, '$.message')
+					END,
+					''
+				)),
+				CAST(strftime('%s', sm.timestamp) AS INTEGER) * 1000
+			FROM sdk_messages sm
+			${sessionJoin}
+			${taskJoin}
+			WHERE json_valid(sm.sdk_message)
+			  AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+		`);
+	}
+
+	if (tableExists(db, 'space_tasks')) {
+		db.exec(`
+			INSERT INTO message_search_fts (
+				kind, source_id, task_id, space_id, task_number, title, body, timestamp
+			)
+			SELECT
+				'task',
+				id,
+				id,
+				space_id,
+				task_number,
+				title,
+				description,
+				CAST(updated_at AS TEXT)
+			FROM space_tasks
+			WHERE TRIM(COALESCE(title, '') || ' ' || COALESCE(description, '')) != ''
+		`);
 	}
 }
 

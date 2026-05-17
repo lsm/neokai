@@ -17,6 +17,7 @@ import {
 import type { SessionManager } from '../session-manager';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager';
 import type { Database } from '../../storage/database';
+import type { MessageSearchResponse } from '../../storage/message-search';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 
 export function setupMessageHandlers(
@@ -24,6 +25,33 @@ export function setupMessageHandlers(
 	sessionManager: SessionManager,
 	db?: Database
 ): void {
+	messageHub.onRequest('message.search', async (data) => {
+		if (!db) throw new Error('Database not available');
+		const request = data as {
+			query?: string;
+			sessionId?: string;
+			limit?: number;
+			offset?: number;
+			from?: number;
+			to?: number;
+			messageType?: string;
+		};
+		const query = request.query?.trim() ?? '';
+		if (!query) {
+			return { results: [], limit: request.limit ?? 25, offset: request.offset ?? 0 };
+		}
+		const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
+		return sdkMessageRepo.searchMessages({
+			query,
+			sessionId: request.sessionId,
+			limit: request.limit,
+			offset: request.offset,
+			from: request.from,
+			to: request.to,
+			messageType: request.messageType,
+		}) satisfies MessageSearchResponse;
+	});
+
 	// Remove large task output from a message to reduce session size
 	// This modifies the .jsonl file in ~/.claude/projects/ (SDK session storage)
 	// No SDK initialization required - only file system operations

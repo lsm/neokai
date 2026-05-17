@@ -42,6 +42,7 @@ import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
+import { MessageSearchOverlay } from '../components/MessageSearchOverlay.tsx';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -69,6 +70,7 @@ import {
 	replaceOverlayHistory,
 } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
+import { searchHighlightMessageIdSignal } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -284,6 +286,7 @@ export default function ChatContainer({
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
+	const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -322,6 +325,7 @@ export default function ChatContainer({
 	const toolsModal = useModal();
 	const infoModal = useModal();
 	const errorDialog = useModal();
+	const searchModal = useModal();
 	const rewindConfirmModal = useModal();
 	const selectiveRewindModal = useModal();
 
@@ -632,6 +636,14 @@ export default function ChatContainer({
 		setSandboxEnabled,
 	});
 
+	useSignalEffect(() => {
+		const messageId = searchHighlightMessageIdSignal.value;
+		if (messageId && sessionStore.activeSessionId.value === sessionId) {
+			setSearchTargetMessageId(messageId);
+			searchHighlightMessageIdSignal.value = null;
+		}
+	});
+
 	// ========================================
 	// Session Actions
 	// ========================================
@@ -795,7 +807,7 @@ export default function ChatContainer({
 		// Disable tail-following auto-scroll while the caller is asking us to
 		// scroll a specific message into view. The highlight id is cleared once
 		// that anchor succeeds, so normal tail-following resumes for new rows.
-		enabled: autoScroll && !highlightMessageId,
+		enabled: autoScroll && !highlightMessageId && !searchTargetMessageId,
 		messageCount: messages.length,
 		isInitialLoad,
 		loadingOlder,
@@ -811,10 +823,13 @@ export default function ChatContainer({
 	// deep-link scroll.
 	useScrollToMessage({
 		containerRef: messagesContainerRef,
-		messageId: highlightMessageId,
+		messageId: searchTargetMessageId || highlightMessageId,
 		messageCount: messages.length,
 		isInitialLoad,
-		onAnchored: clearOverlayHighlightMessageId,
+		onAnchored: (messageId) => {
+			if (messageId === searchTargetMessageId) setSearchTargetMessageId(null);
+			if (messageId === highlightMessageId) clearOverlayHighlightMessageId();
+		},
 	});
 
 	// ========================================
@@ -1208,6 +1223,7 @@ export default function ChatContainer({
 				onResetClick={sessionActions.handleResetAgent}
 				onArchiveClick={sessionActions.handleArchiveClick}
 				onDeleteClick={deleteModal.open}
+				onSearchClick={searchModal.open}
 				archiving={sessionActions.archiving}
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
@@ -1418,6 +1434,13 @@ export default function ChatContainer({
 				onOpenTools={toolsModal.open}
 				onEnterRewindMode={handleEnterRewindMode}
 				onExitRewindMode={handleExitRewindMode}
+			/>
+
+			<MessageSearchOverlay
+				isOpen={searchModal.isOpen}
+				onClose={searchModal.close}
+				currentSessionId={sessionId}
+				onSelectMessage={setSearchTargetMessageId}
 			/>
 
 			{/* Delete Modal */}
