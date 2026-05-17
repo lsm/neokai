@@ -11,6 +11,29 @@ function tableExists(db: BunDatabase, table: string): boolean {
 	return !!row?.name;
 }
 
+function seedSearchFixtures(db: BunDatabase): void {
+	const now = new Date().toISOString();
+	db.prepare(`INSERT INTO sessions (id, title) VALUES (?, ?)`).run('session-1', 'Bug Hunt');
+	db.prepare(
+		`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+		 VALUES (?, ?, ?, ?, ?)`
+	).run(
+		'msg-1',
+		'session-1',
+		'user',
+		JSON.stringify({
+			type: 'user',
+			uuid: 'uuid-1',
+			message: { content: [{ type: 'text', text: 'needle architecture note' }] },
+		}),
+		now
+	);
+	db.prepare(
+		`INSERT INTO space_tasks (id, space_id, task_number, title, description, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`
+	).run('task-1', 'space-1', 7, 'Needle task title', '', Date.now());
+}
+
 describe('Migration 134: message search FTS', () => {
 	let testDir: string;
 	let db: BunDatabase;
@@ -52,26 +75,7 @@ describe('Migration 134: message search FTS', () => {
 	}, 10_000);
 
 	test('creates FTS table and backfills messages and tasks', () => {
-		const now = new Date().toISOString();
-		db.prepare(`INSERT INTO sessions (id, title) VALUES (?, ?)`).run('session-1', 'Bug Hunt');
-		db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
-			 VALUES (?, ?, ?, ?, ?)`
-		).run(
-			'msg-1',
-			'session-1',
-			'user',
-			JSON.stringify({
-				type: 'user',
-				uuid: 'uuid-1',
-				message: { content: [{ type: 'text', text: 'needle architecture note' }] },
-			}),
-			now
-		);
-		db.prepare(
-			`INSERT INTO space_tasks (id, space_id, task_number, title, description, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`
-		).run('task-1', 'space-1', 7, 'Needle task title', '', Date.now());
+		seedSearchFixtures(db);
 
 		runMigration134(db);
 
@@ -91,7 +95,7 @@ describe('Migration 134: message search FTS', () => {
 		expect(tableExists(db, 'message_search_fts')).toBe(true);
 	});
 
-	test('does not backfill again when FTS table already exists', () => {
+	test('does not backfill again when FTS table already contains rows', () => {
 		runMigration134(db);
 		db.prepare(
 			`INSERT INTO message_search_fts (kind, source_id, title, body, timestamp)
@@ -105,5 +109,21 @@ describe('Migration 134: message search FTS', () => {
 			.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
 			.all('sentinel') as Array<{ source_id: string }>;
 		expect(rows.map((row) => row.source_id)).toEqual(['sentinel']);
+	});
+
+	test('backfills when FTS table exists but is empty', () => {
+		seedSearchFixtures(db);
+		runMigration134(db);
+		db.prepare(`DELETE FROM message_search_fts`).run();
+
+		runMigration134(db);
+
+		const rows = db
+			.prepare(`SELECT kind, source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+			.all('needle') as Array<{ kind: string; source_id: string }>;
+		expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
+			'message:msg-1',
+			'task:task-1',
+		]);
 	});
 });

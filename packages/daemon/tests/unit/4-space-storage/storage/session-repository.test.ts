@@ -262,6 +262,37 @@ describe('SessionRepository', () => {
 			expect(session?.title).toBe('Updated Title');
 		});
 
+		it('updates message search row titles when title changes', () => {
+			db.exec(`
+				CREATE VIRTUAL TABLE message_search_fts USING fts5(
+					kind UNINDEXED,
+					source_id UNINDEXED,
+					message_id UNINDEXED,
+					session_id UNINDEXED,
+					task_id UNINDEXED,
+					space_id UNINDEXED,
+					task_number UNINDEXED,
+					message_type UNINDEXED,
+					title,
+					body,
+					timestamp UNINDEXED,
+					tokenize = 'unicode61'
+				)
+			`);
+			repository.createSession(createDefaultSession({ title: 'Old Title' }));
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, message_id, session_id, title, body, timestamp)
+				 VALUES ('message', ?, ?, ?, ?, ?, ?)`
+			).run('msg-1', 'uuid-1', 'session-1', 'Old Title', 'body text', Date.now());
+
+			repository.updateSession('session-1', { title: 'New Title' });
+
+			const row = db
+				.prepare(`SELECT title FROM message_search_fts WHERE source_id = ?`)
+				.get('msg-1') as { title: string };
+			expect(row.title).toBe('New Title');
+		});
+
 		it('should update workspace path', () => {
 			repository.createSession(createDefaultSession());
 

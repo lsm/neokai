@@ -417,6 +417,13 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	// (space/room/session), not useful for ad-hoc agent queries. Agents should
 	// read MCP state through the resolver rather than hitting the table directly.
 	'mcp_enablement',
+	// Message search FTS projection and FTS5 shadow tables — queried through message.search RPC.
+	'message_search_fts',
+	'message_search_fts_config',
+	'message_search_fts_content',
+	'message_search_fts_data',
+	'message_search_fts_docsize',
+	'message_search_fts_idx',
 	// External Event Bus — internal event routing/delivery/config state, not useful for ad-hoc agent queries.
 	'external_event_source_configs',
 	'external_event_extension_configs',

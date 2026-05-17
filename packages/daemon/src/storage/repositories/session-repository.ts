@@ -226,7 +226,17 @@ export class SessionRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+			if (updates.title !== undefined) {
+				this.updateMessageSearchSessionTitle(id, updates.title);
+			}
 		}
+	}
+
+	private updateMessageSearchSessionTitle(sessionId: string, title: string): void {
+		if (!this.tableExists('message_search_fts')) return;
+		this.db
+			.prepare(`UPDATE message_search_fts SET title = ? WHERE kind = 'message' AND session_id = ?`)
+			.run(title, sessionId);
 	}
 
 	/**

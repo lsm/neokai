@@ -18,6 +18,15 @@ import type { SQLiteValue } from '../types';
 export class SpaceRepository {
 	constructor(private db: BunDatabase) {}
 
+	private tableExists(tableName: string): boolean {
+		try {
+			const row = this.db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(tableName);
+			return !!row;
+		} catch {
+			return false;
+		}
+	}
+
 	/**
 	 * Create a new space
 	 */
@@ -291,8 +300,15 @@ export class SpaceRepository {
 	 * Delete a space by ID
 	 */
 	deleteSpace(id: string): boolean {
-		const stmt = this.db.prepare(`DELETE FROM spaces WHERE id = ?`);
-		const result = stmt.run(id);
+		const deleteSearchRows = this.tableExists('message_search_fts')
+			? this.db.prepare(`DELETE FROM message_search_fts WHERE kind = 'task' AND space_id = ?`)
+			: null;
+		const deleteSpace = this.db.prepare(`DELETE FROM spaces WHERE id = ?`);
+		const tx = this.db.transaction((spaceId: string) => {
+			deleteSearchRows?.run(spaceId);
+			return deleteSpace.run(spaceId);
+		});
+		const result = tx(id);
 		return result.changes > 0;
 	}
 

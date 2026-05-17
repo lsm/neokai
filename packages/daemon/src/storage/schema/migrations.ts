@@ -9014,11 +9014,18 @@ export function runMigration131(db: BunDatabase): void {
  * migration backfills existing messages and task titles/descriptions.
  */
 export function runMigration134(db: BunDatabase): void {
-	const created = !tableExists(db, 'message_search_fts');
+	const existed = tableExists(db, 'message_search_fts');
 	createMessageSearchFtsTable(db);
-	if (created) {
+	if (!existed || isMessageSearchFtsEmpty(db)) {
 		backfillMessageSearchFts(db);
 	}
+}
+
+function isMessageSearchFtsEmpty(db: BunDatabase): boolean {
+	const row = db.prepare(`SELECT 1 AS present FROM message_search_fts LIMIT 1`).get() as
+		| { present: number }
+		| undefined;
+	return !row;
 }
 
 function createMessageSearchFtsTable(db: BunDatabase): void {
