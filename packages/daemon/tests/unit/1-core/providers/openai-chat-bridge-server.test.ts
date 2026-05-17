@@ -813,6 +813,66 @@ describe('OpenAI Chat Completions bridge server', () => {
 		});
 	});
 
+	describe('stream_options gating', () => {
+		// Many strict OpenAI-compatible backends reject unknown request fields
+		// with HTTP 400/422 before any generation. `stream_options.include_usage`
+		// is non-essential (the bridge falls back to a token estimator), so it
+		// must be opt-in to avoid breaking otherwise-functional endpoints.
+		it('omits stream_options by default', async () => {
+			let captured: Record<string, unknown> = {};
+			const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+				captured = JSON.parse(String(init?.body));
+				return new Response(
+					sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+					{ status: 200 }
+				);
+			});
+			const server = createOpenAIChatBridgeServer({
+				baseUrl: 'http://upstream.test/v1',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'm',
+					messages: [{ role: 'user', content: 'hi' }],
+					stream: true,
+				}),
+			});
+			expect(captured.stream_options).toBeUndefined();
+			expect(captured.stream).toBe(true);
+		});
+
+		it('sends stream_options.include_usage when streamUsageSupported=true', async () => {
+			let captured: Record<string, unknown> = {};
+			const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+				captured = JSON.parse(String(init?.body));
+				return new Response(
+					sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+					{ status: 200 }
+				);
+			});
+			const server = createOpenAIChatBridgeServer({
+				baseUrl: 'http://upstream.test/v1',
+				fetchImpl: fetchMock as typeof fetch,
+				streamUsageSupported: true,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'm',
+					messages: [{ role: 'user', content: 'hi' }],
+					stream: true,
+				}),
+			});
+			expect(captured.stream_options).toEqual({ include_usage: true });
+		});
+	});
+
 	describe('fail-fast on non-SSE 200', () => {
 		it('emits an error envelope when upstream 200 contains no SSE data chunks', async () => {
 			// A misconfigured proxy or non-streaming endpoint might return 200

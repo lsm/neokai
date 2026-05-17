@@ -128,20 +128,34 @@ export function createAnthropicMessagesBridgeServer(
 			}
 
 			const target = isMessages ? messagesUrl : countTokensUrl;
+			// Forward every `anthropic-*` request header the SDK sent so that
+			// request-scoped behaviours (e.g. `anthropic-beta` enabling betas
+			// declared via the query options builder, `anthropic-dangerous-*`,
+			// future header-gated features) reach the upstream. Without this,
+			// requests are not semantically equivalent after crossing the
+			// bridge and beta-gated SDK features silently regress.
+			const forwardedAnthropicHeaders: Record<string, string> = {};
+			for (const [name, value] of req.headers.entries()) {
+				if (name.toLowerCase().startsWith('anthropic-')) {
+					forwardedAnthropicHeaders[name] = value;
+				}
+			}
 			const headers: Record<string, string> = {
 				'Content-Type': 'application/json',
-				// Most Anthropic-compatible proxies require an api-version header;
-				// forward the SDK's choice when present, else default to a recent stable.
-				'anthropic-version': req.headers.get('anthropic-version') ?? '2023-06-01',
+				// Default anthropic-version when the SDK didn't send one. The
+				// per-header copy above wins when present.
+				'anthropic-version': '2023-06-01',
+				...forwardedAnthropicHeaders,
 				...(config.apiKey
 					? {
 							'x-api-key': config.apiKey,
 							Authorization: `Bearer ${config.apiKey}`,
 						}
 					: {}),
-				// User-supplied headers win over auth so an integrator can override
-				// the auth header name (e.g. `x-custom-auth`) when the upstream
-				// uses something non-standard.
+				// User-supplied headers win over both auth and forwarded
+				// `anthropic-*` headers so an integrator can override the auth
+				// header name (e.g. `x-custom-auth`) or pin a specific
+				// `anthropic-version` regardless of what the SDK sent.
 				...config.headers,
 			};
 

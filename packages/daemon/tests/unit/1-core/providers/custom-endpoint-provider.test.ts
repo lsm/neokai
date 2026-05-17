@@ -171,6 +171,32 @@ describe('CustomEndpointProvider', () => {
 		expect(fake.configs[0]).toMatchObject({ thinkingSupported: true });
 	});
 
+	it('defaults streamUsageSupported to false (strict OpenAI-compatible backends)', () => {
+		const fake = makeFakeBridge();
+		const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
+		p.buildSdkConfig('qwen2.5-7b');
+		expect(fake.configs[0].streamUsageSupported).toBe(false);
+	});
+
+	it('forwards streamUsageSupported=true when the model opts in', () => {
+		const fake = makeFakeBridge();
+		const p = new CustomEndpointProvider(
+			{
+				...baseConfig,
+				models: [
+					{
+						id: 'openai-compatible',
+						capabilities: { toolUse: true, streamUsage: true },
+					},
+				],
+				defaultModelId: 'openai-compatible',
+			},
+			{ bridgeFactory: fake.factory }
+		);
+		p.buildSdkConfig('openai-compatible');
+		expect(fake.configs[0].streamUsageSupported).toBe(true);
+	});
+
 	it('reuses the bridge for the same (baseUrl, apiKey, model) tuple', () => {
 		const fake = makeFakeBridge();
 		const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
@@ -219,6 +245,7 @@ describe('CustomEndpointProvider', () => {
 			thinking: false,
 			caching: false,
 			maxContextTokens: 128000,
+			streamUsage: false,
 		});
 	});
 

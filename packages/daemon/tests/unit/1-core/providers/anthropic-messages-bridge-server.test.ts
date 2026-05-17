@@ -124,6 +124,61 @@ describe('AnthropicMessagesBridge', () => {
 			});
 			expect(capturedHeaders['anthropic-version']).toBe('2024-10-01');
 		});
+
+		it('forwards every anthropic-* request header (anthropic-beta, etc.)', async () => {
+			let capturedHeaders: Record<string, string> = {};
+			const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+				capturedHeaders = Object.fromEntries(new Headers(init?.headers).entries());
+				return new Response('data: {}\n\n', {
+					status: 200,
+					headers: { 'Content-Type': 'text/event-stream' },
+				});
+			});
+			const server = createAnthropicMessagesBridgeServer({
+				baseUrl: 'https://api.example.com',
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'anthropic-version': '2024-10-01',
+					// Multi-value beta header — the SDK passes betas joined by `,`.
+					'anthropic-beta': 'prompt-caching-2024-07-31,extended-cache-ttl-2025-04-11',
+					'anthropic-dangerous-direct-browser-access': 'true',
+				},
+				body: JSON.stringify({ model: 'claude', messages: [], stream: true }),
+			});
+			expect(capturedHeaders['anthropic-version']).toBe('2024-10-01');
+			expect(capturedHeaders['anthropic-beta']).toBe(
+				'prompt-caching-2024-07-31,extended-cache-ttl-2025-04-11'
+			);
+			expect(capturedHeaders['anthropic-dangerous-direct-browser-access']).toBe('true');
+		});
+
+		it('lets configured headers override forwarded anthropic-* headers', async () => {
+			let capturedHeaders: Record<string, string> = {};
+			const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+				capturedHeaders = Object.fromEntries(new Headers(init?.headers).entries());
+				return new Response('data: {}\n\n', {
+					status: 200,
+					headers: { 'Content-Type': 'text/event-stream' },
+				});
+			});
+			const server = createAnthropicMessagesBridgeServer({
+				baseUrl: 'https://api.example.com',
+				headers: { 'anthropic-version': 'pinned-by-integrator' },
+				fetchImpl: fetchMock as typeof fetch,
+			});
+			servers.push(server);
+			await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'anthropic-version': '2024-10-01' },
+				body: JSON.stringify({ model: 'claude', messages: [], stream: true }),
+			});
+			expect(capturedHeaders['anthropic-version']).toBe('pinned-by-integrator');
+		});
 	});
 
 	describe('body + response pass-through', () => {

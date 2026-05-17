@@ -267,6 +267,7 @@ export class CustomEndpointProvider implements Provider {
 			params.caps.toolUse,
 			params.caps.vision,
 			params.caps.thinking,
+			params.caps.streamUsage,
 		].join(' ');
 		const existing = this.bridges.get(key);
 		if (existing) return existing;
@@ -323,6 +324,7 @@ export class CustomEndpointProvider implements Provider {
 					toolUseSupported: caps.toolUse,
 					visionSupported: caps.vision,
 					thinkingSupported: caps.thinking,
+					streamUsageSupported: caps.streamUsage,
 					modelContextWindow: caps.maxContextTokens,
 					...(fetchImpl ? { fetchImpl } : {}),
 				});

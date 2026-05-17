@@ -46,6 +46,15 @@ export interface CustomEndpointModelCapabilities {
 	caching: boolean;
 	/** Maximum input context window in tokens. */
 	maxContextTokens: number;
+	/**
+	 * Whether the upstream Chat Completions endpoint accepts
+	 * `stream_options: { include_usage: true }`. Defaults to `false` because
+	 * many strict OpenAI-compatible backends reject unknown request fields
+	 * outright (HTTP 400/422) and the field is non-essential — without it the
+	 * bridge falls back to a token estimator. Enable explicitly on endpoints
+	 * that are known-good (e.g. real OpenAI, LiteLLM, OpenRouter).
+	 */
+	streamUsage: boolean;
 }
 
 /**
@@ -103,6 +112,8 @@ export const DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES: CustomEndpointModelCapabiliti
 	thinking: false,
 	caching: false,
 	maxContextTokens: 128000,
+	// Off by default — see CustomEndpointModelCapabilities.streamUsage for why.
+	streamUsage: false,
 };
 
 /**
