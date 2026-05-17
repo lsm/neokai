@@ -9113,6 +9113,7 @@ function backfillMessageSearchFts(db: BunDatabase): void {
 					''
 				)),
 				CAST(strftime('%s', sm.timestamp) AS INTEGER) * 1000
+						+ CAST(substr(strftime('%f', sm.timestamp), 4, 3) AS INTEGER)
 			FROM sdk_messages sm
 			${sessionJoin}
 			${taskJoin}
