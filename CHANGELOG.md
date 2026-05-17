@@ -2,6 +2,31 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.26.0] - 2026-05-17
+
+A major release with a full Codex-style /sessions UI redesign, command palette, Space actor communication model, and node-level post-approval routing. 10 commits since v0.25.0.
+
+### Added
+
+- **Codex-style /sessions redesign**: Borderless session sidebar with project grouping, collapsible projects, inline archive action, empty-state landing with "What should we build?" composer, project/worktree/branch selectors, lighter sidebar with dark content contrast, resizable right panel with git info/chat info/review diff
+- **Command palette (Cmd+K)**: Global fuzzy-search command palette with action registry, keyboard shortcuts, and Settings ▸ Shortcuts panel
+- **Space actor communication model**: Designed communication model for Space actors
+- **Node-level post-approval routes**: Per-node post-approval routing in workflow canvas; preserved in built-in templates
+- **Edit task description mid-flight**: User-facing inline task description editing
+- **git.branches RPC**: Git context for folder paths (branches, dirty state, current branch)
+
+### Changed
+
+- **Remove global Neo agent surface**: Centralized agent surface removed
+- **Remove built-in task-agent LLM helper from workflows**: Simplified workflow prompting
+- **Remove inbox surface**: Inbox UI removed
+
+### Fixed
+
+- **Provider model tagging**: Stop tagging foreign SDK model IDs as anthropic
+- **MCP guard**: Deterministic MCP guard for Space member sessions before query start
+- **Tool results**: Show error message for failed Edit/Read/Write tool results in web UI
+
 ## [0.25.0] - 2026-05-16
 
 A release adding 429 auto-recovery, SDK binary warmup, GitHub external event extension, hook card redesign, and fixing node-agent MCP tools in eager-spawn sessions. 5 commits since v0.24.0.
