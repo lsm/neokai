@@ -20,6 +20,7 @@ import { commandPaletteOpenSignal } from '../lib/signals.ts';
 import {
 	commandRegistry,
 	categoryLabel,
+	formatShortcutDisplay,
 	type CommandCategory,
 	type CommandDescriptor,
 	type RankedCommand,
@@ -137,7 +138,7 @@ export function CommandPalette() {
 													</span>
 													{cmd.shortcut && (
 														<kbd class="ml-3 flex-none px-1.5 py-0.5 text-xs font-mono rounded bg-surface-3 group-data-[focus]:bg-accent-600 text-text-muted group-data-[focus]:text-accent-200 border border-surface-border group-data-[focus]:border-accent-400">
-															{cmd.shortcut.display}
+															{formatShortcutDisplay(cmd.shortcut)}
 														</kbd>
 													)}
 												</ComboboxOption>

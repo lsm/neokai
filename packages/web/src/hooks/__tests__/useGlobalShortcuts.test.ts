@@ -87,7 +87,7 @@ describe('useGlobalShortcuts', () => {
 			id: 'test',
 			label: 'Test',
 			category: 'help',
-			shortcut: { display: '⌘.', code: 'Period', mod: true },
+			shortcut: { code: 'Period', mod: true },
 			run: () => {
 				ran += 1;
 			},
@@ -104,7 +104,7 @@ describe('useGlobalShortcuts', () => {
 			id: 'test',
 			label: 'Test',
 			category: 'help',
-			shortcut: { display: '⌘.', code: 'Period', mod: true },
+			shortcut: { code: 'Period', mod: true },
 			run: () => {
 				ran += 1;
 			},
@@ -132,7 +132,7 @@ describe('useGlobalShortcuts', () => {
 			id: 'test',
 			label: 'Test',
 			category: 'help',
-			shortcut: { display: '⌘.', code: 'Period', mod: true },
+			shortcut: { code: 'Period', mod: true },
 			run: () => {
 				ran += 1;
 			},
@@ -154,7 +154,7 @@ describe('useGlobalShortcuts', () => {
 			id: 'test',
 			label: 'Test',
 			category: 'help',
-			shortcut: { display: '⌘.', code: 'Period', mod: true },
+			shortcut: { code: 'Period', mod: true },
 			run: () => {
 				ran += 1;
 			},

@@ -21,10 +21,9 @@ describe('default commands', () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 
-	it('every shortcut has a display string and a code', () => {
+	it('every shortcut has a code', () => {
 		for (const cmd of DEFAULT_COMMANDS) {
 			if (!cmd.shortcut) continue;
-			expect(cmd.shortcut.display.length).toBeGreaterThan(0);
 			expect(cmd.shortcut.code.length).toBeGreaterThan(0);
 		}
 	});

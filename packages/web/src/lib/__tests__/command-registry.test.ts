@@ -4,6 +4,7 @@ import {
 	commandRegistry,
 	fuzzyScore,
 	categoryLabel,
+	formatShortcutDisplay,
 	type CommandDescriptor,
 } from '../command-registry.ts';
 
@@ -111,7 +112,7 @@ describe('CommandRegistry', () => {
 	it('findByShortcut matches mod+key combos via metaKey (mac)', () => {
 		const original = navigator.platform;
 		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
-		const c = cmd('a', { shortcut: { display: '⌘K', code: 'KeyK', mod: true } });
+		const c = cmd('a', { shortcut: { code: 'KeyK', mod: true } });
 		reg.register(c);
 		const event = {
 			metaKey: true,
@@ -127,7 +128,7 @@ describe('CommandRegistry', () => {
 	it('findByShortcut matches mod+key combos via ctrlKey (non-mac)', () => {
 		const original = navigator.platform;
 		Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
-		const c = cmd('a', { shortcut: { display: 'Ctrl+K', code: 'KeyK', mod: true } });
+		const c = cmd('a', { shortcut: { code: 'KeyK', mod: true } });
 		reg.register(c);
 		const event = {
 			metaKey: false,
@@ -143,7 +144,7 @@ describe('CommandRegistry', () => {
 	it('findByShortcut rejects opposite modifier on mac', () => {
 		const original = navigator.platform;
 		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
-		reg.register(cmd('a', { shortcut: { display: '⌘K', code: 'KeyK', mod: true } }));
+		reg.register(cmd('a', { shortcut: { code: 'KeyK', mod: true } }));
 		const event = {
 			metaKey: false,
 			ctrlKey: true,
@@ -158,7 +159,7 @@ describe('CommandRegistry', () => {
 	it('findByShortcut rejects opposite modifier on non-mac', () => {
 		const original = navigator.platform;
 		Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
-		reg.register(cmd('a', { shortcut: { display: 'Ctrl+K', code: 'KeyK', mod: true } }));
+		reg.register(cmd('a', { shortcut: { code: 'KeyK', mod: true } }));
 		const event = {
 			metaKey: true,
 			ctrlKey: false,
@@ -173,7 +174,7 @@ describe('CommandRegistry', () => {
 	it('findByShortcut rejects altKey for commands without alt', () => {
 		const original = navigator.platform;
 		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
-		reg.register(cmd('a', { shortcut: { display: '⌘K', code: 'KeyK', mod: true } }));
+		reg.register(cmd('a', { shortcut: { code: 'KeyK', mod: true } }));
 		const event = {
 			metaKey: true,
 			ctrlKey: false,
@@ -190,11 +191,11 @@ describe('CommandRegistry', () => {
 		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
 		const first = cmd('a', {
 			label: 'First',
-			shortcut: { display: '⌘.', code: 'Period', mod: true },
+			shortcut: { code: 'Period', mod: true },
 		});
 		const second = cmd('b', {
 			label: 'Second',
-			shortcut: { display: '⌘.', code: 'Period', mod: true },
+			shortcut: { code: 'Period', mod: true },
 		});
 		reg.register(first);
 		reg.register(second);
@@ -211,7 +212,7 @@ describe('CommandRegistry', () => {
 	});
 
 	it('findByShortcut ignores wrong modifier', () => {
-		reg.register(cmd('a', { shortcut: { display: '⌘K', code: 'KeyK', mod: true } }));
+		reg.register(cmd('a', { shortcut: { code: 'KeyK', mod: true } }));
 		const event = {
 			metaKey: false,
 			ctrlKey: false,
@@ -224,7 +225,7 @@ describe('CommandRegistry', () => {
 	it('findByShortcut enforces shift requirement', () => {
 		const original = navigator.platform;
 		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
-		reg.register(cmd('a', { shortcut: { display: '⌘⇧N', code: 'KeyN', mod: true, shift: true } }));
+		reg.register(cmd('a', { shortcut: { code: 'KeyN', mod: true, shift: true } }));
 		const without = {
 			metaKey: true,
 			ctrlKey: false,
@@ -250,6 +251,26 @@ describe('categoryLabel', () => {
 		expect(categoryLabel('session')).toBe('Sessions');
 		expect(categoryLabel('navigation')).toBe('Navigation');
 		expect(categoryLabel('settings')).toBe('Settings');
+	});
+});
+
+describe('formatShortcutDisplay', () => {
+	it('formats mac shortcuts with ⌘ glyph', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
+		expect(formatShortcutDisplay({ code: 'KeyK', mod: true })).toBe('⌘K');
+		expect(formatShortcutDisplay({ code: 'KeyN', mod: true, shift: true })).toBe('⌘⇧N');
+		expect(formatShortcutDisplay({ code: 'Comma', mod: true })).toBe('⌘,');
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
+	});
+
+	it('formats non-mac shortcuts with Ctrl/Shift labels', () => {
+		const original = navigator.platform;
+		Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
+		expect(formatShortcutDisplay({ code: 'KeyK', mod: true })).toBe('Ctrl+K');
+		expect(formatShortcutDisplay({ code: 'KeyN', mod: true, shift: true })).toBe('Ctrl+Shift+N');
+		expect(formatShortcutDisplay({ code: 'Comma', mod: true })).toBe('Ctrl+,');
+		Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
 	});
 });
 

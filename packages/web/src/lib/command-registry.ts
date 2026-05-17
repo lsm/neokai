@@ -12,8 +12,6 @@
 export type CommandCategory = 'session' | 'navigation' | 'space' | 'settings' | 'tools' | 'help';
 
 export interface CommandShortcut {
-	/** Display string like "⌘K" or "Ctrl+/" */
-	display: string;
 	/**
 	 * Physical key code (e.g. "KeyK", "Period", "Comma").
 	 * Uses KeyboardEvent.code so shortcuts stay consistent across
@@ -52,6 +50,30 @@ const CATEGORY_LABEL: Record<CommandCategory, string> = {
 
 export function categoryLabel(category: CommandCategory): string {
 	return CATEGORY_LABEL[category];
+}
+
+function isMacPlatform(): boolean {
+	return (
+		/Mac|iPhone|iPad|iPod/i.test(navigator.platform ?? '') ||
+		/Mac|iPhone|iPad|iPod/i.test(navigator.userAgent ?? '')
+	);
+}
+
+function codeToLabel(code: string): string {
+	// Strip the "Key" prefix for letter keys (KeyK → K).
+	if (code.startsWith('Key')) return code.slice(3);
+	// Keep common codes readable.
+	if (code === 'Period') return '.';
+	if (code === 'Comma') return ',';
+	if (code === 'Slash') return '/';
+	return code;
+}
+
+/** Generate a platform-aware display string for a shortcut. */
+export function formatShortcutDisplay(sc: CommandShortcut): string {
+	const mod = isMacPlatform() ? '⌘' : 'Ctrl+';
+	const shift = sc.shift ? (isMacPlatform() ? '⇧' : 'Shift+') : '';
+	return `${mod}${shift}${codeToLabel(sc.code)}`;
 }
 
 /**
@@ -118,7 +140,7 @@ export class CommandRegistry {
 				if (e.code === sc.code && !!e.mod === !!sc.mod && !!e.shift === !!sc.shift) {
 					// eslint-disable-next-line no-console
 					console.warn(
-						`[command-registry] shortcut collision: "${cmd.id}" shares ${sc.display} with "${existing.id}"; first registered wins.`
+						`[command-registry] shortcut collision: "${cmd.id}" shares ${formatShortcutDisplay(sc)} with "${existing.id}"; first registered wins.`
 					);
 					break;
 				}

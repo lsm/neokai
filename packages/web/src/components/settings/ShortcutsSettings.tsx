@@ -2,6 +2,7 @@ import { SettingsSection } from './SettingsSection.tsx';
 import {
 	commandRegistry,
 	categoryLabel,
+	formatShortcutDisplay,
 	type CommandDescriptor,
 } from '../../lib/command-registry.ts';
 
@@ -55,7 +56,7 @@ export function ShortcutsSettings() {
 										</div>
 										{cmd.shortcut && (
 											<kbd class="ml-3 flex-none px-1.5 py-0.5 text-xs font-mono rounded bg-dark-700 border border-dark-600 text-gray-300">
-												{cmd.shortcut.display}
+												{formatShortcutDisplay(cmd.shortcut)}
 											</kbd>
 										)}
 									</li>
