@@ -1746,6 +1746,31 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(after.handle).toBe('my-custom-handle');
 	});
 
+	test('re-stamp preserves existing postApproval when a node was renamed', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
+		expect(reviewNode.postApproval).toBeDefined();
+
+		manager.updateWorkflow(coding.id, {
+			nodes: coding.nodes.map((node) =>
+				node.id === reviewNode.id ? { ...node, name: 'Human Review' } : node
+			),
+		});
+		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+			'stale-hash',
+			coding.id
+		);
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+		const after = manager.getWorkflow(coding.id)!;
+		const afterReviewNode = after.nodes.find((n) => n.id === reviewNode.id)!;
+		expect(afterReviewNode.name).toBe('Human Review');
+		expect(afterReviewNode.postApproval).toEqual(reviewNode.postApproval);
+	});
+
 	test('re-stamp succeeds and leaves handle field untouched (no handle write during restamp)', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;

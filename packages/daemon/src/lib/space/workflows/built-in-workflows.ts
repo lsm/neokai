@@ -1482,7 +1482,8 @@ export interface SeedBuiltInWorkflowsResult {
  * on the node and `toolGuards` on each agent slot — all other fields (customPrompt,
  * model, disabledSkillIds, etc.) are preserved from the existing row.
  *
- * Matching is by node name + agent name, which are stable identifiers.
+ * Template matching is by node name + agent name. If a user renamed a node,
+ * preserve its existing node-level route instead of clearing it.
  */
 function mergeNodeStructuralFieldsFromTemplate(
 	existingNodes: WorkflowNode[],
@@ -1496,17 +1497,20 @@ function mergeNodeStructuralFieldsFromTemplate(
 		}
 	}
 
-	return existingNodes.map((node) => ({
-		...node,
-		postApproval: templateNodesByName.get(node.name)?.postApproval,
-		agents: node.agents.map((agent) => {
-			const key = `${node.name}::${agent.name}`;
-			const templateGuards = templateAgentsByKey.get(key);
-			if (templateGuards === undefined) return agent;
-			// Merge: overwrite toolGuards from template, keep everything else
-			return { ...agent, toolGuards: templateGuards };
-		}),
-	}));
+	return existingNodes.map((node) => {
+		const templateNode = templateNodesByName.get(node.name);
+		return {
+			...node,
+			postApproval: templateNode ? templateNode.postApproval : node.postApproval,
+			agents: node.agents.map((agent) => {
+				const key = `${node.name}::${agent.name}`;
+				const templateGuards = templateAgentsByKey.get(key);
+				if (templateGuards === undefined) return agent;
+				// Merge: overwrite toolGuards from template, keep everything else
+				return { ...agent, toolGuards: templateGuards };
+			}),
+		};
+	});
 }
 
 /**
@@ -1519,8 +1523,8 @@ function mergeNodeStructuralFieldsFromTemplate(
  *   restart / startup seed passes cannot replace user-configured runtime prompts.
  * - Agent `toolGuards` are merged onto matching agent slots (by node name +
  *   agent name) so structural enforcement metadata stays in sync with the
- *   template. Other node fields (customPrompt, model, disabledSkillIds, etc.)
- *   are preserved.
+ *   template when node + agent names still match. Other node fields
+ *   (customPrompt, model, disabledSkillIds, etc.) are preserved.
  * - Channels, gates, layout, and node rows are NOT re-stamped. Workflow IDs,
  *   node IDs, and persisted node-agent slots are stable identifiers for
  *   in-flight runs, so template drift must never replace node rows. Agent
