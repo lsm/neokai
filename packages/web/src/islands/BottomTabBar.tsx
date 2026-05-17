@@ -11,7 +11,6 @@ import {
 import {
 	navigateToSessions,
 	navigateToSettings,
-	navigateToInbox,
 	navigateToSpaces,
 	navigateToSpace,
 	navigateToSpaceTasks,
@@ -19,8 +18,6 @@ import {
 	navigateToSpaceAgent,
 	navigateToSpaceConfigure,
 } from '../lib/router.ts';
-import { inboxStore } from '../lib/inbox-store.ts';
-import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
 	id:
@@ -33,17 +30,6 @@ interface TabItem {
 	label: string;
 	icon: () => JSX.Element;
 }
-
-const InboxIcon = () => (
-	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-		<path
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			stroke-width={2}
-			d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-		/>
-	</svg>
-);
 
 const SpacesIcon = () => (
 	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -155,7 +141,6 @@ const SPACE_BOTTOM_TABS: TabItem[] = [
 
 const GLOBAL_BOTTOM_TABS: TabItem[] = [
 	{ id: 'spaces', label: 'Spaces', icon: SpacesIcon },
-	{ id: 'inbox', label: 'Inbox', icon: InboxIcon },
 	{ id: 'chats', label: 'Chats', icon: ChatsIcon },
 	{ id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
@@ -186,7 +171,6 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 
 	const navSection = navSectionSignal.value;
 	const spaceId = currentSpaceIdSignal.value;
-	const inboxBadgeCount = inboxStore.reviewCount.value;
 
 	const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
 
@@ -198,9 +182,6 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 
 	const handleTabClick = (id: TabItem['id']) => {
 		switch (id) {
-			case 'inbox':
-				navigateToInbox();
-				break;
 			case 'spaces':
 				navigateToSpaces();
 				break;
@@ -262,8 +243,6 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 			>
 				{tabs.map((tab) => {
 					const isActive = isTabActive(tab.id);
-					const isInbox = tab.id === 'inbox';
-					const badge = isInbox ? inboxBadgeCount : 0;
 
 					return (
 						<button
@@ -277,10 +256,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 								isActive ? 'text-indigo-400' : 'text-gray-500 active:text-gray-300'
 							}`}
 						>
-							<div class="relative">
-								<tab.icon />
-								<InboxBadge count={badge} class="absolute -top-0.5 -right-0.5" />
-							</div>
+							<tab.icon />
 							<span class="text-[10px] font-medium leading-none">{tab.label}</span>
 						</button>
 					);

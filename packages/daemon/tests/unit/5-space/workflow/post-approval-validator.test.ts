@@ -11,6 +11,7 @@ import {
 	POST_APPROVAL_TASK_AGENT_TARGET,
 	collectEligiblePostApprovalTargets,
 	validatePostApproval,
+	validatePostApprovalRoutes,
 } from '../../../../src/lib/space/workflows/post-approval-validator.ts';
 
 const node = (
@@ -99,5 +100,42 @@ describe('validatePostApproval', () => {
 		const route: PostApprovalRoute = { targetAgent: '  coder  ', instructions: '' };
 		const result = validatePostApproval({ postApproval: route, nodes: CODING_NODES });
 		expect(result).toEqual({ ok: true });
+	});
+});
+
+describe('validatePostApprovalRoutes', () => {
+	test('validates node-level routes', () => {
+		const result = validatePostApprovalRoutes({
+			nodes: [
+				{
+					...CODING_NODES[0],
+					postApproval: {
+						targetAgent: 'reviewer',
+						instructions: 'Merge {{pr_url}}',
+					},
+				},
+				CODING_NODES[1],
+			],
+		});
+		expect(result).toEqual({ ok: true });
+	});
+
+	test('reports the node name when a node-level route target is stale', () => {
+		const result = validatePostApprovalRoutes({
+			nodes: [
+				{
+					...CODING_NODES[0],
+					postApproval: {
+						targetAgent: 'ghost-agent',
+						instructions: '',
+					},
+				},
+				CODING_NODES[1],
+			],
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain('node "Coding"');
+		expect(result.error).toContain('"ghost-agent"');
 	});
 });

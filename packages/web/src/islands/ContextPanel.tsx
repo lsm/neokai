@@ -8,17 +8,10 @@ import {
 	currentSpaceTasksFilterTabSignal,
 	currentSpaceViewModeSignal,
 	settingsSectionSignal,
-	type NavSection,
 	type SettingsSection,
 } from '../lib/signals.ts';
-import { authStatus, connectionState } from '../lib/state.ts';
-import { createSession } from '../lib/api-helpers.ts';
-import { toast } from '../lib/toast.ts';
 import {
-	navigateToSession,
-	navigateToSessions,
 	navigateToSettings,
-	navigateToInbox,
 	navigateToSpaces,
 	navigateToSpace,
 	navigateToSpaceAgent,
@@ -28,29 +21,33 @@ import {
 } from '../lib/router.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
-import { Button } from '../components/ui/Button.tsx';
-import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
-import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
-import { SessionList } from './SessionList.tsx';
+import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
+import { SessionsSidebar } from './SessionsSidebar.tsx';
 import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
 import { spaceStore } from '../lib/space-store.ts';
-import { ConnectionNotReadyError } from '../lib/errors.ts';
 
 // Settings section configuration
 const SETTINGS_SECTIONS: Array<{
 	id: SettingsSection;
 	label: string;
 	icon: string;
+	accent: string;
 }> = [
-	{ id: 'general', label: 'General', icon: 'settings' },
-	{ id: 'providers', label: 'Providers', icon: 'cloud' },
-	{ id: 'app-mcp-servers', label: 'MCP Servers', icon: 'server' },
-	{ id: 'skills', label: 'Skills', icon: 'skills' },
-	{ id: 'models', label: 'Models', icon: 'swap' },
-	{ id: 'usage', label: 'Usage', icon: 'chart' },
-	{ id: 'about', label: 'About', icon: 'info' },
+	{ id: 'general', label: 'General', icon: 'settings', accent: 'text-blue-300 bg-blue-500/15' },
+	{ id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-sky-300 bg-sky-500/15' },
+	{
+		id: 'app-mcp-servers',
+		label: 'MCP Servers',
+		icon: 'server',
+		accent: 'text-violet-300 bg-violet-500/15',
+	},
+	{ id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-emerald-300 bg-emerald-500/15' },
+	{ id: 'models', label: 'Models', icon: 'swap', accent: 'text-cyan-300 bg-cyan-500/15' },
+	{ id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-amber-300 bg-amber-500/15' },
+	{ id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-pink-300 bg-pink-500/15' },
+	{ id: 'about', label: 'About', icon: 'info', accent: 'text-gray-300 bg-white/10' },
 ];
 
 // Helper component for section icons
@@ -139,13 +136,23 @@ function SectionIcon({ type }: { type: string }) {
 					/>
 				</svg>
 			);
+		case 'keyboard':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M3 8a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8zm4 2h.01M11 10h.01M15 10h.01M7 14h10"
+					/>
+				</svg>
+			);
 		default:
 			return null;
 	}
 }
 
 export function ContextPanel() {
-	const [creatingSession, setCreatingSession] = useState(false);
 	const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
 
 	const navSection = navSectionSignal.value;
@@ -167,107 +174,12 @@ export function ContextPanel() {
 	const currentSpaceViewMode = currentSpaceViewModeSignal.value;
 	const currentSpaceSessionId = currentSpaceSessionIdSignal.value;
 
-	// Inbox takes full content width — no sidebar needed
-	if (navSection === 'inbox') return null;
-
 	// When a specific space is selected in the spaces section, show space-specific panel
 	const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
-
-	// Section config
-	const sectionConfig = {
-		chats: {
-			title: 'Sessions',
-			emptyIcon: '💬',
-			emptyTitle: 'No sessions yet',
-			emptyDesc: 'Start a new session to begin',
-			actionLabel: 'New Session',
-		},
-		spaces: {
-			title: 'Spaces',
-			emptyTitle: 'No spaces yet',
-			emptyDesc: 'Create a space to orchestrate agents',
-			actionLabel: 'Create Space',
-		},
-		inbox: {
-			title: 'Inbox',
-			emptyIcon: '📥',
-			emptyTitle: 'No items',
-			emptyDesc: 'Tasks awaiting review will appear here',
-			actionLabel: 'Inbox',
-		},
-		settings: {
-			title: 'Settings',
-			emptyIcon: '⚙️',
-			emptyTitle: 'Settings',
-			emptyDesc: 'Configure your preferences',
-			actionLabel: 'Open Settings',
-		},
-	};
-
-	const config = sectionConfig[navSection];
-	const headerTitle = isSpaceDetail ? (spaceStore.space.value?.name ?? 'Space') : config.title;
-
-	const handleCreateSession = async () => {
-		if (connectionState.value !== 'connected') {
-			toast.error('Not connected to server. Please wait...');
-			return;
-		}
-
-		setCreatingSession(true);
-
-		try {
-			const response = await createSession({
-				workspacePath: undefined,
-			});
-
-			if (!response?.sessionId) {
-				toast.error('No sessionId in response');
-				return;
-			}
-
-			navigateToSession(response.sessionId);
-			toast.success('Session created successfully');
-		} catch (_err) {
-			if (_err instanceof ConnectionNotReadyError) {
-				toast.error('Connection lost. Please try again.');
-			} else {
-				const message = _err instanceof Error ? _err.message : 'Failed to create session';
-				toast.error(message);
-			}
-		} finally {
-			setCreatingSession(false);
-		}
-	};
-
-	const handleAction = () => {
-		switch (navSection) {
-			case 'chats':
-				handleCreateSession();
-				break;
-			default:
-				break;
-		}
-	};
+	const headerTitle = spaceStore.space.value?.name ?? 'Space';
 
 	const handlePanelClose = () => {
 		contextPanelOpenSignal.value = false;
-	};
-
-	const handleMobileNavClick = (section: NavSection) => {
-		switch (section) {
-			case 'chats':
-				navigateToSessions();
-				break;
-			case 'inbox':
-				navigateToInbox();
-				break;
-			case 'spaces':
-				navigateToSpaces();
-				break;
-			case 'settings':
-				navigateToSettings();
-				break;
-		}
 	};
 
 	const handleSpaceSwitch = (spaceId: string) => {
@@ -298,26 +210,17 @@ export function ContextPanel() {
 		contextPanelOpenSignal.value = false;
 	};
 
-	const isActionDisabled =
-		connectionState.value !== 'connected' ||
-		!authStatus.value?.isAuthenticated ||
-		navSection === 'settings';
-
-	const isActionLoading = creatingSession;
-
-	// On the spaces list view (no space selected), hide the panel completely so
-	// SpacesPage fills the viewport. BottomTabBar owns mobile global navigation.
-	if (navSection === 'spaces' && !isSpaceDetail) {
+	const handleSettingsNav = (section?: SettingsSection) => {
+		navigateToSettings(section);
 		contextPanelOpenSignal.value = false;
-		return null;
-	}
+	};
 
 	const activeSpaces = spaceStore.spacesWithTasks.value.filter(
 		(space) => space.status === 'active'
 	);
 
 	const spaceSwitcherContent = (
-		<div class="flex-1 overflow-y-auto py-2 md:hidden" data-testid="mobile-space-switcher">
+		<div class="flex-1 overflow-y-auto py-2" data-testid="space-switcher">
 			{activeSpaces.length === 0 ? (
 				<div class="px-4 py-8 text-center">
 					<svg
@@ -334,7 +237,9 @@ export function ContextPanel() {
 						/>
 					</svg>
 					<p class="text-sm font-medium text-gray-300">No spaces yet</p>
-					<p class="text-xs text-gray-500 mt-1">Create a space from the Spaces tab.</p>
+					<p class="text-xs text-gray-500 mt-1">
+						Create a Space to organize agents, missions, and project context.
+					</p>
 				</div>
 			) : (
 				<nav class="px-2 space-y-1" aria-label="Switch spaces">
@@ -349,8 +254,8 @@ export function ContextPanel() {
 								class={cn(
 									'w-full rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors',
 									isCurrent
-										? 'bg-blue-950/40 border border-blue-800/50 text-gray-100'
-										: 'border border-transparent text-gray-400 hover:bg-dark-850 hover:text-gray-100'
+										? 'bg-white/10 border border-transparent text-gray-100'
+										: 'border border-transparent text-gray-400 hover:bg-white/5 hover:text-gray-100'
 								)}
 							>
 								<svg
@@ -374,7 +279,7 @@ export function ContextPanel() {
 								</div>
 								{isCurrent && (
 									<svg
-										class="w-4 h-4 text-blue-400 flex-shrink-0"
+										class="w-4 h-4 text-gray-300 flex-shrink-0"
 										fill="none"
 										viewBox="0 0 24 24"
 										stroke="currentColor"
@@ -396,7 +301,7 @@ export function ContextPanel() {
 				<button
 					type="button"
 					onClick={handleCreateSpace}
-					class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 hover:bg-dark-850 text-sm text-gray-400 hover:text-gray-100 transition-colors"
+					class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 hover:bg-white/5 text-sm text-gray-400 hover:text-gray-100 transition-colors"
 				>
 					<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -427,7 +332,7 @@ export function ContextPanel() {
 					fixed md:relative
 					top-0 left-0 md:left-auto
 					h-safe-screen md:h-full w-70
-					bg-dark-950 border-r ${borderColors.ui.default}
+					bg-app-sidebar
 					flex flex-col
 					pt-safe md:pt-0
 					z-40 md:z-auto
@@ -436,139 +341,81 @@ export function ContextPanel() {
 					overflow-hidden
 				`}
 			>
-				{/* Mobile nav strip - replaces NavRail on mobile. */}
-				<div
-					class={`flex items-center gap-1 px-2 py-2 border-b ${borderColors.ui.default} md:hidden`}
-				>
-					{MAIN_NAV_ITEMS.map((item) => (
-						<NavIconButton
-							key={item.id}
-							active={navSection === item.id}
-							onClick={() => handleMobileNavClick(item.id)}
-							label={item.label}
-						>
-							{item.icon}
-						</NavIconButton>
-					))}
-					<div class="ml-auto flex items-center gap-1">
-						<DaemonStatusIndicator />
-						<NavIconButton
-							active={navSection === SETTINGS_NAV_ITEM.id}
-							onClick={() => handleMobileNavClick(SETTINGS_NAV_ITEM.id)}
-							label={SETTINGS_NAV_ITEM.label}
-						>
-							{SETTINGS_NAV_ITEM.icon}
-						</NavIconButton>
-					</div>
+				<div class="desktop-titlebar-row" data-tauri-drag-region>
+					<div class="desktop-traffic-light-space" aria-hidden="true" data-tauri-drag-region />
+					<SectionSwitcher onClose={handlePanelClose} variant="titlebar" />
+				</div>
+				<div class="desktop-standard-switcher">
+					<SectionSwitcher onClose={handlePanelClose} />
 				</div>
 
-				{/* Header */}
-				<div class={`px-4 h-[65px] flex items-center border-b ${borderColors.ui.default}`}>
-					<div class={cn('flex-1 flex items-center justify-between', !isSpaceDetail && 'mb-3')}>
-						{isSpaceDetail ? (
-							<>
-								<h2 class="md:hidden min-w-0 flex-1 text-lg font-semibold text-gray-100 truncate">
-									Switch Space
-								</h2>
-								<div class="hidden md:flex items-center gap-1 min-w-0 flex-1 overflow-hidden pointer-events-none">
-									<button
-										onClick={() => navigateToSpaces()}
-										class="p-1 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
-										title="Back to Spaces"
-									>
-										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M15 19l-7-7 7-7"
-											/>
-										</svg>
-									</button>
-									<h2 class="min-w-0 flex-1 text-lg font-semibold text-gray-100 truncate pointer-events-none">
-										{headerTitle}
-									</h2>
-									<button
-										onClick={() => navigateToSpaceConfigure(currentSpaceId!)}
-										class={cn(
-											'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0 pointer-events-auto',
-											currentSpaceViewMode === 'configure'
-												? 'bg-dark-800 text-gray-100'
-												: 'text-gray-400 hover:bg-dark-800 hover:text-gray-100'
-										)}
-										title="Configure space"
-										aria-label="Configure space"
-									>
-										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-											/>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-											/>
-										</svg>
-									</button>
-								</div>
-							</>
-						) : (
-							<h2 class="text-lg font-semibold text-gray-100 truncate mr-2">{headerTitle}</h2>
-						)}
-						{/* Close button for mobile */}
+				{/* Space-detail header — back / name / configure (desktop) */}
+				{isSpaceDetail && (
+					<div
+						class={`hidden md:flex px-4 h-[52px] items-center gap-1 border-b ${borderColors.ui.default}`}
+					>
 						<button
-							onClick={handlePanelClose}
-							class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
-							title="Close panel"
+							type="button"
+							onClick={() => navigateToSpaces()}
+							class="p-1 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+							title="Back to Spaces"
 						>
-							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
 									stroke-linecap="round"
 									stroke-linejoin="round"
 									stroke-width={2}
-									d="M6 18L18 6M6 6l12 12"
+									d="M15 19l-7-7 7-7"
+								/>
+							</svg>
+						</button>
+						<h2 class="min-w-0 flex-1 text-sm font-semibold text-gray-100 truncate">
+							{headerTitle}
+						</h2>
+						<button
+							type="button"
+							onClick={() => navigateToSpaceConfigure(currentSpaceId!)}
+							class={cn(
+								'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0',
+								currentSpaceViewMode === 'configure'
+									? 'bg-white/10 text-gray-100'
+									: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
+							)}
+							title="Configure space"
+							aria-label="Configure space"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+								/>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
 								/>
 							</svg>
 						</button>
 					</div>
+				)}
 
-					{navSection === 'chats' && (
-						<Button
-							onClick={handleAction}
-							loading={isActionLoading}
-							disabled={isActionDisabled}
-							fullWidth
-							icon={
-								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M12 4v16m8-8H4"
-									/>
-								</svg>
-							}
-						>
-							{config.actionLabel}
-						</Button>
-					)}
-				</div>
-
-				{/* Content — key triggers fade-in (animate-fadeIn) on section change */}
+				{/* Section content — key triggers fade-in on section change */}
 				<div
 					key={navSection + (isSpaceDetail ? '-space-detail' : '')}
 					class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
 				>
 					{navSection === 'chats' && (
-						<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
+						<SessionsSidebar onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
 					)}
+					{navSection === 'spaces' && !isSpaceDetail && spaceSwitcherContent}
 					{navSection === 'spaces' && isSpaceDetail && (
 						<>
-							{spaceSwitcherContent}
+							<div class="md:hidden flex-1 flex flex-col overflow-hidden">
+								{spaceSwitcherContent}
+							</div>
 							<div class="hidden md:flex flex-1 overflow-hidden flex-col">
 								<SpaceDetailPanel
 									spaceId={currentSpaceId!}
@@ -578,48 +425,72 @@ export function ContextPanel() {
 						</>
 					)}
 					{navSection === 'settings' && (
-						<div class="flex-1 flex flex-col overflow-hidden">
-							{/* Settings navigation list */}
-							<div class="flex-1 overflow-y-auto">
-								<nav class="py-2">
-									{SETTINGS_SECTIONS.map((section) => {
-										const isActive = activeSettingsSection === section.id;
-										return (
-											<button
-												key={section.id}
-												onClick={() => navigateToSettings(section.id)}
+						<div class="flex-1 overflow-y-auto scrollbar-dark px-2 py-3">
+							<div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+								Settings
+							</div>
+							<nav class="space-y-1" aria-label="Settings sections">
+								{SETTINGS_SECTIONS.map((section) => {
+									const isActive = activeSettingsSection === section.id;
+									return (
+										<button
+											key={section.id}
+											type="button"
+											onClick={() => handleSettingsNav(section.id)}
+											class={cn(
+												'w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-left transition-colors duration-150',
+												isActive
+													? 'bg-white/10 text-gray-100'
+													: 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+											)}
+										>
+											<span
 												class={cn(
-													'w-full px-4 py-3 flex items-center gap-3 text-left',
-													'transition-colors duration-150',
-													isActive
-														? 'bg-dark-800 text-gray-100'
-														: 'text-gray-400 hover:text-gray-200 hover:bg-dark-800/50'
+													'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md',
+													isActive ? section.accent : 'bg-white/[0.03] text-gray-500'
 												)}
 											>
 												<SectionIcon type={section.icon} />
-												<span class="truncate">{section.label}</span>
-												{isActive && (
-													<svg
-														class="w-4 h-4 ml-auto text-blue-400"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke="currentColor"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															stroke-width={2}
-															d="M9 5l7 7-7 7"
-														/>
-													</svg>
-												)}
-											</button>
-										);
-									})}
-								</nav>
-							</div>
+											</span>
+											<span class="truncate text-sm font-medium">{section.label}</span>
+										</button>
+									);
+								})}
+							</nav>
 						</div>
 					)}
+				</div>
+
+				<div
+					class={`flex h-[53px] flex-shrink-0 items-center gap-2 px-2 border-t ${borderColors.ui.default}`}
+				>
+					<button
+						type="button"
+						onClick={() => handleSettingsNav()}
+						class={cn(
+							'flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors',
+							navSection === 'settings'
+								? 'bg-white/10 text-gray-100'
+								: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
+						)}
+					>
+						<svg class="w-4 h-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+							/>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+							/>
+						</svg>
+						<span>Settings</span>
+					</button>
+					<DaemonStatusIndicator showLabel={isSpaceDetail} />
 				</div>
 			</div>
 			<SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />

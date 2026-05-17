@@ -87,6 +87,17 @@ describe('parseArgs', () => {
 		expect(result.error).toBe('--db-path requires a path');
 	});
 
+	test('parses --workspace with valid path', () => {
+		const result = parseArgs(['--workspace', '/path/to/workspace']);
+		expect(result.options.workspaceRoot).toBe('/path/to/workspace');
+		expect(result.error).toBeUndefined();
+	});
+
+	test('returns error for missing workspace value', () => {
+		const result = parseArgs(['--workspace']);
+		expect(result.error).toBe('--workspace requires a path');
+	});
+
 	test('returns error for unknown option', () => {
 		const result = parseArgs(['--unknown']);
 		expect(result.error).toBe('Unknown option: --unknown');
@@ -101,10 +112,13 @@ describe('parseArgs', () => {
 			'localhost',
 			'--db-path',
 			'/my/db.sqlite',
+			'--workspace',
+			'/my/workspace',
 		]);
 		expect(result.options.port).toBe(9999);
 		expect(result.options.host).toBe('localhost');
 		expect(result.options.dbPath).toBe('/my/db.sqlite');
+		expect(result.options.workspaceRoot).toBe('/my/workspace');
 		expect(result.error).toBeUndefined();
 	});
 });
@@ -123,6 +137,7 @@ describe('getHelpText', () => {
 		expect(helpText).toContain('-p');
 		expect(helpText).toContain('--host');
 		expect(helpText).toContain('--db-path');
+		expect(helpText).toContain('--workspace');
 		expect(helpText).toContain('--version');
 		expect(helpText).toContain('-V');
 		expect(helpText).toContain('--help');

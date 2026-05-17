@@ -1,5 +1,5 @@
 /**
- * URL-based router for sessions, spaces, inbox, and settings.
+ * URL-based router for sessions, spaces, and settings.
  *
  * Room routes are intentionally not registered in the web client. Legacy room
  * data can still exist on stored sessions/tasks, but active Room UI routes are
@@ -30,7 +30,6 @@ import {
 
 const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/i;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
-const INBOX_ROUTE_PATTERN = /^\/inbox$/;
 const SPACES_ROUTE_PATTERN = /^\/spaces$/;
 const SETTINGS_ROUTE_PATTERN = /^\/settings$/;
 const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/;
@@ -54,6 +53,7 @@ const SETTINGS_SECTIONS = new Set<SettingsSection>([
 	'skills',
 	'models',
 	'usage',
+	'shortcuts',
 	'about',
 ]);
 
@@ -295,25 +295,6 @@ export function navigateToSessions(replace = false): void {
 		pushPath('/sessions', {}, replace);
 		setSessionRoute(null);
 		navSectionSignal.value = 'chats';
-	} finally {
-		finishNavigation();
-	}
-}
-
-export function navigateToInbox(replace = false): void {
-	if (routerState.isNavigating) return;
-
-	if (getCurrentPath() === '/inbox') {
-		setSessionRoute(null);
-		navSectionSignal.value = 'inbox';
-		return;
-	}
-
-	routerState.isNavigating = true;
-	try {
-		pushPath('/inbox', {}, replace);
-		setSessionRoute(null);
-		navSectionSignal.value = 'inbox';
 	} finally {
 		finishNavigation();
 	}
@@ -638,9 +619,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
 		} else if (SESSIONS_ROUTE_PATTERN.test(path)) {
 			setSessionRoute(null);
 			navSectionSignal.value = 'chats';
-		} else if (INBOX_ROUTE_PATTERN.test(path)) {
-			setSessionRoute(null);
-			navSectionSignal.value = 'inbox';
 		} else if (SPACES_ROUTE_PATTERN.test(path) || path === '/') {
 			setSpacesListRoute();
 		} else if (SETTINGS_ROUTE_PATTERN.test(path)) {

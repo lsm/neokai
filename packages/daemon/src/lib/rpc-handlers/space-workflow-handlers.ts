@@ -100,6 +100,7 @@ function buildTemplateUpdateParams(
 			id: nodeIdMap.get(node.id)!,
 			name: node.name,
 			agents: resolvedAgents,
+			...(node.postApproval ? { postApproval: { ...node.postApproval } } : {}),
 		};
 	});
 
@@ -127,7 +128,7 @@ function buildTemplateUpdateParams(
 		completionAutonomyLevel: template.completionAutonomyLevel,
 		templateName: template.name,
 		templateHash,
-		postApproval: template.postApproval ? { ...template.postApproval } : null,
+		postApproval: null,
 	};
 }
 
@@ -202,10 +203,10 @@ export async function checkBuiltInWorkflowDriftOnStartup(
  * Startup re-stamp pass for the narrow set of template fields that are safe
  * to auto-apply without regenerating node UUIDs.
  *
- * Introduced in PR 3/5 so existing spaces auto-acquire the new `postApproval`
- * route declared on built-in workflow templates. Delegates to
+ * Existing spaces auto-acquire current built-in node-level `postApproval`
+ * routes through this path. Delegates to
  * `seedBuiltInWorkflows`, which takes the re-stamp branch when rows already
- * exist in a space. That path only updates `postApproval`,
+ * exist in a space. That path only updates node-level routing metadata,
  * `completionAutonomyLevel`, and `templateHash` — see the seeder's
  * `RESTAMP_FIELDS` constant for the full list and rationale.
  *

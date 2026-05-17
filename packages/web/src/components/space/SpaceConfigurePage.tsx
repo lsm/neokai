@@ -37,7 +37,7 @@ const CONFIGURE_TABS: Array<{
 }> = [
 	{ id: 'agents', label: 'Agents', count: ({ agentCount }) => agentCount },
 	{ id: 'workflows', label: 'Workflows', count: ({ workflowCount }) => workflowCount },
-	{ id: 'settings', label: 'Settings', count: () => 1 },
+	{ id: 'settings', label: 'General', count: () => 1 },
 ];
 
 interface SpaceConfigurePageProps {
@@ -123,17 +123,18 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 	}
 
 	return (
-		<div class="flex h-full flex-col overflow-y-auto p-3 sm:p-4 lg:p-6">
-			<div class="mx-auto flex w-full max-w-7xl min-h-[calc(100%+1px)] flex-1 flex-col gap-3 lg:gap-4">
+		<div class="flex h-full flex-col overflow-hidden">
+			<div class="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 pb-4 sm:px-6">
 				{!showWorkflowEditor && (
 					<TabGroup
+						class="flex min-h-0 flex-1 flex-col"
 						selectedIndex={selectedIndex}
 						onChange={(index: number) =>
 							navigateToSpaceConfigure(spaceId, CONFIGURE_TABS[index]?.id ?? 'agents')
 						}
 					>
 						<TabList
-							class="flex items-center gap-6 border-b border-dark-700 px-6"
+							class="flex h-[52px] flex-shrink-0 items-center gap-1 border-b border-white/10"
 							data-testid="space-configure-tab-bar"
 						>
 							{CONFIGURE_TABS.map((tab) => (
@@ -141,14 +142,14 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 									key={tab.id}
 									data-testid={`space-configure-tab-${tab.id}`}
 									class={cn(
-										'flex items-center gap-2 border-b-2 px-1 py-3 text-sm font-medium transition-colors',
+										'flex h-[52px] items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors',
 										activeTab === tab.id
 											? 'border-blue-400 text-gray-100'
 											: 'border-transparent text-gray-400 hover:text-gray-200'
 									)}
 								>
 									<span>{tab.label}</span>
-									<span class="rounded-full bg-dark-800 px-2 py-0.5 text-xs text-gray-300">
+									<span class="rounded-full bg-white/5 px-1.5 py-px text-xs text-gray-400">
 										{tab.count({
 											agentCount: agents.length,
 											workflowCount: workflows.length,
@@ -158,26 +159,28 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 							))}
 						</TabList>
 
-						<TabPanels class="min-h-0 flex-1 overflow-hidden rounded-3xl border border-dark-700 bg-dark-950/70 lg:rounded-[28px]">
-							<TabPanel>
+						<TabPanels class="min-h-0 flex-1 overflow-hidden">
+							<TabPanel class="h-full min-h-0 overflow-hidden">
 								<Suspense fallback={lazyFallback}>
-									<div class="h-full min-h-[calc(100%+1px)] overflow-y-auto p-4 sm:p-5 lg:p-6">
+									<div class="h-full min-h-0 pt-4">
 										<SpaceAgentList />
 									</div>
 								</Suspense>
 							</TabPanel>
-							<TabPanel>
+							<TabPanel class="h-full min-h-0 overflow-hidden">
 								<Suspense fallback={lazyFallback}>
-									<WorkflowList
-										spaceId={space.id}
-										spaceName={space.name}
-										workflows={workflows}
-										onCreateWorkflow={() => setWorkflowEditId('new')}
-										onEditWorkflow={(id) => setWorkflowEditId(id)}
-									/>
+									<div class="h-full min-h-0 pt-4">
+										<WorkflowList
+											spaceId={space.id}
+											spaceName={space.name}
+											workflows={workflows}
+											onCreateWorkflow={() => setWorkflowEditId('new')}
+											onEditWorkflow={(id) => setWorkflowEditId(id)}
+										/>
+									</div>
 								</Suspense>
 							</TabPanel>
-							<TabPanel>
+							<TabPanel class="h-full min-h-0 overflow-hidden">
 								<Suspense fallback={lazyFallback}>
 									<SpaceSettings space={space} />
 								</Suspense>
@@ -188,7 +191,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 
 				{showWorkflowEditor && (
 					<Suspense fallback={lazyFallback}>
-						<div class="min-h-0 flex-1 overflow-hidden rounded-3xl border border-dark-700 bg-dark-950/70 lg:rounded-[28px]">
+						<div class="min-h-0 flex-1 overflow-hidden">
 							<VisualWorkflowEditor
 								key={workflowEditId}
 								workflow={editingWorkflow}

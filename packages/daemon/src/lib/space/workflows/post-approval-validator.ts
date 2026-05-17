@@ -5,8 +5,8 @@
  * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
  * §1.5.
  *
- * A workflow's optional `postApproval` route declares which agent should act on
- * the end-node's approval signal. The route's `targetAgent` must resolve to
+ * A workflow node's optional `postApproval` route declares which agent should
+ * act on that node's approval signal. The route's `targetAgent` must resolve to
  * either:
  *   - the literal string `'task-agent'` (the orchestration Task Agent), or
  *   - the `name` of any `WorkflowNodeAgent` declared in the workflow's nodes.
@@ -19,8 +19,8 @@
  *     for the returned workflow, so a stale persisted config cannot break
  *     runtime load.
  *
- * No runtime consumer reads `postApproval` in this PR — PR 2 wires up the
- * `PostApprovalRouter` and the `mark_complete` tool.
+ * The PostApprovalRouter reads node-level routes first, then falls back to the
+ * legacy workflow-level route for older persisted workflows.
  */
 
 import type { PostApprovalRoute, WorkflowNode, WorkflowNodeInput } from '@neokai/shared';
@@ -45,6 +45,13 @@ export interface PostApprovalValidationInput {
 	/** Optional route to validate. Missing or `undefined` means "no route" → valid. */
 	postApproval?: PostApprovalRoute;
 	/** Workflow nodes — used to collect eligible node-agent target names. */
+	nodes: Array<WorkflowNode | WorkflowNodeInput>;
+}
+
+export interface PostApprovalRoutesValidationInput {
+	/** Legacy workflow-level route. Missing or `undefined` means no legacy route. */
+	workflowPostApproval?: PostApprovalRoute;
+	/** Workflow nodes carrying optional node-level routes. */
 	nodes: Array<WorkflowNode | WorkflowNodeInput>;
 }
 
@@ -126,4 +133,35 @@ export function validatePostApproval(
 			`orchestration Task Agent; eligible targets: ${eligible.map((t) => `"${t}"`).join(', ')}`,
 		eligibleTargets: eligible,
 	};
+}
+
+/**
+ * Validate every post-approval route declared by a workflow.
+ *
+ * Node-level routes are the canonical model. The legacy workflow-level route is
+ * still accepted for old persisted rows and import paths, so callers can use
+ * this helper to validate both shapes against the same eligible target set.
+ */
+export function validatePostApprovalRoutes(
+	input: PostApprovalRoutesValidationInput
+): PostApprovalValidationResult {
+	const workflowResult = validatePostApproval({
+		postApproval: input.workflowPostApproval,
+		nodes: input.nodes,
+	});
+	if (!workflowResult.ok) return workflowResult;
+
+	for (const node of input.nodes) {
+		const route = node.postApproval;
+		if (!route) continue;
+		const result = validatePostApproval({ postApproval: route, nodes: input.nodes });
+		if (!result.ok) {
+			return {
+				...result,
+				error: `node "${node.name}" ${result.error}`,
+			};
+		}
+	}
+
+	return { ok: true };
 }

@@ -39,7 +39,7 @@ export interface WorkflowTemplate {
 	gates?: Gate[];
 	/** Optional tags to seed with the template. */
 	tags?: string[];
-	/** Optional workflow-level post-approval route to seed with the template. */
+	/** Legacy workflow-level post-approval route; migrated onto the end node when loaded. */
 	postApproval?: PostApprovalRoute;
 }
 
@@ -60,6 +60,8 @@ export interface WorkflowTemplateStep {
 	thinkingLevel?: import('@neokai/shared').ThinkingLevel;
 	/** Optional default node instructions. */
 	instructions?: string;
+	/** Optional post-approval route triggered when this node approves the task. */
+	postApproval?: PostApprovalRoute;
 }
 
 export interface WorkflowTemplateAgentSlot {
@@ -185,6 +187,8 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 	const endNodeName = workflow.nodes.find((node) => node.id === workflow.endNodeId)?.name;
 
 	const steps: WorkflowTemplateStep[] = workflow.nodes.map((node) => {
+		const postApproval =
+			node.postApproval ?? (node.id === workflow.endNodeId ? workflow.postApproval : undefined);
 		if ((node.agents?.length ?? 0) > 1) {
 			return {
 				name: node.name,
@@ -195,6 +199,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 					model: agent.model,
 					systemPrompt: extractInstructionText(agent.customPrompt),
 				})),
+				postApproval: postApproval ? { ...postApproval } : undefined,
 			};
 		}
 
@@ -205,6 +210,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 			agentId: primary?.agentId,
 			model: primary?.model,
 			systemPrompt: extractInstructionText(primary?.customPrompt),
+			postApproval: postApproval ? { ...postApproval } : undefined,
 		};
 	});
 
@@ -223,7 +229,6 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 			fields: [...(gate.fields ?? [])],
 		})),
 		tags: [...(workflow.tags ?? [])],
-		postApproval: workflow.postApproval ? { ...workflow.postApproval } : undefined,
 	};
 }
 
@@ -273,6 +278,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				agentId: '',
 				agents: agentSlots,
 				customPrompt: step.systemPrompt?.trim() ? { value: step.systemPrompt.trim() } : undefined,
+				postApproval: step.postApproval ? { ...step.postApproval } : undefined,
 			};
 		}
 
@@ -310,6 +316,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 			model: undefined,
 			thinkingLevel: undefined,
 			customPrompt: undefined,
+			postApproval: step.postApproval ? { ...step.postApproval } : undefined,
 		};
 	});
 }

@@ -1,24 +1,14 @@
-import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode } from '../WorkflowNodeCard';
 import type { NodePosition } from './types';
 import type { VisualNode } from './serialization';
 
-export const TASK_AGENT_NODE_WIDTH = 160;
-export const TASK_AGENT_NODE_HEIGHT = 60;
 export const SINGLE_AGENT_NODE_WIDTH = 160;
 export const SINGLE_AGENT_NODE_HEIGHT = 80;
 export const MULTI_AGENT_NODE_WIDTH = 200;
 export const MULTI_AGENT_NODE_HEIGHT = 112;
 
 export function getVisualNodeDimensions(step: NodeDraft): { width: number; height: number } {
-	if (step.localId === TASK_AGENT_NODE_ID || step.id === TASK_AGENT_NODE_ID) {
-		return {
-			width: TASK_AGENT_NODE_WIDTH,
-			height: TASK_AGENT_NODE_HEIGHT,
-		};
-	}
-
 	if (isMultiAgentNode(step)) {
 		return {
 			width: MULTI_AGENT_NODE_WIDTH,

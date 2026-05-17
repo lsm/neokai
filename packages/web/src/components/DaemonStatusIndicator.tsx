@@ -12,39 +12,45 @@ import { connectionManager } from '../lib/connection-manager.ts';
  *
  * Click to reconnect when not connected.
  */
-export function DaemonStatusIndicator() {
+export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boolean }) {
 	const state = connectionState.value;
 
 	// Determine status color and label
 	let dotColor: string;
 	let statusLabel: string;
+	let displayLabel: string;
 	let showPulse = false;
 
 	switch (state) {
 		case 'connected':
 			dotColor = 'bg-green-500';
-			statusLabel = 'Daemon: Connected';
+			statusLabel = 'Connection ready';
+			displayLabel = 'Ready';
 			showPulse = true;
 			break;
 		case 'connecting':
 			dotColor = 'bg-yellow-500';
-			statusLabel = 'Daemon: Connecting...';
+			statusLabel = 'Connecting';
+			displayLabel = 'Connecting';
 			showPulse = true;
 			break;
 		case 'reconnecting':
 			dotColor = 'bg-yellow-500';
-			statusLabel = 'Daemon: Reconnecting...';
+			statusLabel = 'Reconnecting';
+			displayLabel = 'Reconnecting';
 			showPulse = true;
 			break;
 		case 'disconnected':
 			dotColor = 'bg-gray-500';
-			statusLabel = 'Daemon: Offline';
+			statusLabel = 'Connection offline';
+			displayLabel = 'Offline';
 			break;
 		case 'error':
 		case 'failed':
 		default:
 			dotColor = 'bg-red-500';
-			statusLabel = 'Daemon: Error';
+			statusLabel = 'Connection error';
+			displayLabel = 'Error';
 			break;
 	}
 
@@ -64,7 +70,8 @@ export function DaemonStatusIndicator() {
 			aria-label={statusLabel}
 			aria-pressed={isConnected}
 			class={`
-				w-12 h-12 flex items-center justify-center rounded-lg
+				${showLabel ? 'h-9 px-2.5 gap-2' : 'h-9 w-9'}
+				flex items-center justify-center rounded-lg text-sm text-gray-400
 				transition-colors
 				${canReconnect ? 'cursor-pointer hover:bg-dark-800' : 'cursor-default'}
 			`}
@@ -80,6 +87,7 @@ export function DaemonStatusIndicator() {
 					/>
 				)}
 			</div>
+			{showLabel && <span class="hidden min-w-0 truncate text-xs sm:inline">{displayLabel}</span>}
 		</button>
 	);
 }

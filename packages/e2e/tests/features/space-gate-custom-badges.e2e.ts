@@ -70,8 +70,7 @@ async function setupWorkflowWithChannel(page: Page): Promise<void> {
 
 	// Add step 1 (auto-designated as start node)
 	await editor.getByTestId('add-step-button').click();
-	const regularNodes = () =>
-		editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+	const regularNodes = () => editor.locator('[data-testid^="workflow-node-"]');
 	await expect(regularNodes()).toHaveCount(1, { timeout: 3000 });
 
 	// Name step 1
@@ -130,8 +129,7 @@ async function openGateEditorForChannel(page: Page): Promise<void> {
 	const editor = page.getByTestId('visual-workflow-editor');
 
 	// Click step 1 to open NodeConfigPanel
-	const regularNodes = () =>
-		editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+	const regularNodes = () => editor.locator('[data-testid^="workflow-node-"]');
 	await regularNodes().first().click();
 	const nodePanel = editor.getByTestId('node-config-panel');
 	await expect(nodePanel).toBeVisible({ timeout: 3000 });

@@ -1,14 +1,19 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
 import { useViewportSafety } from './hooks/useViewportSafety.ts';
+import { useGlobalShortcuts } from './hooks/useGlobalShortcuts.ts';
 
-import { NavRail } from './islands/NavRail.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
+import { RightPanel, RightPanelToggle } from './islands/RightPanel.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
+import { CommandPalette } from './islands/CommandPalette.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
+// Importing for side effect: registers the default command set on the
+// commandRegistry singleton so the palette has commands before first render.
+import './lib/default-commands.ts';
 import {
 	currentSessionIdSignal,
 	currentSpaceIdSignal,
@@ -36,7 +41,6 @@ import {
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
 	navigateToSpaceTask,
-	navigateToInbox,
 	navigateToSettings,
 	createSessionPath,
 	createSpacePath,
@@ -51,6 +55,18 @@ import {
 export function App() {
 	// Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
 	useViewportSafety();
+
+	// Cmd+K command palette + any other registered shortcuts.
+	useGlobalShortcuts();
+
+	useEffect(() => {
+		const isTauriRuntime = '__TAURI_INTERNALS__' in window || 'isTauri' in window;
+		document.documentElement.classList.toggle('tauri-desktop', isTauriRuntime);
+
+		return () => {
+			document.documentElement.classList.remove('tauri-desktop');
+		};
+	}, []);
 
 	useEffect(() => {
 		// STEP 1: Initialize URL-based router BEFORE any state management
@@ -148,9 +164,7 @@ export function App() {
 												? '/sessions'
 												: navSection === 'settings'
 													? '/settings'
-													: navSection === 'inbox'
-														? '/inbox'
-														: '/spaces';
+													: '/spaces';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -182,8 +196,6 @@ export function App() {
 					navigateToSessions(true);
 				} else if (navSection === 'settings') {
 					navigateToSettings(true);
-				} else if (navSection === 'inbox') {
-					navigateToInbox(true);
 				} else {
 					navigateToHome(true);
 				}
@@ -193,21 +205,26 @@ export function App() {
 
 	return (
 		<>
-			<div class="flex h-dvh overflow-hidden bg-dark-950 relative pt-safe">
-				{/* Navigation Rail (desktop only) */}
-				<NavRail />
-
-				{/* Context Panel - always visible */}
+			<div class="desktop-window-shell flex h-dvh overflow-hidden bg-dark-800 relative pt-safe">
+				{/* Sidebar — section switcher, section content, settings */}
 				<ContextPanel />
 
-				{/* Main Content — BottomTabBar is inline (flex-shrink-0) so no extra padding needed */}
-				<div class="flex-1 flex flex-col overflow-hidden min-w-0">
+				{/* Main Content — rounded-left "card" on desktop; the dark-950 shell
+				    behind shows through the corners to separate it from the panels.
+				    BottomTabBar is inline (flex-shrink-0) so no extra padding needed. */}
+				<div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-app-content md:rounded-l-[28px]">
 					<MainContent />
 				</div>
+
+				<RightPanel />
+				<RightPanelToggle />
 			</div>
 
 			{/* Global Toast Container */}
 			<ToastContainer />
+
+			{/* Command palette (Cmd+K) */}
+			<CommandPalette />
 
 			{/* Connection Overlay - blocks UI when disconnected */}
 			<ConnectionOverlay />

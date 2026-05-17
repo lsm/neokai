@@ -18,7 +18,6 @@ import {
 	getSpaceTaskViewFromPath,
 	initializeRouter,
 	navigateToHome,
-	navigateToInbox,
 	navigateToSession,
 	navigateToSpace,
 	navigateToSpaceAgent,
@@ -212,7 +211,7 @@ describe('router', () => {
 		);
 	});
 
-	it('navigates session, settings, inbox, and home routes', () => {
+	it('navigates session, settings, and home routes', () => {
 		navigateToSession(SESSION_ID);
 		expect(window.history.pushState).toHaveBeenLastCalledWith(
 			{ sessionId: SESSION_ID, path: `/session/${SESSION_ID}` },
@@ -226,10 +225,6 @@ describe('router', () => {
 		navigateToSettings();
 		expect(navSectionSignal.value).toBe('settings');
 		expect(currentSessionIdSignal.value).toBeNull();
-		finishNavigation();
-
-		navigateToInbox();
-		expect(navSectionSignal.value).toBe('inbox');
 		finishNavigation();
 
 		navigateToHome();

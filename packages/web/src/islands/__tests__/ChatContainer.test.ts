@@ -348,8 +348,8 @@ describe('ResizeObserver Integration', () => {
  * Shift (CLS) when the loading skeleton transitions to real content.
  *
  * Root cause of CLS:
- * - ChatHeader uses `h-[65px]` (fixed 65 px).  A skeleton header with `py-3`
- *   renders at ~40 px — a 25 px shift on load.
+ * - ChatHeader uses `h-[52px]` (fixed 52 px).  A skeleton header with `py-3`
+ *   renders at ~40 px — a visible shift on load.
  * - ChatComposer renders as `absolute bottom-0 left-0 right-0`, so it does NOT
  *   participate in the flex layout.  A skeleton footer that IS in the flex flow
  *   consumes height that later disappears, causing the messages area to shift.
@@ -357,14 +357,14 @@ describe('ResizeObserver Integration', () => {
 describe('ChatContainer Loading Skeleton CLS Prevention', () => {
 	const source = chatContainerSource;
 
-	it('skeleton header uses h-[65px] to match ChatHeader fixed height', () => {
-		// ChatHeader sets `h-[65px]`.  The skeleton must use the same value so
+	it('skeleton header uses h-[52px] to match ChatHeader fixed height', () => {
+		// ChatHeader sets `h-[52px]`.  The skeleton must use the same value so
 		// the header occupies identical vertical space before and after load.
-		expect(source).toMatch(/Skeleton header[\s\S]*?h-\[65px\]/);
+		expect(source).toMatch(/Skeleton header[\s\S]*?h-\[52px\]/);
 	});
 
 	it('skeleton header does not use py-3 for height', () => {
-		// py-3 gives ~40 px, which caused a 25 px shift when the 65 px real
+		// py-3 gives ~40 px, which caused a visible shift when the real
 		// header appeared.  Verify it is not used as a height stand-in.
 		const skeletonSection =
 			source.match(/\/\* Skeleton header[\s\S]*?\/\* Skeleton messages/)?.[0] ?? '';
@@ -383,7 +383,7 @@ describe('ChatContainer Loading Skeleton CLS Prevention', () => {
 		// The absolutely-positioned footer needs a positioned ancestor.
 		// Verify `relative` is present in the skeleton's outer container class.
 		expect(source).toMatch(
-			/flex-1 flex flex-col bg-dark-900 overflow-hidden relative[\s\S]*?Skeleton header/
+			/flex-1 flex flex-col bg-app-content overflow-hidden relative[\s\S]*?Skeleton header/
 		);
 	});
 });
@@ -457,12 +457,12 @@ describe('Pending Agent Mode', () => {
 		);
 	});
 
-	it('pending header mirrors ChatHeader height (h-[65px]) for CLS prevention', () => {
-		// The pending header must match ChatHeader's fixed 65px height to avoid
+	it('pending header mirrors ChatHeader height (h-[52px]) for CLS prevention', () => {
+		// The pending header must match ChatHeader's fixed 52px height to avoid
 		// layout shift when the overlay hands off to the live session view.
 		const pendingBlock =
 			source.match(/Pending Agent Render[\s\S]*?pending-agent-overlay-textarea/)?.[0] ?? '';
-		expect(pendingBlock).toContain('min-h-[65px]');
+		expect(pendingBlock).toContain('min-h-[52px]');
 	});
 
 	it('pending body has data-testid="pending-agent-overlay-body"', () => {

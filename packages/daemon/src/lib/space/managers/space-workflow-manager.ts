@@ -23,7 +23,10 @@ import type {
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { Logger } from '../../logger';
-import { validatePostApproval } from '../workflows/post-approval-validator';
+import {
+	validatePostApproval,
+	validatePostApprovalRoutes,
+} from '../workflows/post-approval-validator';
 import { slugify, validateSlug } from '../slug';
 
 const logger = new Logger('SpaceWorkflowManager');
@@ -97,14 +100,15 @@ export class SpaceWorkflowManager {
 			this.validateChannels(params.channels);
 		}
 
-		// Hard-reject invalid `postApproval` routes at create time. Stale routes
-		// (target no longer exists) must be caught before the row lands in the
-		// DB, where they would otherwise trip the load-time warning path below.
-		if (params.postApproval !== undefined) {
-			const result = validatePostApproval({ postApproval: params.postApproval, nodes });
-			if (!result.ok) {
-				throw new WorkflowValidationError(result.error);
-			}
+		// Hard-reject invalid post-approval routes at create time. Stale routes
+		// (target no longer exists) must be caught before the row lands in the DB,
+		// where they would otherwise trip the load-time warning path below.
+		const postApprovalResult = validatePostApprovalRoutes({
+			workflowPostApproval: params.postApproval,
+			nodes,
+		});
+		if (!postApprovalResult.ok) {
+			throw new WorkflowValidationError(postApprovalResult.error);
 		}
 
 		// Auto-generate handle from name if not provided, with collision resolution.
@@ -159,28 +163,49 @@ export class SpaceWorkflowManager {
 	}
 
 	/**
-	 * Load-time sanitiser for the optional `postApproval` route.
+	 * Load-time sanitiser for optional post-approval routes.
 	 *
-	 * If a persisted `postApproval` no longer resolves to a valid target (e.g.
-	 * the targeted node/agent was removed since the workflow was saved), we do
-	 * NOT fail the load — instead we strip the route from the returned object
-	 * and log a warning. Workflow loading is in the hot path (every run start,
-	 * every RPC list), so a stale route cannot be allowed to break the space.
+	 * If a persisted route no longer resolves to a valid target (e.g. the
+	 * targeted node/agent was removed since the workflow was saved), we do NOT
+	 * fail the load — instead we strip the route from the returned object and
+	 * log a warning. Workflow loading is in the hot path (every run start, every
+	 * RPC list), so a stale route cannot be allowed to break the space.
 	 *
 	 * The DB row is untouched — re-saving the workflow via `updateWorkflow`
-	 * with `postApproval: null` is the documented way to clear a stale route.
+	 * with `postApproval: null` clears a stale legacy workflow-level route.
+	 * Re-saving `nodes` clears stale node-level routes.
 	 */
 	private sanitizePostApprovalForLoad(wf: SpaceWorkflow): SpaceWorkflow {
-		if (!wf.postApproval) return wf;
-		const result = validatePostApproval({ postApproval: wf.postApproval, nodes: wf.nodes });
-		if (result.ok) return wf;
-		logger.warn(
-			`disabling stale postApproval route on workflow ${wf.id} ` +
-				`(space ${wf.spaceId}): ${result.error}`
-		);
-		const sanitized: SpaceWorkflow = { ...wf };
-		delete sanitized.postApproval;
-		return sanitized;
+		let sanitized: SpaceWorkflow | null = null;
+
+		if (wf.postApproval) {
+			const result = validatePostApproval({ postApproval: wf.postApproval, nodes: wf.nodes });
+			if (!result.ok) {
+				logger.warn(
+					`disabling stale postApproval route on workflow ${wf.id} ` +
+						`(space ${wf.spaceId}): ${result.error}`
+				);
+				sanitized = { ...(sanitized ?? wf) };
+				delete sanitized.postApproval;
+			}
+		}
+
+		const nextNodes = (sanitized ?? wf).nodes.map((node) => {
+			if (!node.postApproval) return node;
+			const result = validatePostApproval({ postApproval: node.postApproval, nodes: wf.nodes });
+			if (result.ok) return node;
+			logger.warn(
+				`disabling stale postApproval route on workflow ${wf.id} node ${node.id} ` +
+					`(space ${wf.spaceId}): ${result.error}`
+			);
+			const nextNode = { ...node };
+			delete nextNode.postApproval;
+			sanitized = { ...(sanitized ?? wf) };
+			return nextNode;
+		});
+
+		if (!sanitized) return wf;
+		return { ...sanitized, nodes: nextNodes };
 	}
 
 	// -------------------------------------------------------------------------
@@ -232,6 +257,7 @@ export class SpaceWorkflowManager {
 							id: n.id,
 							name: n.name,
 							agents: n.agents,
+							postApproval: n.postApproval,
 						})
 					)
 				: existing.nodes.map(
@@ -239,6 +265,7 @@ export class SpaceWorkflowManager {
 							id: n.id,
 							name: n.name,
 							agents: n.agents,
+							postApproval: n.postApproval,
 						})
 					);
 
@@ -272,31 +299,20 @@ export class SpaceWorkflowManager {
 			this.validateChannels(params.channels);
 		}
 
-		// Validate `postApproval` against the effective node set so a node rename
-		// that is submitted in the same update call doesn't invalidate the route
-		// spuriously. `null` clears the route (always valid); `undefined` leaves
-		// the existing route untouched — re-validate it against the new nodes so
-		// a node rename that strands an existing route is caught at update time.
-		if (params.postApproval !== undefined) {
-			if (params.postApproval !== null) {
-				const result = validatePostApproval({
-					postApproval: params.postApproval,
-					nodes: effectiveNodes,
-				});
-				if (!result.ok) {
-					throw new WorkflowValidationError(result.error);
-				}
-			}
-		} else if (existing.postApproval) {
-			const result = validatePostApproval({
-				postApproval: existing.postApproval,
-				nodes: effectiveNodes,
-			});
-			if (!result.ok) {
-				throw new WorkflowValidationError(
-					`existing postApproval route is no longer valid after update: ${result.error}`
-				);
-			}
+		// Validate node-level postApproval plus the legacy workflow-level route
+		// against the effective node set so a rename submitted in the same update
+		// does not spuriously invalidate the route. `null` clears the legacy
+		// workflow-level route.
+		const workflowPostApproval =
+			params.postApproval === undefined
+				? existing.postApproval
+				: (params.postApproval ?? undefined);
+		const routeResult = validatePostApprovalRoutes({
+			workflowPostApproval,
+			nodes: effectiveNodes,
+		});
+		if (!routeResult.ok) {
+			throw new WorkflowValidationError(routeResult.error);
 		}
 
 		return this.repo.updateWorkflow(id, params);

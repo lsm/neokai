@@ -6,7 +6,7 @@
  * Pan methods:
  *  - Two-finger trackpad scroll (wheel event without ctrlKey)
  *  - Spacebar + left-click drag
- *  - Left-click drag on empty canvas or a pan-enabled element (for example the pinned Task Agent)
+ *  - Left-click drag on empty canvas or a pan-enabled element
  *  - One-finger touch drag on empty canvas or a pan-enabled element (mobile)
  *
  * Zoom methods:

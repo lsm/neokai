@@ -26,8 +26,8 @@ test.describe('Recovery Mechanisms', () => {
 		const draftMessage = 'This is a draft message that should be preserved';
 		await messageInput.fill(draftMessage);
 
-		// Navigate away by clicking Inbox in NavRail
-		await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+		// Navigate away by clicking Spaces in the global navigation
+		await page.getByRole('button', { name: 'Spaces', exact: true }).click();
 		await page.waitForTimeout(500);
 
 		// Navigate back to sessions list via Chats button

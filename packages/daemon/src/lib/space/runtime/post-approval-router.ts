@@ -9,8 +9,9 @@
  *
  * When a task transitions into `approved` (from the end-node `approve_task`
  * path in `space-runtime.ts`, or from the human `approvePendingCompletion`
- * RPC handler in `space-task-handlers.ts`), this router consults
- * `workflow.postApproval` and performs one of three deterministic actions:
+ * RPC handler in `space-task-handlers.ts`), this router consults the approving
+ * workflow node's `postApproval` route (falling back to legacy
+ * `workflow.postApproval`) and performs one of three deterministic actions:
  *
  *   1. **No route declared** → runtime transitions `approved → done` directly
  *      and emits `task.status-transition: approved → done source=no-post-approval`.
@@ -52,6 +53,7 @@ import type {
 	SpaceWorkflow,
 	SpaceApprovalSource,
 	UpdateSpaceTaskParams,
+	PostApprovalRoute,
 } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import {
@@ -195,6 +197,25 @@ export function appendPostApprovalCompletionInstructions(interpolatedInstruction
 	return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`;
 }
 
+function resolvePostApprovalRoute(
+	task: SpaceTask,
+	workflow: SpaceWorkflow | null
+): { route: PostApprovalRoute | undefined; sourceNodeId: string | null } {
+	if (!workflow) {
+		return { route: undefined, sourceNodeId: null };
+	}
+
+	const sourceNodeId = task.pendingCompletionSubmittedByNodeId || workflow.endNodeId || null;
+	const sourceNode = sourceNodeId
+		? (workflow.nodes.find((node) => node.id === sourceNodeId) ?? null)
+		: null;
+
+	return {
+		route: sourceNode?.postApproval ?? workflow.postApproval,
+		sourceNodeId: sourceNode?.id ?? sourceNodeId,
+	};
+}
+
 // ---------------------------------------------------------------------------
 // PostApprovalRouter
 // ---------------------------------------------------------------------------
@@ -228,7 +249,7 @@ export class PostApprovalRouter {
 			return { mode: 'skipped', reason };
 		}
 
-		const route = workflow?.postApproval;
+		const { route, sourceNodeId } = resolvePostApprovalRoute(task, workflow);
 
 		// -------------------------------------------------------------------
 		// 1. No postApproval declared → close the task directly.
@@ -243,7 +264,7 @@ export class PostApprovalRouter {
 			};
 			this.deps.taskRepo.updateTask(task.id, updates);
 			log.info(
-				`post-approval.route: spaceId=${task.spaceId} taskId=${task.id} targetAgent=none mode=none autonomyLevel=${context.autonomyLevel ?? 'unknown'}`
+				`post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} targetAgent=none mode=none autonomyLevel=${context.autonomyLevel ?? 'unknown'}`
 			);
 			log.info(
 				`task.status-transition: taskId=${task.id} from=approved to=done source=no-post-approval`
@@ -318,7 +339,7 @@ export class PostApprovalRouter {
 		});
 
 		log.info(
-			`post-approval.route: spaceId=${task.spaceId} taskId=${task.id} targetAgent=${targetAgent} mode=spawn autonomyLevel=${context.autonomyLevel ?? 'unknown'} sessionId=${sessionId}`
+			`post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} targetAgent=${targetAgent} mode=spawn autonomyLevel=${context.autonomyLevel ?? 'unknown'} sessionId=${sessionId}`
 		);
 		return {
 			mode: 'spawn',

@@ -1635,19 +1635,21 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(workflows).toHaveLength(5);
 	});
 
-	// ─── PR 3/5: postApproval threading ─────────────────────────────────────
+	// ─── Node-level postApproval threading ──────────────────────────────────
 
-	test('threads postApproval through to Coding, Research, QA seeded rows', () => {
+	test('threads node-level postApproval through to Coding, Research, QA seeded rows', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
 		const assertPostApproval = (name: string) => {
 			const wf = workflows.find((w) => w.name === name);
 			expect(wf, `workflow "${name}" must be seeded`).toBeDefined();
-			expect(wf!.postApproval, `"${name}" must have postApproval persisted`).toBeDefined();
-			expect(wf!.postApproval!.targetAgent).toBe('reviewer');
+			expect(wf!.postApproval).toBeUndefined();
+			const endNode = wf!.nodes.find((node) => node.id === wf!.endNodeId);
+			expect(endNode?.postApproval, `"${name}" end node must have postApproval`).toBeDefined();
+			expect(endNode!.postApproval!.targetAgent).toBe('reviewer');
 			// Non-empty instructions — we don't snapshot the full template here
 			// because end-node-handoff.test.ts already asserts the exact content.
-			expect(wf!.postApproval!.instructions.length).toBeGreaterThan(0);
+			expect(endNode!.postApproval!.instructions.length).toBeGreaterThan(0);
 		};
 		assertPostApproval('Coding Workflow');
 		assertPostApproval('Research Workflow');
@@ -1661,6 +1663,7 @@ describe('seedBuiltInWorkflows()', () => {
 			const wf = workflows.find((w) => w.name === name);
 			expect(wf, `workflow "${name}" must be seeded`).toBeDefined();
 			expect(wf!.postApproval).toBeUndefined();
+			expect(wf!.nodes.some((node) => node.postApproval)).toBe(false);
 		}
 	});
 
@@ -1686,20 +1689,26 @@ describe('seedBuiltInWorkflows()', () => {
 		// Seed fresh — rows now carry the current template hash.
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-		// Simulate a prior seed that predated PR 3/5 by clearing `postApproval`
-		// and rewriting `template_hash` to a stale value. The re-stamp path
-		// should detect the hash drift and push the current `postApproval`
-		// (+ current hash) onto the row.
+		// Simulate a prior seed that predated node-level postApproval by clearing
+		// the terminal node route and rewriting `template_hash` to a stale value.
+		// The re-stamp path should detect the hash drift and push the current
+		// node-level `postApproval` (+ current hash) onto the row.
 		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const codingEndNode = coding.nodes.find((node) => node.id === coding.endNodeId)!;
 		db.prepare(
 			`UPDATE space_workflows
 			    SET template_hash = ?, post_approval = NULL
 			  WHERE id = ?`
 		).run('stale-hash-from-a-prior-pr', coding.id);
+		db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+			JSON.stringify({ agents: codingEndNode.agents }),
+			codingEndNode.id
+		);
 
 		// Verify the simulated drift landed.
 		const before = manager.getWorkflow(coding.id)!;
 		expect(before.postApproval).toBeUndefined();
+		expect(before.nodes.find((node) => node.id === before.endNodeId)?.postApproval).toBeUndefined();
 		expect(before.templateHash).toBe('stale-hash-from-a-prior-pr');
 
 		// Re-run the seeder — re-stamp branch fires.
@@ -1708,10 +1717,13 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(result.restamped).toContain(CODING_WORKFLOW.name);
 		expect(result.skipped).toBe(false);
 
-		// Row now carries the current template's postApproval + hash.
+		// Row now carries the current template's node-level postApproval + hash.
 		const after = manager.getWorkflow(coding.id)!;
-		expect(after.postApproval).toBeDefined();
-		expect(after.postApproval!.targetAgent).toBe('reviewer');
+		expect(after.postApproval).toBeUndefined();
+		expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval).toBeDefined();
+		expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval?.targetAgent).toBe(
+			'reviewer'
+		);
 		expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
 	});
 
@@ -1734,6 +1746,31 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(after.handle).toBe('my-custom-handle');
 	});
 
+	test('re-stamp preserves existing postApproval when a node was renamed', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
+		expect(reviewNode.postApproval).toBeDefined();
+
+		manager.updateWorkflow(coding.id, {
+			nodes: coding.nodes.map((node) =>
+				node.id === reviewNode.id ? { ...node, name: 'Human Review' } : node
+			),
+		});
+		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+			'stale-hash',
+			coding.id
+		);
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+		const after = manager.getWorkflow(coding.id)!;
+		const afterReviewNode = after.nodes.find((n) => n.id === reviewNode.id)!;
+		expect(afterReviewNode.name).toBe('Human Review');
+		expect(afterReviewNode.postApproval).toEqual(reviewNode.postApproval);
+	});
+
 	test('re-stamp succeeds and leaves handle field untouched (no handle write during restamp)', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -1749,9 +1786,10 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(result.restamped).toContain(CODING_WORKFLOW.name);
 		expect(result.errors).toHaveLength(0);
 
-		// postApproval and completionAutonomyLevel are correctly re-stamped.
+		// node-level postApproval and completionAutonomyLevel are correctly re-stamped.
 		const after = manager.getWorkflow(coding.id)!;
-		expect(after.postApproval).toBeDefined();
+		expect(after.postApproval).toBeUndefined();
+		expect(after.nodes.find((node) => node.id === after.endNodeId)?.postApproval).toBeDefined();
 		expect(after.completionAutonomyLevel).toBe(CODING_WORKFLOW.completionAutonomyLevel);
 		// Handle is NOT written by re-stamp — NULL rows are backfilled by migration 124, not the seeder.
 		expect(after.handle).toBeUndefined();

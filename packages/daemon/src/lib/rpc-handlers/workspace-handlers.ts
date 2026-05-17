@@ -13,6 +13,7 @@ import { join } from 'path';
 import type { MessageHub } from '@neokai/shared';
 import type { McpImportService } from '../mcp';
 import { Logger } from '../logger';
+import { validateWorkspaceDirectory } from '../workspace-path';
 import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
 
 const log = new Logger('workspace-handlers');
@@ -40,7 +41,8 @@ export function setupWorkspaceHandlers(
 		if (!path || typeof path !== 'string') {
 			throw new Error('path is required');
 		}
-		const row = workspaceHistoryRepo.upsert(path);
+		const workspacePath = await validateWorkspaceDirectory(path);
+		const row = workspaceHistoryRepo.upsert(workspacePath);
 
 		// Trigger a `.mcp.json` import for the newly-added workspace.
 		// Errors are logged but never thrown — a malformed `.mcp.json` must not
@@ -48,9 +50,9 @@ export function setupWorkspaceHandlers(
 		// swallows per-file failures internally; this outer catch is defensive.
 		if (mcpImportService) {
 			try {
-				mcpImportService.refreshFromFile(join(path, '.mcp.json'));
+				mcpImportService.refreshFromFile(join(workspacePath, '.mcp.json'));
 			} catch (err) {
-				log.warn(`[workspace.add] MCP import scan failed for ${path}:`, err);
+				log.warn(`[workspace.add] MCP import scan failed for ${workspacePath}:`, err);
 			}
 		}
 

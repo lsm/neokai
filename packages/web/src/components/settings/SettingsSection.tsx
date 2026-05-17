@@ -9,9 +9,12 @@ export interface SettingsSectionProps {
 
 export function SettingsSection({ title, children, class: className }: SettingsSectionProps) {
 	return (
-		<div class={cn('py-4', className)}>
-			<h3 class="text-sm font-medium text-gray-400 mb-3">{title}</h3>
-			<div class="space-y-3">{children}</div>
+		<div class={cn('space-y-3 pb-6', className)}>
+			<div class="flex items-center gap-2 px-1">
+				<span class="h-4 w-1 rounded-full bg-blue-500/80" aria-hidden="true" />
+				<h3 class="text-xs font-semibold uppercase tracking-[0.16em] text-gray-400">{title}</h3>
+			</div>
+			<div class="space-y-2">{children}</div>
 		</div>
 	);
 }
@@ -20,16 +23,24 @@ export interface SettingsRowProps {
 	label: string;
 	description?: string;
 	children: ComponentChildren;
+	layout?: 'inline' | 'stacked';
 }
 
-export function SettingsRow({ label, description, children }: SettingsRowProps) {
+export function SettingsRow({ label, description, children, layout = 'inline' }: SettingsRowProps) {
 	return (
-		<div class="flex items-center justify-between gap-4">
+		<div
+			class={cn(
+				'rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3',
+				layout === 'inline'
+					? 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4'
+					: 'space-y-3'
+			)}
+		>
 			<div class="flex-1 min-w-0">
-				<div class="text-sm text-gray-300">{label}</div>
+				<div class="text-sm font-medium text-gray-200">{label}</div>
 				{description && <div class="text-xs text-gray-500 mt-0.5">{description}</div>}
 			</div>
-			<div class="flex-shrink-0">{children}</div>
+			<div class={cn(layout === 'inline' ? 'flex-shrink-0' : 'min-w-0')}>{children}</div>
 		</div>
 	);
 }
@@ -48,7 +59,7 @@ export function SettingsSelect({ value, onChange, options, disabled }: SettingsS
 			onChange={(e) => onChange((e.target as HTMLSelectElement).value)}
 			disabled={disabled}
 			class={cn(
-				'bg-dark-800 border border-dark-700 rounded-lg px-3 py-1.5 text-sm text-gray-300',
+				'bg-dark-800 border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm text-gray-200',
 				'focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500',
 				'disabled:opacity-50 disabled:cursor-not-allowed',
 				'min-w-[140px]'

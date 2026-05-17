@@ -1,195 +1,495 @@
-import { useState } from 'preact/hooks';
-import type { Session } from '@neokai/shared';
-import { sessions } from '../lib/state.ts';
-import { connectionState, authStatus } from '../lib/state.ts';
-import { isUserSession } from '../lib/session-utils.ts';
+import { useEffect, useMemo, useState } from 'preact/hooks';
+import type {
+	CreateSessionRequest,
+	GitBranchesResponse,
+	ModelInfo,
+	Provider,
+	WorkspaceHistoryEntry,
+} from '@neokai/shared';
+import { connectionState, globalSettings, sessions } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
-import { createSession } from '../lib/api-helpers.ts';
+import {
+	createSession,
+	getWorkspaceHistory,
+	getGitBranches,
+	addWorkspaceToHistory,
+} from '../lib/api-helpers.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
-import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
-import { allSessionStatuses, getProcessingPhaseColor } from '../lib/session-status.ts';
-import { GitBranchIcon } from '../components/icons/GitBranchIcon.tsx';
-import { Button } from '../components/ui/Button.tsx';
-import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
+import { isUserSession } from '../lib/session-utils.ts';
+import { listProjectPaths } from '../lib/projects.ts';
+import {
+	hasNativeFolderPicker,
+	NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+} from '../lib/runtime-capabilities.ts';
+import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
+import { NewChatModelPicker } from '../components/NewChatModelPicker.tsx';
+import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 
-function StatusDot({ sessionId }: { sessionId: string }) {
-	const status = allSessionStatuses.value.get(sessionId);
-	if (!status) return null;
+type NewChatWorktreeMode = 'worktree' | 'direct';
 
-	const { processingState, hasUnread } = status;
-	const phaseColors = getProcessingPhaseColor(processingState);
-
-	if (phaseColors) {
-		return (
-			<div class="relative flex-shrink-0 w-2.5 h-2.5 mt-0.5">
-				<span class={`absolute inset-0 rounded-full ${phaseColors.dot} animate-pulse`} />
-				<span class={`absolute inset-0 rounded-full ${phaseColors.dot} animate-ping opacity-50`} />
-			</div>
-		);
-	}
-
-	if (hasUnread) {
-		return (
-			<div class="flex-shrink-0 w-2.5 h-2.5 mt-0.5">
-				<span class="block w-full h-full rounded-full bg-blue-500" />
-			</div>
-		);
-	}
-
-	return null;
+interface NewChatModelSelection {
+	id: string;
+	provider: string;
 }
 
-function SessionCard({ session }: { session: Session }) {
-	return (
-		<button
-			type="button"
-			onClick={() => navigateToSession(session.id)}
-			class="bg-dark-800 hover:bg-dark-750 border border-dark-700 hover:border-dark-600 rounded-lg p-4 text-left transition-colors w-full"
-		>
-			{/* Title row */}
-			<div class="flex items-start justify-between gap-2 mb-2">
-				<div class="flex items-start gap-2 flex-1 min-w-0">
-					<StatusDot sessionId={session.id} />
-					<span class="text-sm font-medium text-gray-100 truncate">
-						{session.title || 'New Session'}
-					</span>
-				</div>
-				<div class="flex items-center gap-1 flex-shrink-0">
-					{session.worktree && (
-						<span class="text-purple-400" title={`Worktree: ${session.worktree.branch}`}>
-							<GitBranchIcon className="w-3.5 h-3.5" />
-						</span>
-					)}
-					{session.status === 'archived' && (
-						<span class="text-xs text-amber-600 bg-amber-900/30 px-1.5 py-0.5 rounded">
-							archived
-						</span>
-					)}
-				</div>
-			</div>
+interface NewChatSelection {
+	project: string | null;
+	mode: NewChatWorktreeMode;
+	baseBranch: string | null;
+	model: NewChatModelSelection | null;
+}
 
-			{/* Workspace path */}
-			<p class="text-xs text-gray-500 truncate mb-3">{session.workspacePath || '—'}</p>
+const NEW_CHAT_SELECTION_KEY = 'neokai_new_chat_selection';
+const DEFAULT_NEW_CHAT_SELECTION: NewChatSelection = {
+	project: null,
+	mode: 'worktree',
+	baseBranch: null,
+	model: null,
+};
 
-			{/* Stats row */}
-			<div class="flex items-center gap-3 text-xs text-gray-500">
-				<span class="flex items-center gap-1">
-					<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 16 16">
-						<path d="M5 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0m4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 1a1 1 0 1 0 0-2 1 1 0 0 0 0 2" />
-						<path d="m2.165 15.803.02-.004c1.83-.363 2.948-.842 3.468-1.105A9 9 0 0 0 8 15c4.418 0 8-3.134 8-7s-3.582-7-8-7-8 3.134-8 7c0 1.76.743 3.37 1.97 4.6a10.4 10.4 0 0 1-.524 2.318l-.003.011a11 11 0 0 1-.244.637c-.079.186.074.394.273.362a22 22 0 0 0 .693-.125m.8-3.108a1 1 0 0 0-.287-.801C1.618 10.83 1 9.468 1 8c0-3.192 3.004-6 7-6s7 2.808 7 6-3.004 6-7 6a8 8 0 0 1-2.088-.272 1 1 0 0 0-.711.074c-.387.196-1.24.57-2.634.893a11 11 0 0 0 .398-2" />
-					</svg>
-					{session.metadata.messageCount || 0}
-				</span>
-				<span class="flex items-center gap-1">
-					<svg class="w-3 h-3" fill="currentColor" viewBox="-1 -1 18 18">
-						<path d="M8 2a.5.5 0 0 1 .5.5V4a.5.5 0 0 1-1 0V2.5A.5.5 0 0 1 8 2M3.732 3.732a.5.5 0 0 1 .707 0l.915.914a.5.5 0 1 1-.708.708l-.914-.915a.5.5 0 0 1 0-.707M2 8a.5.5 0 0 1 .5-.5h1.586a.5.5 0 0 1 0 1H2.5A.5.5 0 0 1 2 8m9.5 0a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1H12a.5.5 0 0 1-.5-.5m.754-4.246a.39.39 0 0 0-.527-.02L7.547 7.31A.91.91 0 1 0 8.85 8.569l3.434-4.297a.39.39 0 0 0-.029-.518z" />
-						<path
-							fill-rule="evenodd"
-							d="M6.664 15.889A8 8 0 1 1 9.336.11a8 8 0 0 1-2.672 15.78zm-4.665-4.283A11.95 11.95 0 0 1 8 10c2.186 0 4.236.585 6.001 1.606a7 7 0 1 0-12.002 0"
-						/>
-					</svg>
-					{formatTokens(session.metadata.totalTokens || 0)}
-				</span>
-				<span class="font-mono text-green-400">
-					${(session.metadata.totalCost || 0).toFixed(4)}
-				</span>
-				<span class="ml-auto flex items-center gap-1">
-					<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-					{formatRelativeTime(new Date(session.lastActiveAt))}
-				</span>
-			</div>
-		</button>
+function loadNewChatSelection(): NewChatSelection {
+	try {
+		const stored = localStorage.getItem(NEW_CHAT_SELECTION_KEY);
+		if (!stored) return DEFAULT_NEW_CHAT_SELECTION;
+		const parsed: unknown = JSON.parse(stored);
+		if (!parsed || typeof parsed !== 'object') return DEFAULT_NEW_CHAT_SELECTION;
+		const value = parsed as Partial<NewChatSelection>;
+		const mode = value.mode === 'direct' ? 'direct' : 'worktree';
+		return {
+			project: typeof value.project === 'string' ? value.project : null,
+			mode,
+			baseBranch: typeof value.baseBranch === 'string' ? value.baseBranch : null,
+			model:
+				value.model &&
+				typeof value.model === 'object' &&
+				'id' in value.model &&
+				'provider' in value.model &&
+				typeof value.model.id === 'string' &&
+				typeof value.model.provider === 'string'
+					? { id: value.model.id, provider: value.model.provider }
+					: null,
+		};
+	} catch {
+		return DEFAULT_NEW_CHAT_SELECTION;
+	}
+}
+
+function saveNewChatSelection(selection: NewChatSelection): void {
+	try {
+		localStorage.setItem(NEW_CHAT_SELECTION_KEY, JSON.stringify(selection));
+	} catch {
+		// Ignore storage failures; the composer still works without persistence.
+	}
+}
+
+function getKnownBranches(info: GitBranchesResponse): Set<string> {
+	return new Set(
+		[info.defaultBranch, info.currentBranch, ...info.branches].filter(
+			(branch): branch is string => typeof branch === 'string' && branch.length > 0
+		)
 	);
 }
 
+function findModelInfo(
+	models: ModelInfo[],
+	selection: NewChatModelSelection | null
+): ModelInfo | null {
+	if (!selection) return null;
+	return (
+		models.find((model) => model.id === selection.id && model.provider === selection.provider) ??
+		models.find((model) => model.id === selection.id) ??
+		null
+	);
+}
+
+function findDefaultModelInfo(models: ModelInfo[], modelId: string | undefined): ModelInfo | null {
+	if (!modelId) return null;
+	return (
+		models.find((model) => model.id === modelId || model.alias === modelId) ??
+		models.find((model) => model.id.includes(modelId) || model.alias?.includes(modelId)) ??
+		null
+	);
+}
+
+function getModelLabel(modelInfo: ModelInfo | null, fallbackModelId: string | undefined): string {
+	if (modelInfo) return modelInfo.name;
+	if (fallbackModelId) return fallbackModelId.replace(/-/g, ' ');
+	return 'Model';
+}
+
+/**
+ * Codex-style landing for `/sessions` when no session is selected: a centered
+ * prompt, a starter input, and a project / worktree / branch context row.
+ * Submitting creates a session (with the chosen workspace + worktree mode),
+ * sends the typed text as its first message, and opens the chat.
+ */
 export function SessionsPage() {
-	const [creating, setCreating] = useState(false);
+	const [text, setText] = useState('');
+	const [submitting, setSubmitting] = useState(false);
+	const [initialSelection] = useState<NewChatSelection>(() => loadNewChatSelection());
+	const { availableModels, loading: modelLoading } = useModelSwitcher(null);
 
-	const sessionsList = sessions.value.filter(isUserSession);
-	const canCreate =
-		connectionState.value === 'connected' && (authStatus.value?.isAuthenticated ?? false);
+	const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
+	const [project, setProject] = useState<string | null>(initialSelection.project);
+	const [gitInfo, setGitInfo] = useState<GitBranchesResponse | null>(null);
+	const [gitLoading, setGitLoading] = useState(false);
+	const [mode, setMode] = useState<NewChatWorktreeMode>(initialSelection.mode);
+	const [baseBranch, setBaseBranch] = useState<string | null>(initialSelection.baseBranch);
+	const [manualProjectOpen, setManualProjectOpen] = useState(false);
+	const [manualProjectPath, setManualProjectPath] = useState('');
+	const [manualProjectError, setManualProjectError] = useState<string | null>(null);
+	const [manualProjectBusy, setManualProjectBusy] = useState(false);
+	const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
+	const [selectedModel, setSelectedModel] = useState<NewChatModelSelection | null>(
+		initialSelection.model
+	);
 
-	const handleNewSession = async () => {
+	// Session creation only needs a live connection — auth is exercised later by
+	// the message send, which surfaces its own error.
+	const canCreate = connectionState.value === 'connected';
+	const waitingForProjectGit = project !== null && gitLoading;
+
+	// Project folders shown in the picker — same set as the sidebar: folders
+	// with sessions, merged with registered workspace-history folders.
+	const projectPaths = listProjectPaths(sessions.value.filter(isUserSession), history);
+	const defaultModelId = globalSettings.value?.model ?? 'sonnet';
+	const selectedModelInfo = useMemo(
+		() => findModelInfo(availableModels, selectedModel),
+		[availableModels, selectedModel]
+	);
+	const defaultModelInfo = useMemo(
+		() => findDefaultModelInfo(availableModels, defaultModelId),
+		[availableModels, defaultModelId]
+	);
+	const activeModelInfo = selectedModelInfo ?? defaultModelInfo;
+	const activeModelLabel = getModelLabel(
+		activeModelInfo,
+		selectedModel ? selectedModel.id : defaultModelId
+	);
+
+	useEffect(() => {
+		if (!selectedModel || !selectedModelInfo) return;
+		if (
+			selectedModel.id === selectedModelInfo.id &&
+			selectedModel.provider === selectedModelInfo.provider
+		) {
+			return;
+		}
+		setSelectedModel({ id: selectedModelInfo.id, provider: selectedModelInfo.provider });
+	}, [selectedModel, selectedModelInfo]);
+
+	// Load registered workspace-history folders for the project picker.
+	useEffect(() => {
+		getWorkspaceHistory()
+			.then(setHistory)
+			.catch(() => {
+				// Non-critical — the picker still offers "No folder" and "Browse…".
+			});
+	}, []);
+
+	useEffect(() => {
+		saveNewChatSelection({ project, mode, baseBranch, model: selectedModel });
+	}, [project, mode, baseBranch, selectedModel]);
+
+	// Fetch git context whenever the selected project changes.
+	useEffect(() => {
+		if (!project) {
+			setGitInfo(null);
+			setGitLoading(false);
+			setBaseBranch(null);
+			return;
+		}
+		let cancelled = false;
+		setGitLoading(true);
+		setGitInfo(null);
+		getGitBranches(project)
+			.then((info) => {
+				if (cancelled) return;
+				setGitInfo(info);
+				if (info.isGitRepo) {
+					// Worktree needs at least one commit to fork from.
+					const canWorktree = info.branches.length > 0;
+					const knownBranches = getKnownBranches(info);
+					setMode((currentMode) => (canWorktree ? currentMode : 'direct'));
+					setBaseBranch((currentBranch) =>
+						currentBranch && knownBranches.has(currentBranch)
+							? currentBranch
+							: (info.defaultBranch ?? info.currentBranch ?? null)
+					);
+				} else {
+					setBaseBranch(null);
+				}
+				setGitLoading(false);
+			})
+			.catch(() => {
+				if (cancelled) return;
+				// Treat a failed lookup as "no git info" — submit still sends the path.
+				setGitInfo(null);
+				setGitLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [project]);
+
+	const handleSelectProject = (path: string | null) => {
+		setProject(path);
+		if (!path) setBaseBranch(null);
+	};
+
+	const addProjectFromPath = async (path: string) => {
+		const trimmed = path.trim();
+		if (!trimmed) {
+			setManualProjectError('Enter an absolute project path.');
+			return;
+		}
+		setManualProjectBusy(true);
+		setManualProjectError(null);
+		try {
+			const entry = await addWorkspaceToHistory(trimmed);
+			setHistory((prev) => [entry, ...prev.filter((p) => p.path !== entry.path)]);
+			handleSelectProject(entry.path);
+			setManualProjectPath('');
+			setManualProjectOpen(false);
+		} catch (err) {
+			setManualProjectOpen(true);
+			setManualProjectError(err instanceof Error ? err.message : 'Failed to add project');
+		} finally {
+			setManualProjectBusy(false);
+		}
+	};
+
+	const openManualProjectFallback = (message?: string) => {
+		setManualProjectOpen(true);
+		setManualProjectError(message ?? null);
+	};
+
+	const handleBrowse = async () => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			openManualProjectFallback('Not connected to server. Please wait...');
+			return;
+		}
+		try {
+			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder', undefined, {
+				timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+			});
+			if (!picked?.path) {
+				openManualProjectFallback('Enter a path manually if the folder picker is unavailable.');
+				return;
+			}
+			await addProjectFromPath(picked.path);
+		} catch (err) {
+			openManualProjectFallback(err instanceof Error ? err.message : 'Failed to add project');
+		}
+	};
+
+	const handleManualProjectSubmit = (e: Event) => {
+		e.preventDefault();
+		addProjectFromPath(manualProjectPath);
+	};
+
+	const handleSubmit = async () => {
+		const content = text.trim();
+		if (!content || submitting) return;
 		if (!canCreate) {
 			toast.error('Not connected to server. Please wait...');
 			return;
 		}
-		setCreating(true);
+		if (waitingForProjectGit) {
+			toast.error('Checking the selected project. Please try again in a moment.');
+			return;
+		}
+		setSubmitting(true);
+		let createdSessionId: string | null = null;
 		try {
-			const response = await createSession({ workspacePath: undefined });
+			const req: CreateSessionRequest = {};
+			if (selectedModel && selectedModelInfo) {
+				req.config = {
+					model: selectedModelInfo.id,
+					provider: selectedModelInfo.provider as Provider,
+				};
+			}
+			if (project) {
+				req.workspacePath = project;
+				// Worktree mode is only meaningful for a git repo.
+				if (gitInfo?.isGitRepo) {
+					req.worktreeMode = mode;
+					if (mode === 'worktree' && baseBranch) {
+						req.worktreeBaseBranch = baseBranch;
+					}
+				}
+			}
+			const response = await createSession(req);
 			if (!response?.sessionId) {
 				toast.error('No sessionId in response');
+				setSubmitting(false);
 				return;
 			}
+			createdSessionId = response.sessionId;
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) throw new ConnectionNotReadyError('Not connected to server');
+			await hub.request('message.send', { sessionId: response.sessionId, content });
 			navigateToSession(response.sessionId);
-			toast.success('Session created successfully');
+			// Navigation unmounts this view, so there is no state to reset.
 		} catch (err) {
-			if (err instanceof ConnectionNotReadyError) {
+			if (createdSessionId) {
+				toast.error('Chat was created, but the first message failed. Opened it so you can retry.');
+				navigateToSession(createdSessionId);
+				return;
+			} else if (err instanceof ConnectionNotReadyError) {
 				toast.error('Connection lost. Please try again.');
 			} else {
-				toast.error(err instanceof Error ? err.message : 'Failed to create session');
+				toast.error(err instanceof Error ? err.message : 'Failed to start chat');
 			}
-		} finally {
-			setCreating(false);
+			setSubmitting(false);
+		}
+	};
+
+	const handleKeyDown = (e: KeyboardEvent) => {
+		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+			e.preventDefault();
+			handleSubmit();
 		}
 	};
 
 	return (
-		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
-			{/* Header */}
-			<div class="px-6 py-4 border-b border-dark-700 flex items-center justify-between gap-3">
+		<div class="relative flex-1 flex flex-col bg-app-content overflow-hidden">
+			<div class="desktop-empty-drag-strip" data-tauri-drag-region />
+
+			{/* Mobile: open the sidebar drawer */}
+			<div class="md:hidden flex items-center px-3 py-2">
 				<MobileMenuButton />
-				<div class="flex-1 min-w-0">
-					<h2 class="text-lg font-semibold text-gray-100">Sessions</h2>
-					<p class="text-sm text-gray-400">
-						{sessionsList.length} session{sessionsList.length !== 1 ? 's' : ''}
-					</p>
-				</div>
-				<Button
-					onClick={handleNewSession}
-					loading={creating}
-					disabled={!canCreate}
-					icon={
-						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M12 4v16m8-8H4"
-							/>
-						</svg>
-					}
-				>
-					New Session
-				</Button>
 			</div>
 
-			{/* Grid */}
-			<div class="flex-1 overflow-y-auto p-6">
-				{sessionsList.length === 0 ? (
-					<div class="flex flex-col items-center justify-center h-full text-center">
-						<div class="text-5xl mb-4">💬</div>
-						<h3 class="text-lg font-semibold text-gray-100 mb-2">No sessions yet</h3>
-						<p class="text-sm text-gray-400 mb-6">Start a new session to begin</p>
-						<Button onClick={handleNewSession} loading={creating} disabled={!canCreate}>
-							New Session
-						</Button>
+			{/* Centered landing */}
+			<div class="flex-1 flex flex-col items-center justify-center px-6 pb-16">
+				<h1 class="text-2xl md:text-3xl font-semibold text-gray-100 mb-8 text-center">
+					What should we build?
+				</h1>
+
+				<div class="w-full max-w-2xl">
+					<div class="bg-dark-800 border border-dark-700 rounded-2xl px-3 py-2.5 transition-colors focus-within:border-dark-600">
+						<textarea
+							value={text}
+							onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
+							onKeyDown={handleKeyDown}
+							placeholder="Ask anything to start a new chat..."
+							rows={3}
+							disabled={submitting}
+							autoFocus
+							class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-gray-100 placeholder-gray-500 focus:outline-none disabled:opacity-60"
+						/>
+						<div class="flex items-center justify-between gap-2 pt-1">
+							<NewChatModelPicker
+								activeModelInfo={activeModelInfo}
+								activeModelLabel={activeModelLabel}
+								availableModels={availableModels}
+								loading={modelLoading}
+								onSelectModel={(model) => {
+									if (!model.provider) {
+										toast.error('Model provider information is missing');
+										return;
+									}
+									setSelectedModel({ id: model.id, provider: model.provider });
+								}}
+							/>
+							<button
+								type="button"
+								data-testid="landing-send"
+								onClick={handleSubmit}
+								disabled={!text.trim() || submitting || !canCreate || waitingForProjectGit}
+								title="Start chat"
+								aria-label="Start chat"
+								class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								{submitting ? (
+									<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+										<circle
+											class="opacity-25"
+											cx="12"
+											cy="12"
+											r="10"
+											stroke="currentColor"
+											stroke-width="4"
+										/>
+										<path
+											class="opacity-75"
+											fill="currentColor"
+											d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+										/>
+									</svg>
+								) : (
+									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M12 19V5M5 12l7-7 7 7"
+										/>
+									</svg>
+								)}
+							</button>
+						</div>
 					</div>
-				) : (
-					<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-						{sessionsList.map((session) => (
-							<SessionCard key={session.id} session={session} />
-						))}
+
+					{/* Project / worktree / branch context row */}
+					<div class="mt-2 px-1">
+						<WorkspaceChips
+							projects={projectPaths}
+							selectedProject={project}
+							gitInfo={gitInfo}
+							gitLoading={gitLoading}
+							mode={mode}
+							baseBranch={baseBranch}
+							onSelectProject={handleSelectProject}
+							onBrowse={handleBrowse}
+							onEnterPath={() => {
+								setManualProjectOpen(true);
+								setManualProjectError(null);
+							}}
+							nativeFolderPickerAvailable={nativeFolderPickerAvailable}
+							onSelectMode={setMode}
+							onSelectBranch={setBaseBranch}
+						/>
+						{manualProjectOpen && (
+							<form
+								onSubmit={handleManualProjectSubmit}
+								class="mt-2 max-w-lg rounded-xl border border-dark-700 bg-dark-800 p-2"
+							>
+								<div class="flex items-center gap-2">
+									<input
+										type="text"
+										value={manualProjectPath}
+										onInput={(e) => {
+											setManualProjectPath((e.currentTarget as HTMLInputElement).value);
+											setManualProjectError(null);
+										}}
+										placeholder="Project path"
+										autoFocus
+										class="min-w-0 flex-1 rounded-lg border border-dark-700 bg-dark-900 px-3 py-2 text-xs text-gray-100 placeholder-gray-600 focus:border-dark-600 focus:outline-none"
+									/>
+									<button
+										type="submit"
+										disabled={manualProjectBusy}
+										class="rounded-lg bg-dark-700 px-3 py-2 text-xs font-medium text-gray-200 transition-colors hover:bg-dark-600 disabled:cursor-not-allowed disabled:opacity-50"
+									>
+										{manualProjectBusy ? 'Adding…' : 'Add'}
+									</button>
+								</div>
+								<p class="mt-1.5 text-[11px] leading-4 text-gray-600">
+									Use an absolute path accessible to NeoKai.
+								</p>
+								{manualProjectError && (
+									<p class="mt-1.5 text-[11px] leading-4 text-red-400">{manualProjectError}</p>
+								)}
+							</form>
+						)}
 					</div>
-				)}
+				</div>
 			</div>
 		</div>
 	);

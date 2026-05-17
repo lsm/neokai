@@ -113,12 +113,12 @@ export function CanvasToolbar({
 
 	return (
 		<div
-			class="absolute bottom-4 right-4 flex items-center gap-1 px-2 py-1.5 bg-dark-850 border border-dark-700 rounded-lg shadow-lg select-none pointer-events-auto"
+			class="absolute bottom-4 right-4 flex items-center gap-1 rounded-xl border border-white/10 bg-dark-900/90 px-2 py-1.5 shadow-2xl shadow-black/30 backdrop-blur select-none pointer-events-auto"
 			data-testid="canvas-toolbar"
 		>
 			<button
 				type="button"
-				class="w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-100 hover:bg-dark-700 transition-colors text-base font-medium"
+				class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors text-base font-medium disabled:opacity-40"
 				onClick={handleZoomOut}
 				title="Zoom out"
 				data-testid="canvas-toolbar-zoom-out"
@@ -129,7 +129,7 @@ export function CanvasToolbar({
 
 			<button
 				type="button"
-				class="min-w-[3rem] h-7 px-1 flex items-center justify-center rounded text-xs text-gray-400 hover:text-gray-100 hover:bg-dark-700 transition-colors tabular-nums"
+				class="min-w-[3rem] h-7 px-1 flex items-center justify-center rounded-lg text-xs text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors tabular-nums"
 				onClick={handleReset}
 				title="Reset zoom (100%)"
 				data-testid="canvas-toolbar-reset"
@@ -139,7 +139,7 @@ export function CanvasToolbar({
 
 			<button
 				type="button"
-				class="w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-100 hover:bg-dark-700 transition-colors text-base font-medium"
+				class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors text-base font-medium disabled:opacity-40"
 				onClick={handleZoomIn}
 				title="Zoom in"
 				data-testid="canvas-toolbar-zoom-in"
@@ -148,11 +148,11 @@ export function CanvasToolbar({
 				+
 			</button>
 
-			<div class="w-px h-4 bg-dark-700 mx-0.5" />
+			<div class="w-px h-4 bg-white/10 mx-0.5" />
 
 			<button
 				type="button"
-				class="h-7 px-2 flex items-center justify-center rounded text-xs text-gray-400 hover:text-gray-100 hover:bg-dark-700 transition-colors"
+				class="h-7 px-2 flex items-center justify-center rounded-lg text-xs text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors"
 				onClick={handleFitToView}
 				title="Fit all nodes to view"
 				data-testid="canvas-toolbar-fit"

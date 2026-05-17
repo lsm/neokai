@@ -20,7 +20,7 @@ export const sessionsSignal = signal<Session[]>([]);
 export const slashCommandsSignal = signal<string[]>([]);
 
 // Navigation section signal - which nav item is active
-export type NavSection = 'chats' | 'inbox' | 'spaces' | 'settings';
+export type NavSection = 'chats' | 'spaces' | 'settings';
 export const navSectionSignal = signal<NavSection>('spaces');
 
 // Space navigation signals
@@ -74,6 +74,14 @@ export const spaceOverlayPendingAgentNameSignal = signal<string | null>(null);
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
+// Command palette visibility (Cmd+K / Ctrl+K)
+export const commandPaletteOpenSignal = signal<boolean>(false);
+
+// Global right-side panel. Starts with Git session status, but the shell is
+// intentionally target-based so Space can attach task/agent panels later.
+export type RightPanelTarget = { type: 'git'; sessionId: string };
+export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
+
 // Settings section signal - which settings section is active
 export type SettingsSection =
 	| 'general'
@@ -82,5 +90,6 @@ export type SettingsSection =
 	| 'skills'
 	| 'models'
 	| 'usage'
+	| 'shortcuts'
 	| 'about';
 export const settingsSectionSignal = signal<SettingsSection>('general');

@@ -43,6 +43,8 @@ export interface NodeDraft {
 	agents?: WorkflowNodeAgent[];
 	/** Directed messaging topology between agents. */
 	channels?: WorkflowChannel[];
+	/** Optional post-approval route scoped to this node. */
+	postApproval?: import('@neokai/shared').PostApprovalRoute;
 }
 
 // ============================================================================

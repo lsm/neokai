@@ -138,6 +138,7 @@ interface ChatContainerProps {
 	 * around each `SDKMessageRenderer`. When absent, behavior is unchanged.
 	 */
 	highlightMessageId?: string;
+	titleOverride?: string;
 	/**
 	 * When set, renders a "pending agent" state instead of loading from
 	 * sessionStore. The agent has been declared in the workflow but has not yet
@@ -156,6 +157,7 @@ export default function ChatContainer({
 	readonly = false,
 	onBack,
 	highlightMessageId,
+	titleOverride,
 	pendingAgent,
 	onSendOverride,
 }: ChatContainerProps) {
@@ -572,19 +574,28 @@ export default function ChatContainer({
 		}
 	}, [session]);
 
-	// Show workspace selector for active worker sessions without a workspace
+	// Show workspace selector for active worker sessions without a workspace —
+	// but only before the conversation starts, so it never covers live messages
+	// (e.g. sessions created via the empty-state "create & send" landing).
 	useEffect(() => {
 		if (
 			session?.type === 'worker' &&
 			session?.status === 'active' &&
 			session?.workspacePath === null &&
+			(session?.metadata.messageCount ?? 0) === 0 &&
 			!readonly
 		) {
 			setShowWorkspaceSelector(true);
 		} else {
 			setShowWorkspaceSelector(false);
 		}
-	}, [session?.type, session?.status, session?.workspacePath, readonly]);
+	}, [
+		session?.type,
+		session?.status,
+		session?.workspacePath,
+		session?.metadata.messageCount,
+		readonly,
+	]);
 
 	// Handler for worktree mode change
 	const handleWorktreeModeChange = (mode: 'worktree' | 'direct') => {
@@ -906,19 +917,6 @@ export default function ChatContainer({
 		[sessionId]
 	);
 
-	// ========================================
-	// Display Stats
-	// ========================================
-	const displayStats = useMemo(() => {
-		// All stats are calculated and persisted by daemon in session.metadata
-		// UI should only display, never calculate
-		// This ensures cost/token tracking is centralized in one place
-		return {
-			totalTokens: session?.metadata?.totalTokens ?? 0,
-			totalCost: session?.metadata?.totalCost ?? 0,
-		};
-	}, [session?.metadata?.totalTokens, session?.metadata?.totalCost]);
-
 	// Get retry attempts from session store
 	const retryAttempts = sessionStore.retryAttempts.value;
 
@@ -993,17 +991,12 @@ export default function ChatContainer({
 	if (pendingAgent) {
 		return (
 			<div
-				class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative"
+				class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
 				data-testid="pending-agent-overlay"
 				aria-label={`${pendingAgent.agentName} chat (starting)`}
 			>
-				{/* Header — mirrors ChatHeader height (h-[65px]) for visual consistency */}
-				<div
-					class={cn(
-						'px-4 min-h-[65px] flex-shrink-0 bg-dark-850 border-b flex items-center gap-3',
-						borderColors.ui.default
-					)}
-				>
+				{/* Header — mirrors ChatHeader height (h-[52px]) for visual consistency */}
+				<div class="px-4 min-h-[52px] flex-shrink-0 bg-app-content flex items-center gap-3">
 					{onBack && (
 						<button
 							type="button"
@@ -1064,7 +1057,7 @@ export default function ChatContainer({
 				</div>
 
 				{/* Minimal Composer */}
-				<div class={cn('flex-shrink-0 border-t bg-dark-900 px-3 py-3', borderColors.ui.default)}>
+				<div class={cn('flex-shrink-0 border-t bg-app-content px-3 py-3', borderColors.ui.default)}>
 					{pendingErrorMessage && (
 						<p class="mb-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
 							{pendingErrorMessage}
@@ -1109,7 +1102,7 @@ export default function ChatContainer({
 	if (loading) {
 		if (loadTimedOut) {
 			return (
-				<div class="flex-1 flex items-center justify-center bg-dark-900">
+				<div class="flex-1 flex items-center justify-center bg-app-content">
 					<div class="text-center">
 						<div class="text-5xl mb-4">⚠️</div>
 						<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
@@ -1124,9 +1117,9 @@ export default function ChatContainer({
 		return (
 			// `relative` is required so the absolutely-positioned footer skeleton is
 			// anchored to this container, matching the real ChatComposer positioning.
-			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
-				{/* Skeleton header — h-[65px] matches ChatHeader's fixed height exactly */}
-				<div class="flex items-center gap-3 px-4 h-[65px] border-b border-dark-700 flex-shrink-0">
+			<div class="flex-1 flex flex-col bg-app-content overflow-hidden relative">
+				{/* Skeleton header — h-[52px] matches ChatHeader's fixed height exactly */}
+				<div class="flex items-center gap-3 px-4 h-[52px] flex-shrink-0">
 					<div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
 					<div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
 				</div>
@@ -1153,7 +1146,7 @@ export default function ChatContainer({
 		sessionStore.sessionState.value?.sessionInfo === null;
 	if (error && (!session || storeHasNoSessionInfo)) {
 		return (
-			<div class="flex-1 flex items-center justify-center bg-dark-900">
+			<div class="flex-1 flex items-center justify-center bg-app-content">
 				<div class="text-center">
 					<div class="text-5xl mb-4">⚠️</div>
 					<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
@@ -1166,7 +1159,7 @@ export default function ChatContainer({
 
 	return (
 		<div
-			class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative"
+			class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
 			data-testid="chat-container"
 		>
 			{/* Loading overlay for archive/delete operations */}
@@ -1208,7 +1201,6 @@ export default function ChatContainer({
 			{/* Header */}
 			<ChatHeader
 				session={session}
-				displayStats={displayStats}
 				features={features}
 				onToolsClick={toolsModal.open}
 				onInfoClick={infoModal.open}
@@ -1220,6 +1212,9 @@ export default function ChatContainer({
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
 				onBack={onBack}
+				titleOverride={titleOverride}
+				messages={messages}
+				toolInputsMap={maps.toolInputsMap}
 			/>
 
 			{/* Messages */}

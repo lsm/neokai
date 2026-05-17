@@ -27,9 +27,8 @@ import type {
 	WorkflowChannel,
 	Gate,
 	SpaceAutonomyLevel,
-	PostApprovalRoute,
 } from '@neokai/shared';
-import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
+import { generateUUID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { AUTONOMY_LEVELS } from '../../../lib/space-constants';
 import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../workflow-templates';
@@ -70,13 +69,9 @@ function buildTemplateCanvasSignature(
 	channels: WorkflowChannel[],
 	startNodeId: string,
 	gates: Gate[],
-	endNodeId: string | undefined,
-	postApproval: PostApprovalRoute | undefined
+	endNodeId: string | undefined
 ): string {
 	const regularNodes = nodes
-		.filter(
-			(node) => node.step.localId !== TASK_AGENT_NODE_ID && node.step.id !== TASK_AGENT_NODE_ID
-		)
 		.map((node) => ({
 			localId: node.step.localId,
 			id: node.step.id ?? null,
@@ -99,6 +94,7 @@ function buildTemplateCanvasSignature(
 					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
 					gateId: channel.gateId,
 				})) ?? [],
+			postApproval: node.step.postApproval ? { ...node.step.postApproval } : null,
 			position: { x: node.position.x, y: node.position.y },
 		}))
 		.sort((a, b) => a.localId.localeCompare(b.localId));
@@ -138,20 +134,7 @@ function buildTemplateCanvasSignature(
 		startNodeId,
 		endNodeId,
 		gates: normalizedGates,
-		postApproval: postApproval ? { ...postApproval } : null,
 	});
-}
-
-function getPostApprovalTargetOptions(nodes: VisualNode[]): string[] {
-	const targets = new Set<string>(['task-agent']);
-	for (const node of nodes) {
-		if (node.step.id === TASK_AGENT_NODE_ID || node.step.localId === TASK_AGENT_NODE_ID) continue;
-		for (const agent of node.step.agents ?? []) {
-			const name = agent.name?.trim();
-			if (name) targets.add(name);
-		}
-	}
-	return Array.from(targets);
 }
 
 function resolveChannelTargetNodeIds(
@@ -222,24 +205,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const [name, setName] = useState(workflow?.name ?? '');
 	const [description, setDescription] = useState(workflow?.description ?? '');
-	const [nodes, setNodes] = useState<VisualNode[]>(() => {
-		if (initState) return initState.nodes;
-		// Create mode: inject the Task Agent virtual node immediately so it is
-		// always present, even before any real step is added.
-		// Use the exported layout constant so this position stays in sync with autoLayout.
-		return [
-			{
-				step: {
-					localId: TASK_AGENT_NODE_ID,
-					id: TASK_AGENT_NODE_ID,
-					name: 'Task Agent',
-					agentId: '',
-					instructions: '',
-				},
-				position: { x: 0, y: 0 },
-			},
-		];
-	});
+	const [nodes, setNodes] = useState<VisualNode[]>(() => initState?.nodes ?? []);
 	const [edges, setEdges] = useState<VisualEdge[]>(() => initState?.edges ?? []);
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
 	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
@@ -251,9 +217,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			(initState?.completionAutonomyLevel ??
 				workflow?.completionAutonomyLevel ??
 				3) as SpaceAutonomyLevel
-	);
-	const [postApproval, setPostApproval] = useState<PostApprovalRoute | undefined>(() =>
-		initState?.postApproval ? { ...initState.postApproval } : undefined
 	);
 	const [disabled, setDisabled] = useState<boolean>(() => initState?.disabled ?? false);
 	const [viewportState, setViewportState] = useState<ViewportState>({
@@ -276,6 +239,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [showTemplates, setShowTemplates] = useState(false);
 	const [tagInput, setTagInput] = useState('');
 	const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
+	const [editorView, setEditorView] = useState<'canvas' | 'settings'>('canvas');
 
 	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
@@ -285,53 +249,19 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		[spaceStore.workflowTemplates.value]
 	);
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
-	const regularNodes = useMemo(
-		() =>
-			nodes.filter(
-				(node) => node.step.id !== TASK_AGENT_NODE_ID && node.step.localId !== TASK_AGENT_NODE_ID
-			),
-		[nodes]
-	);
-	const postApprovalTargetOptions = useMemo(() => {
-		const options = getPostApprovalTargetOptions(nodes);
-		const currentTarget = postApproval?.targetAgent?.trim();
-		if (currentTarget && !options.includes(currentTarget)) {
-			options.push(currentTarget);
-		}
-		return options;
-	}, [nodes, postApproval?.targetAgent]);
+	const regularNodes = nodes;
 	const currentTemplateCanvasSignature = useMemo(
-		() =>
-			buildTemplateCanvasSignature(
-				nodes,
-				edges,
-				channels,
-				startNodeId,
-				gates,
-				endNodeId,
-				postApproval
-			),
-		[nodes, edges, channels, startNodeId, gates, endNodeId, postApproval]
+		() => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, endNodeId),
+		[nodes, edges, channels, startNodeId, gates, endNodeId]
 	);
 	const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
 		buildTemplateCanvasSignature(
-			initState?.nodes ?? [
-				{
-					step: {
-						localId: TASK_AGENT_NODE_ID,
-						id: TASK_AGENT_NODE_ID,
-						name: 'Task Agent',
-						agentId: '',
-					},
-					position: { x: 0, y: 0 },
-				},
-			],
+			initState?.nodes ?? [],
 			initState?.edges ?? [],
 			initState?.channels ?? [],
 			initState?.startNodeId ?? '',
 			initState?.gates ?? [],
-			initState?.endNodeId,
-			initState?.postApproval
+			initState?.endNodeId
 		)
 	);
 
@@ -367,7 +297,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const endpointNodeIdLookup = useMemo(() => {
 		const map = new Map<string, string>();
 		for (const node of nodes) {
-			if (node.step.localId === TASK_AGENT_NODE_ID || node.step.id === TASK_AGENT_NODE_ID) continue;
 			if (node.step.agentId) map.set(node.step.agentId, node.step.localId);
 			if (node.step.name) map.set(node.step.name, node.step.localId);
 			for (const agent of node.step.agents ?? []) {
@@ -627,41 +556,24 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '' };
 
 		setNodes((prev) => {
-			// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
-			const isFirstNode =
-				prev.filter(
-					(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-				).length === 0;
+			const isFirstNode = prev.length === 0;
 			if (isFirstNode) setStartStepId(newLocalId);
 
 			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px).
-			// Count only regular nodes so the Task Agent's fixed slot doesn't offset the stagger.
-			const regularCount = prev.filter(
-				(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-			).length;
+			const regularCount = prev.length;
 			const position: Point = { x: 120, y: 80 + regularCount * 100 };
-
-			// Auto-set start step for the first regular node (pure — reads from prev).
-			const isFirstRegular = regularCount === 0;
-			if (isFirstRegular) setStartStepId(newLocalId);
 
 			return [...prev, { step: newStep, position }];
 		});
 	}
 
 	const handleNodePositionChange = useCallback((localId: string, newPosition: Point) => {
-		// Task Agent is pinned — its position must never change.
-		if (localId === TASK_AGENT_NODE_ID) return;
 		setNodes((prev) =>
 			prev.map((n) => (n.step.localId === localId ? { ...n, position: newPosition } : n))
 		);
 	}, []);
 
 	const handleNodeSelect = useCallback((localId: string | null) => {
-		// Task Agent is a virtual node — it must not be selectable so neither the
-		// NodeConfigPanel (which would show a delete button) nor the keyboard Delete
-		// handler (which fires on the WorkflowCanvas selected node) can remove it.
-		if (localId === TASK_AGENT_NODE_ID) return;
 		setSelectedNodeId(localId);
 		if (localId) {
 			setSelectedEdgeId(null);
@@ -671,10 +583,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const handleDeleteNode = useCallback(
 		(localId: string) => {
-			// Task Agent is a virtual node that must always be present — defend against
-			// both the NodeConfigPanel delete path and the keyboard Delete path.
-			if (localId === TASK_AGENT_NODE_ID) return;
-
 			// Read current state from closure (nodes + startNodeId are deps).
 			const nodeToDelete = nodes.find((n) => n.step.localId === localId);
 			if (!nodeToDelete) return;
@@ -689,14 +597,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			setNodes(remaining);
 			setEdges((prev) => prev.filter((e) => e.fromStepKey !== key && e.toStepKey !== key));
 
-			// Pick the next start node from regular (non-virtual) nodes only.
-			// Task Agent is always at remaining[0] so using it as the next start would
-			// show the START badge on the virtual node, which is visually wrong.
-			const regularRemaining = remaining.filter(
-				(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-			);
-			if (wasStart && regularRemaining.length > 0) {
-				const next = regularRemaining[0];
+			if (wasStart && remaining.length > 0) {
+				const next = remaining[0];
 				setStartStepId(next.step.id ?? next.step.localId);
 			} else if (wasStart) {
 				setStartStepId('');
@@ -777,9 +679,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const handleCreateTransition = useCallback(
 		(fromLocalId: string, toLocalId: string) => {
-			// Task Agent is not a workflow node — prevent creating channels to/from it.
-			if (fromLocalId === TASK_AGENT_NODE_ID || toLocalId === TASK_AGENT_NODE_ID) return;
-
 			const fromNode = nodes.find((n) => n.step.localId === fromLocalId);
 			const toNode = nodes.find((n) => n.step.localId === toLocalId);
 			if (!fromNode || !toNode) return;
@@ -1017,16 +916,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			position: positions.get(n.step.localId) ?? n.position,
 		}));
 
-		const taskAgentVisualNode: VisualNode = {
-			step: {
-				localId: TASK_AGENT_NODE_ID,
-				id: TASK_AGENT_NODE_ID,
-				name: 'Task Agent',
-				agentId: '',
-			},
-			position: { x: 0, y: 0 },
-		};
-		const nextNodes = [taskAgentVisualNode, ...positionedNodes];
+		const nextNodes = positionedNodes;
 		const nextChannels = (template.channels ?? []).map((channel) => ({
 			...channel,
 			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
@@ -1040,7 +930,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		setEdges(newEdges);
 		setChannels(nextChannels);
 		setGates(nextGates);
-		setPostApproval(template.postApproval ? { ...template.postApproval } : undefined);
 		if (template.tags) {
 			setTags([...template.tags]);
 		}
@@ -1057,8 +946,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				nextChannels,
 				resolvedStartLocalId,
 				nextGates,
-				resolvedEndLocalId,
-				template.postApproval
+				resolvedEndLocalId
 			)
 		);
 		if (!name) setName(template.label);
@@ -1096,11 +984,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			setError('Workflow name is required.');
 			return;
 		}
-		// Exclude the Task Agent virtual node from validation — it's never persisted.
-		// Match the same dual-check used in serialization.ts to be consistent.
-		const regularNodes = nodes.filter(
-			(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-		);
+		const regularNodes = nodes;
 
 		if (regularNodes.length === 0) {
 			setError('A workflow must have at least one node.');
@@ -1124,13 +1008,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				return;
 			}
 		}
-		if (postApproval) {
-			if (!postApproval.targetAgent.trim()) {
-				setError('Post-approval target is required.');
-				return;
-			}
-			if (!postApproval.instructions.trim()) {
-				setError('Post-approval instructions are required.');
+		for (const node of regularNodes) {
+			const route = node.step.postApproval;
+			if (!route) continue;
+			const nodeLabel = node.step.name?.trim() || 'selected node';
+			if (!route.instructions.trim()) {
+				setError(`Post-approval instructions are required on ${nodeLabel}.`);
 				return;
 			}
 		}
@@ -1144,7 +1027,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			channels,
 			gates,
 			completionAutonomyLevel,
-			postApproval,
 			disabled,
 		};
 
@@ -1185,187 +1067,257 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	return (
-		<div data-testid="visual-workflow-editor" class="flex flex-col h-full overflow-hidden">
+		<div
+			data-testid="visual-workflow-editor"
+			class="flex h-full flex-col overflow-hidden bg-dark-950"
+		>
 			{/* ---- Header ---- */}
-			<div class="flex items-center gap-3 px-6 py-4 border-b border-dark-700 flex-shrink-0">
-				<button
-					onClick={onCancel}
-					class="text-gray-500 hover:text-gray-300 transition-colors"
-					title="Back"
-					data-testid="back-button"
-				>
-					<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M15 19l-7-7 7-7"
-						/>
-					</svg>
-				</button>
-				<h1 class="text-sm font-semibold text-gray-100">
-					{isEditing ? 'Edit Workflow' : 'New Workflow'}
-				</h1>
-
-				{/* Inline name / description inputs */}
-				<div class="flex-1 flex items-center gap-3 min-w-0">
-					<input
-						type="text"
-						value={name}
-						onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)}
-						placeholder="Workflow name…"
-						data-testid="workflow-name-input"
-						class="flex-1 min-w-0 text-sm bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600"
-					/>
-					<input
-						type="text"
-						value={description}
-						onInput={(e) => setDescription((e.currentTarget as HTMLInputElement).value)}
-						placeholder="Description (optional)"
-						data-testid="workflow-description-input"
-						class="flex-1 min-w-0 text-sm bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-500 focus:outline-none focus:border-blue-500 placeholder-gray-600"
-					/>
-				</div>
-
-				<label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
-					<input
-						type="checkbox"
-						checked={disabled}
-						data-testid="workflow-disabled-checkbox"
-						onChange={(e) => setDisabled((e.currentTarget as HTMLInputElement).checked)}
-						class="w-3 h-3 rounded accent-blue-500"
-					/>
-					<span class={disabled ? 'text-red-400 font-medium' : ''}>Disabled</span>
-				</label>
-				<button
-					onClick={onCancel}
-					class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors"
-					data-testid="cancel-button"
-				>
-					Cancel
-				</button>
-				<button
-					onClick={handleSave}
-					disabled={saving}
-					data-testid="save-button"
-					class="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded transition-colors"
-				>
-					{saving ? 'Saving…' : isEditing ? 'Save Changes' : 'Create Workflow'}
-				</button>
-			</div>
-
-			{/* ---- Autonomy level selector ---- */}
-			<div class="flex items-center gap-1.5 px-4 py-1.5 border-b border-dark-700 flex-shrink-0">
-				<span class="text-xs text-gray-500 shrink-0">Autonomy:</span>
-				{AUTONOMY_LEVELS.map(({ level, label, description }) => (
+			<div class="flex-shrink-0 border-b border-white/10 bg-dark-900/95">
+				<div class="flex h-[52px] items-center gap-2 px-3 sm:px-4">
 					<button
-						key={level}
-						type="button"
-						data-testid={`autonomy-level-${level}`}
-						onClick={() => setCompletionAutonomyLevel(level)}
-						title={`${label}: ${description}`}
-						class={[
-							'flex items-center gap-1 px-2 py-0.5 rounded text-xs border transition-colors',
-							completionAutonomyLevel === level
-								? 'border-blue-500/60 bg-blue-500/10 text-blue-300'
-								: 'border-dark-700 text-gray-500 hover:text-gray-300 hover:border-dark-600',
-						].join(' ')}
+						onClick={onCancel}
+						class="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
+						title="Back"
+						data-testid="back-button"
 					>
-						<span
-							class={[
-								'w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0',
-								completionAutonomyLevel === level
-									? 'bg-blue-500/20 text-blue-400'
-									: 'bg-dark-700 text-gray-600',
-							].join(' ')}
-						>
-							{level}
-						</span>
-						{label}
-					</button>
-				))}
-			</div>
-
-			{/* ---- Post-approval route ---- */}
-			<div class="px-4 py-2 border-b border-dark-700 flex-shrink-0">
-				<div class="flex items-start gap-3">
-					<label class="flex items-center gap-2 pt-1 text-xs text-gray-400">
-						<input
-							type="checkbox"
-							checked={!!postApproval}
-							data-testid="post-approval-enabled-checkbox"
-							onChange={(e) => {
-								const enabled = (e.currentTarget as HTMLInputElement).checked;
-								if (!enabled) {
-									setPostApproval(undefined);
-									return;
-								}
-								const targetAgent =
-									postApproval?.targetAgent || postApprovalTargetOptions[0] || 'task-agent';
-								setPostApproval({
-									targetAgent,
-									instructions: postApproval?.instructions ?? '',
-								});
-							}}
-							class="w-3 h-3 rounded accent-blue-500"
-						/>
-						<span class="font-medium">Post-Approval</span>
-					</label>
-					{postApproval && (
-						<div class="flex-1 grid grid-cols-[12rem_1fr] gap-2 min-w-0">
-							<select
-								value={postApproval.targetAgent}
-								data-testid="post-approval-target-select"
-								onChange={(e) =>
-									setPostApproval({
-										...postApproval,
-										targetAgent: (e.currentTarget as HTMLSelectElement).value,
-									})
-								}
-								class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
-							>
-								{postApprovalTargetOptions.map((target) => (
-									<option key={target} value={target}>
-										{target}
-									</option>
-								))}
-							</select>
-							<textarea
-								value={postApproval.instructions}
-								data-testid="post-approval-instructions-textarea"
-								onInput={(e) =>
-									setPostApproval({
-										...postApproval,
-										instructions: (e.currentTarget as HTMLTextAreaElement).value,
-									})
-								}
-								placeholder="Workflow-specific post-approval instructions…"
-								rows={3}
-								class="w-full resize-y min-h-[4.75rem] max-h-40 text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M15 19l-7-7 7-7"
 							/>
+						</svg>
+					</button>
+					<div class="min-w-0 flex-1">
+						<div class="flex min-w-0 items-center gap-2">
+							<h1 class="truncate text-sm font-semibold text-gray-100">
+								{isEditing ? 'Edit Workflow' : 'New Workflow'}
+							</h1>
+							<span class="hidden rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-500 sm:inline-flex">
+								{regularNodes.length} {regularNodes.length === 1 ? 'node' : 'nodes'}
+							</span>
+							{disabled && (
+								<span class="hidden rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-300 sm:inline-flex">
+									Disabled
+								</span>
+							)}
 						</div>
-					)}
+					</div>
+					<div class="flex items-center gap-1 rounded-lg border border-dark-700 bg-dark-800/75 p-1 shadow-lg shadow-black/10 backdrop-blur-sm">
+						<button
+							type="button"
+							onClick={() => setEditorView('canvas')}
+							class={[
+								'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
+								editorView === 'canvas'
+									? 'text-gray-100 bg-dark-700/70 shadow-sm'
+									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40',
+							].join(' ')}
+							data-testid="workflow-canvas-toggle"
+							aria-pressed={editorView === 'canvas'}
+						>
+							Canvas
+						</button>
+						<button
+							type="button"
+							onClick={() => setEditorView('settings')}
+							class={[
+								'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
+								editorView === 'settings'
+									? 'text-gray-100 bg-dark-700/70 shadow-sm'
+									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40',
+							].join(' ')}
+							data-testid="workflow-settings-toggle"
+							aria-pressed={editorView === 'settings'}
+						>
+							Settings
+						</button>
+					</div>
+					<button
+						onClick={onCancel}
+						class="hidden rounded-lg px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200 sm:inline-flex"
+						data-testid="cancel-button"
+					>
+						Cancel
+					</button>
+					<button
+						onClick={handleSave}
+						disabled={saving}
+						data-testid="save-button"
+						class="whitespace-nowrap rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+					>
+						{saving ? 'Saving…' : isEditing ? 'Save Changes' : 'Create Workflow'}
+					</button>
 				</div>
 			</div>
 
 			{/* ---- Error banner ---- */}
 			{error && (
-				<div class="px-6 py-2 bg-red-900/20 border-b border-red-800/40 flex-shrink-0">
+				<div class="px-4 py-2 bg-red-900/20 border-b border-red-800/40 flex-shrink-0">
 					<p class="text-xs text-red-300">{error}</p>
 				</div>
 			)}
 
+			{/* ---- Settings view ---- */}
+			<div
+				class={[
+					'scrollbar-dark min-h-0 flex-1 overflow-y-auto bg-dark-950 px-4 py-4 pr-3',
+					editorView === 'settings' ? '' : 'hidden',
+				].join(' ')}
+				data-testid="workflow-settings-view"
+			>
+				<div class="mx-auto min-h-[calc(100%+1px)] max-w-5xl space-y-4">
+					<section class="grid gap-4 rounded-lg border border-white/10 bg-white/[0.025] p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
+						<div>
+							<h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Basics</h2>
+							<p class="mt-1 text-xs leading-5 text-gray-600">
+								Name this workflow and decide whether new tasks may use it.
+							</p>
+						</div>
+						<div class="grid gap-4">
+							<div>
+								<label class="mb-1 block text-xs font-medium text-gray-400">Name</label>
+								<input
+									type="text"
+									value={name}
+									onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)}
+									placeholder="Workflow name…"
+									data-testid="workflow-name-input"
+									class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+								/>
+							</div>
+							<div>
+								<label class="mb-1 block text-xs font-medium text-gray-400">
+									Description <span class="text-gray-600">(optional)</span>
+								</label>
+								<input
+									type="text"
+									value={description}
+									onInput={(e) => setDescription((e.currentTarget as HTMLInputElement).value)}
+									placeholder="Description (optional)"
+									data-testid="workflow-description-input"
+									class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-400 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+								/>
+							</div>
+							<label class="flex w-fit items-center gap-2 rounded-lg px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-white/5 cursor-pointer select-none">
+								<input
+									type="checkbox"
+									checked={disabled}
+									data-testid="workflow-disabled-checkbox"
+									onChange={(e) => setDisabled((e.currentTarget as HTMLInputElement).checked)}
+									class="w-3 h-3 rounded accent-blue-500"
+								/>
+								<span class={disabled ? 'text-red-300 font-medium' : ''}>Disable workflow</span>
+							</label>
+						</div>
+					</section>
+
+					<section class="grid gap-4 rounded-lg border border-white/10 bg-white/[0.025] p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
+						<div>
+							<h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Runtime</h2>
+							<p class="mt-1 text-xs leading-5 text-gray-600">
+								Control completion authority and optional routing after approval.
+							</p>
+						</div>
+						<div class="space-y-5">
+							<div>
+								<label class="mb-2 block text-xs font-medium text-gray-400">
+									Completion autonomy
+								</label>
+								<div class="flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-dark-850 p-1.5">
+									{AUTONOMY_LEVELS.map(({ level, label, description }) => (
+										<button
+											key={level}
+											type="button"
+											data-testid={`autonomy-level-${level}`}
+											onClick={() => setCompletionAutonomyLevel(level)}
+											title={`${label}: ${description}`}
+											class={[
+												'flex h-8 items-center gap-1 rounded-md px-2.5 text-xs transition-colors',
+												completionAutonomyLevel === level
+													? 'bg-blue-500/10 text-blue-200'
+													: 'text-gray-500 hover:bg-white/5 hover:text-gray-300',
+											].join(' ')}
+										>
+											<span
+												class={[
+													'flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+													completionAutonomyLevel === level
+														? 'bg-blue-500/20 text-blue-300'
+														: 'bg-white/5 text-gray-600',
+												].join(' ')}
+											>
+												{level}
+											</span>
+											{label}
+										</button>
+									))}
+								</div>
+							</div>
+						</div>
+					</section>
+
+					<section class="grid gap-4 rounded-lg border border-white/10 bg-white/[0.025] p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
+						<div>
+							<h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Tags</h2>
+							<p class="mt-1 text-xs leading-5 text-gray-600">
+								Use short labels to organize workflows.
+							</p>
+						</div>
+						<div class="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-dark-850 px-2 py-2">
+							{tags.map((tag) => (
+								<span
+									key={tag}
+									class="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-gray-300"
+								>
+									{tag}
+									<button
+										type="button"
+										onClick={() => removeTag(tag)}
+										class="text-gray-500 transition-colors hover:text-red-400"
+										aria-label={`Remove tag ${tag}`}
+									>
+										×
+									</button>
+								</span>
+							))}
+							<input
+								type="text"
+								value={tagInput}
+								placeholder={tags.length === 0 ? 'Add tags…' : ''}
+								onInput={(e) => setTagInput((e.currentTarget as HTMLInputElement).value)}
+								onKeyDown={handleTagInputKeyDown}
+								onBlur={() => {
+									if (tagInput.trim()) {
+										tagInput.split(',').forEach((t) => addTag(t));
+										setTagInput('');
+									}
+								}}
+								class="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-xs text-gray-300 outline-none placeholder-gray-700"
+							/>
+						</div>
+					</section>
+				</div>
+			</div>
+
 			{/* ---- Canvas area ---- */}
-			<div class="flex-1 relative overflow-hidden bg-dark-950">
+			<div
+				class={[
+					'flex-1 relative overflow-hidden bg-dark-950',
+					editorView === 'canvas' ? '' : 'hidden',
+				].join(' ')}
+				data-testid="workflow-canvas-view"
+			>
 				{/* Add Node + Template toolbar */}
 				<div
-					class="absolute top-3 left-3 z-10 flex items-center gap-2"
+					class="absolute top-4 left-4 z-10 flex items-center gap-1.5 rounded-xl border border-white/10 bg-dark-900/90 p-1.5 shadow-2xl shadow-black/30 backdrop-blur"
 					style={{ pointerEvents: 'auto' }}
 				>
 					<button
 						onClick={addStep}
 						data-testid="add-step-button"
-						class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
+						class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
 					>
 						<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
@@ -1385,7 +1337,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							<button
 								onClick={() => setShowTemplates((v) => !v)}
 								data-testid="template-picker-button"
-								class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
+								class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
 							>
 								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path
@@ -1412,9 +1364,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							</button>
 
 							{showTemplates && (
-								<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
+								<div class="absolute top-full left-0 mt-2 w-72 overflow-hidden rounded-xl border border-white/10 bg-dark-850 shadow-2xl shadow-black/40">
 									{availableTemplates.length === 0 && (
-										<div class="px-3 py-2.5 text-xs text-gray-500 border-b border-dark-700">
+										<div class="px-3 py-2.5 text-xs text-gray-500 border-b border-white/10">
 											No built-in templates available for this space.
 										</div>
 									)}
@@ -1424,7 +1376,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 											onClick={() => handleTemplateSelection(t)}
 											data-testid="template-option"
 											data-template-label={t.label}
-											class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
+											class="w-full border-b border-white/10 px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-white/5"
 										>
 											<div class="text-xs font-medium text-gray-200">{t.label}</div>
 											<div class="text-xs text-gray-500 mt-0.5">{t.description}</div>
@@ -1436,54 +1388,37 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					)}
 				</div>
 
-				{/* Empty state overlay — shown when no regular steps exist (Task Agent doesn't count) */}
+				{/* Empty state overlay */}
 				{regularNodes.length === 0 && (
 					<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-						<div class="text-center">
-							<p class="text-sm text-gray-600">No nodes yet.</p>
-							<p class="text-xs text-gray-700 mt-1">Click "Add Node" to start building.</p>
+						<div class="rounded-xl border border-white/10 bg-dark-900/80 px-6 py-5 text-center shadow-2xl shadow-black/30 backdrop-blur">
+							<p class="text-sm font-medium text-gray-300">Start the workflow canvas</p>
+							<p class="text-xs text-gray-600 mt-1">Add a node or apply a template.</p>
 						</div>
 					</div>
 				)}
 
-				<div class="h-full min-h-0 p-3 pt-16">
-					<div
-						ref={canvasContainerRef}
-						class="relative h-full min-h-0 overflow-hidden rounded-xl border border-dark-700 bg-dark-950"
-						data-testid="native-workflow-canvas-panel"
-					>
-						<div class="pointer-events-none absolute left-3 top-3 z-10 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-							Current Canvas
-						</div>
-						<div
-							data-testid="task-agent-overlay"
-							class="absolute right-3 top-3 z-20 rounded-xl border border-amber-400 bg-amber-950/95 px-4 py-3 shadow-lg"
-						>
-							<div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-300">
-								Task Agent
-							</div>
-							<div class="mt-1 text-sm text-amber-100">Always available coordinator</div>
-							<div class="mt-1 text-xs text-amber-200/70">
-								Implicitly reachable by every workflow node.
-							</div>
-						</div>
-						<WorkflowCanvas
-							nodes={nodeData}
-							nodePositions={canvasNodePositions}
-							viewportState={viewportState}
-							onViewportChange={setViewportState}
-							transitions={[]}
-							channels={channelEdges}
-							onNodeSelect={handleNodeSelect}
-							onDeleteNode={handleDeleteNode}
-							onNodePositionChange={handleNodePositionChange}
-							onCreateTransition={handleCreateTransition}
-							onEdgeSelect={handleEdgeSelect}
-							onDeleteEdge={handleDeleteEdge}
-							onChannelSelect={handleChannelSelect}
-							selectedChannelId={selectedChannelId}
-						/>
-					</div>
+				<div
+					ref={canvasContainerRef}
+					class="h-full min-h-0"
+					data-testid="native-workflow-canvas-panel"
+				>
+					<WorkflowCanvas
+						nodes={nodeData}
+						nodePositions={canvasNodePositions}
+						viewportState={viewportState}
+						onViewportChange={setViewportState}
+						transitions={[]}
+						channels={channelEdges}
+						onNodeSelect={handleNodeSelect}
+						onDeleteNode={handleDeleteNode}
+						onNodePositionChange={handleNodePositionChange}
+						onCreateTransition={handleCreateTransition}
+						onEdgeSelect={handleEdgeSelect}
+						onDeleteEdge={handleDeleteEdge}
+						onChannelSelect={handleChannelSelect}
+						selectedChannelId={selectedChannelId}
+					/>
 				</div>
 
 				{/* NodeConfigPanel — anchored to the right of the canvas.
@@ -1577,48 +1512,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				>
 					<p class="text-xs text-gray-500">Current canvas changes will be discarded.</p>
 				</ConfirmModal>
-			</div>
-
-			{/* ---- Tags ---- */}
-			<div class="flex-shrink-0 border-t border-dark-700 max-h-64 overflow-y-auto">
-				{/* Tags row */}
-				<div class="px-4 py-3 border-b border-dark-800">
-					<div class="flex items-center gap-2 mb-2">
-						<span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</span>
-						<div class="flex flex-wrap gap-1">
-							{tags.map((tag) => (
-								<span
-									key={tag}
-									class="flex items-center gap-1 text-xs bg-dark-700 border border-dark-600 text-gray-300 rounded px-1.5 py-0.5"
-								>
-									{tag}
-									<button
-										type="button"
-										onClick={() => removeTag(tag)}
-										class="text-gray-500 hover:text-red-400 transition-colors"
-										aria-label={`Remove tag ${tag}`}
-									>
-										×
-									</button>
-								</span>
-							))}
-							<input
-								type="text"
-								value={tagInput}
-								placeholder={tags.length === 0 ? 'Add tags…' : ''}
-								onInput={(e) => setTagInput((e.currentTarget as HTMLInputElement).value)}
-								onKeyDown={handleTagInputKeyDown}
-								onBlur={() => {
-									if (tagInput.trim()) {
-										tagInput.split(',').forEach((t) => addTag(t));
-										setTagInput('');
-									}
-								}}
-								class="text-xs bg-transparent text-gray-300 outline-none placeholder-gray-700 min-w-[6rem]"
-							/>
-						</div>
-					</div>
-				</div>
 			</div>
 		</div>
 	);
