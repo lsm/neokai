@@ -127,19 +127,28 @@ describe('Migration 134: message search FTS', () => {
 		]);
 	});
 
-	test('backfills when FTS table exists but has fewer rows than sources', () => {
-		seedSearchFixtures(db);
+	test('does not backfill populated FTS table when source rows lack searchable text', () => {
 		runMigration132(db);
-		db.prepare(`DELETE FROM message_search_fts WHERE kind = 'task'`).run();
+		db.prepare(
+			`INSERT INTO message_search_fts (kind, source_id, title, body, timestamp)
+			 VALUES ('task', 'sentinel', 'sentinel', 'sentinel body', ?)`
+		).run(Date.now());
+		db.prepare(
+			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+			 VALUES (?, ?, ?, ?, ?)`
+		).run(
+			'empty-msg-1',
+			'session-1',
+			'system',
+			JSON.stringify({ type: 'system', subtype: 'init' }),
+			new Date().toISOString()
+		);
 
 		runMigration132(db);
 
 		const rows = db
-			.prepare(`SELECT kind, source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
-			.all('needle') as Array<{ kind: string; source_id: string }>;
-		expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
-			'message:msg-1',
-			'task:task-1',
-		]);
+			.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+			.all('sentinel') as Array<{ source_id: string }>;
+		expect(rows.map((row) => row.source_id)).toEqual(['sentinel']);
 	});
 });

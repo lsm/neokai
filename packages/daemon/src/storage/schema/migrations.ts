@@ -9016,30 +9016,16 @@ export function runMigration131(db: BunDatabase): void {
 export function runMigration134(db: BunDatabase): void {
 	const existed = tableExists(db, 'message_search_fts');
 	createMessageSearchFtsTable(db);
-	if (!existed || hasIncompleteMessageSearchBackfill(db)) {
+	if (!existed || isMessageSearchFtsEmpty(db)) {
 		backfillMessageSearchFts(db);
 	}
 }
 
-function hasIncompleteMessageSearchBackfill(db: BunDatabase): boolean {
-	const messageCount = tableExists(db, 'sdk_messages')
-		? `(SELECT COUNT(*) FROM sdk_messages
-			WHERE json_valid(sdk_message)
-			  AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed')))`
-		: '0';
-	const taskCount = tableExists(db, 'space_tasks')
-		? `(SELECT COUNT(*) FROM space_tasks
-			WHERE TRIM(COALESCE(title, '') || ' ' || COALESCE(description, '')) != '')`
-		: '0';
-	const row = db
-		.prepare(
-			`SELECT
-				(SELECT COUNT(*) FROM message_search_fts) AS fts_count,
-				${messageCount} AS message_count,
-				${taskCount} AS task_count`
-		)
-		.get() as { fts_count: number; message_count: number; task_count: number };
-	return row.fts_count < row.message_count + row.task_count;
+function isMessageSearchFtsEmpty(db: BunDatabase): boolean {
+	const row = db.prepare(`SELECT 1 AS present FROM message_search_fts LIMIT 1`).get() as
+		| { present: number }
+		| undefined;
+	return !row;
 }
 
 function createMessageSearchFtsTable(db: BunDatabase): void {
