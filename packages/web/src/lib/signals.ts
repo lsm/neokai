@@ -74,6 +74,9 @@ export const spaceOverlayPendingAgentNameSignal = signal<string | null>(null);
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
+// Command palette visibility (Cmd+K / Ctrl+K)
+export const commandPaletteOpenSignal = signal<boolean>(false);
+
 // Settings section signal - which settings section is active
 export type SettingsSection =
 	| 'general'
@@ -82,5 +85,6 @@ export type SettingsSection =
 	| 'skills'
 	| 'models'
 	| 'usage'
+	| 'shortcuts'
 	| 'about';
 export const settingsSectionSignal = signal<SettingsSection>('general');

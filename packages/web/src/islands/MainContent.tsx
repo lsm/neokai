@@ -51,6 +51,11 @@ const UsageAnalytics = lazy(() =>
 const AboutSection = lazy(() =>
 	import('../components/settings/AboutSection.tsx').then((m) => ({ default: m.AboutSection }))
 );
+const ShortcutsSettings = lazy(() =>
+	import('../components/settings/ShortcutsSettings.tsx').then((m) => ({
+		default: m.ShortcutsSettings,
+	}))
+);
 
 /** Shared Suspense fallback for lazy-loaded route components. */
 const lazyFallback = (
@@ -158,6 +163,7 @@ export default function MainContent() {
 							{settingsSection === 'skills' && <SkillsRegistry />}
 							{settingsSection === 'models' && <ModelsSettings />}
 							{settingsSection === 'usage' && <UsageAnalytics />}
+							{settingsSection === 'shortcuts' && <ShortcutsSettings />}
 							{settingsSection === 'about' && <AboutSection />}
 						</Suspense>
 					</div>

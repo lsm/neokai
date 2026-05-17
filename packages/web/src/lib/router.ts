@@ -54,6 +54,7 @@ const SETTINGS_SECTIONS = new Set<SettingsSection>([
 	'skills',
 	'models',
 	'usage',
+	'shortcuts',
 	'about',
 ]);
 
