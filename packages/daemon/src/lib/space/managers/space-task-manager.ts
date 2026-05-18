@@ -9,7 +9,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
-	CreateSpaceTaskParams,
+	InternalCreateSpaceTaskParams,
 	SpaceApprovalSource,
 	SpaceBlockReason,
 	SpaceTask,
@@ -74,7 +74,7 @@ export class SpaceTaskManager {
 	/**
 	 * Create a task in this space
 	 */
-	async createTask(params: Omit<CreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
+	async createTask(params: Omit<InternalCreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
 		// Validate dependency task IDs exist in this space
 		if (params.dependsOn && params.dependsOn.length > 0) {
 			await this.validateDependencyIds(params.dependsOn);

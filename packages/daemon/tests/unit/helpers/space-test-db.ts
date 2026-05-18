@@ -218,6 +218,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			workflow_run_id TEXT,
 			preferred_workflow_id TEXT,
 			created_by_task_id TEXT,
+			goal_id TEXT DEFAULT NULL,
 			result TEXT,
 			depends_on TEXT NOT NULL DEFAULT '[]',
 			active_session TEXT
@@ -254,6 +255,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
 	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
@@ -508,6 +510,7 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(status IN ('active', 'paused', 'completed')),
 			created_by_agent TEXT DEFAULT NULL,
 			created_by_session TEXT DEFAULT NULL,
+			goal_id TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -522,4 +525,70 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON task_schedules(status, next_run_at)
 		WHERE status = 'active'
 	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_schedules_goal ON task_schedules(goal_id)`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_goals (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'paused', 'completed', 'archived')),
+			type TEXT NOT NULL DEFAULT 'one_shot'
+				CHECK(type IN ('one_shot', 'measurable', 'recurring')),
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+			labels TEXT NOT NULL DEFAULT '[]',
+			metrics TEXT NOT NULL DEFAULT '{}',
+			summary TEXT NOT NULL DEFAULT '',
+			progress INTEGER NOT NULL DEFAULT 0,
+			next_steps TEXT NOT NULL DEFAULT '[]',
+			preferred_workflow_id TEXT,
+			task_schedule_id TEXT,
+			auto_trigger_next INTEGER NOT NULL DEFAULT 0,
+			pending_next_run INTEGER NOT NULL DEFAULT 0,
+			active_task_id TEXT,
+			last_task_id TEXT,
+			last_check_in_at INTEGER,
+			next_check_in_at INTEGER,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_goal_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			goal_id TEXT NOT NULL,
+			event_type TEXT NOT NULL
+				CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated')),
+			source TEXT NOT NULL
+				CHECK(source IN ('rpc', 'space_agent_tool', 'workflow_node_agent', 'scheduler', 'system')),
+			source_task_id TEXT,
+			source_session_id TEXT,
+			previous_state TEXT,
+			new_state TEXT,
+			diff TEXT,
+			note TEXT,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
+			FOREIGN KEY (source_task_id) REFERENCES space_tasks(id) ON DELETE SET NULL
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_goal_created ON space_goal_events(goal_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_space_created ON space_goal_events(space_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
+	);
 }

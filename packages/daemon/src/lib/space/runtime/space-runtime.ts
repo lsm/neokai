@@ -231,6 +231,8 @@ export interface SpaceRuntimeConfig {
 	 * `selectWorkflowWithLlmDefault` from `./llm-workflow-selector`.
 	 */
 	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
+	/** Optional goal service for processing terminal goal-task side effects. */
+	goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
 }
 
 interface StartWorkflowRunOptions {
@@ -1378,6 +1380,7 @@ export class SpaceRuntime {
 			livenessProbe: {
 				isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
 			},
+			goalService: this.config.goalService,
 		});
 		return this.postApprovalRouter;
 	}

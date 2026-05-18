@@ -15,6 +15,11 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
+import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
@@ -22,6 +27,8 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
+import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
 import {
 	createSpaceAgentMcpServer,
 	createSpaceAgentToolHandlers,
@@ -120,6 +127,7 @@ interface TestCtx {
 	runtime: SpaceRuntime;
 	nodeExecutionRepo: NodeExecutionRepository;
 	spaceManager: SpaceManager;
+	goalService: SpaceGoalService;
 }
 
 function makeCtx(): TestCtx {
@@ -154,6 +162,22 @@ function makeCtx(): TestCtx {
 	});
 
 	const taskManager = new SpaceTaskManager(db, spaceId);
+	const spaceRepo = new SpaceRepository(db);
+	const scheduleRepo = new TaskScheduleRepository(db);
+	const scheduleService = new ScheduleService({
+		db,
+		scheduleRepo,
+		jobQueue: new JobQueueRepository(db),
+		spaceRepo,
+	});
+	const goalService = new SpaceGoalService({
+		goalRepo: new SpaceGoalRepository(db),
+		goalEventRepo: new SpaceGoalEventRepository(db),
+		taskRepo,
+		spaceRepo,
+		scheduleService,
+		db,
+	});
 
 	return {
 		db,
@@ -167,6 +191,7 @@ function makeCtx(): TestCtx {
 		runtime,
 		nodeExecutionRepo,
 		spaceManager,
+		goalService,
 	};
 }
 
@@ -181,6 +206,7 @@ function makeHandlers(ctx: TestCtx) {
 		spaceAgentManager: ctx.agentManager,
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		spaceManager: ctx.spaceManager,
+		goalService: ctx.goalService,
 	});
 }
 
@@ -233,6 +259,151 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 		const names = getRegisteredToolNames(server);
 		expect(names).not.toContain('start_workflow_run');
 		expect(names).toContain('create_standalone_task');
+		expect(names).not.toContain('create_goal');
+	});
+
+	test('registers goal tools when goalService is configured', () => {
+		const server = createSpaceAgentMcpServer({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			goalService: ctx.goalService,
+		});
+
+		const names = getRegisteredToolNames(server);
+		expect(names).toContain('create_goal');
+		expect(names).toContain('update_goal');
+		expect(names).toContain('trigger_goal_task');
+		expect(names).toContain('list_goal_tasks');
+		expect(names).toContain('list_goal_events');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// goal tools
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — goal tools', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('creates, lists, updates, pauses, resumes, triggers, and lists goal tasks', async () => {
+		const handlers = makeHandlers(ctx);
+
+		const createdOut = await handlers.create_goal({
+			title: 'Improve onboarding',
+			description: 'Make first run smoother',
+			type: 'recurring',
+			priority: 'high',
+			labels: ['product'],
+			summary: 'Initial state',
+			progress: 10,
+			next_steps: ['Audit current flow'],
+		});
+		const created = JSON.parse(createdOut.content[0].text);
+		expect(created.success).toBe(true);
+		expect(created.goal.title).toBe('Improve onboarding');
+
+		const listOut = await handlers.list_goals({ status: 'active' });
+		const listed = JSON.parse(listOut.content[0].text);
+		expect(listed.goals.map((goal: { id: string }) => goal.id)).toContain(created.goal.id);
+
+		const updatedOut = await handlers.update_goal({
+			goal_id: created.goal.id,
+			summary: 'Audit finished',
+			progress: 40,
+			metrics: { activated: 12 },
+			next_steps: ['Ship improvements'],
+		});
+		const updated = JSON.parse(updatedOut.content[0].text);
+		expect(updated.success).toBe(true);
+		expect(updated.goal.summary).toBe('Audit finished');
+		expect(updated.goal.progress).toBe(40);
+		expect(updated.goal.nextSteps).toEqual(['Ship improvements']);
+
+		const paused = JSON.parse(
+			(await handlers.pause_goal({ goal_id: created.goal.id })).content[0].text
+		);
+		expect(paused.goal.status).toBe('paused');
+		const resumed = JSON.parse(
+			(await handlers.resume_goal({ goal_id: created.goal.id })).content[0].text
+		);
+		expect(resumed.goal.status).toBe('active');
+
+		const triggered = JSON.parse(
+			(await handlers.trigger_goal_task({ goal_id: created.goal.id })).content[0].text
+		);
+		expect(triggered.success).toBe(true);
+		expect(triggered.task.goalId).toBe(created.goal.id);
+
+		const tasks = JSON.parse(
+			(await handlers.list_goal_tasks({ goal_id: created.goal.id })).content[0].text
+		);
+		expect(tasks.total).toBe(1);
+		expect(tasks.tasks[0].id).toBe(triggered.task.id);
+
+		ctx.taskRepo.archiveTask(triggered.task.id);
+		const archivedTasks = JSON.parse(
+			(
+				await handlers.list_goal_tasks({
+					goal_id: created.goal.id,
+					status: 'archived',
+				})
+			).content[0].text
+		);
+		expect(archivedTasks.total).toBe(1);
+		expect(archivedTasks.tasks[0].id).toBe(triggered.task.id);
+
+		const events = JSON.parse(
+			(await handlers.list_goal_events({ goal_id: created.goal.id })).content[0].text
+		);
+		expect(events.success).toBe(true);
+		expect(events.total).toBeGreaterThanOrEqual(5);
+		expect(events.events.map((event: { eventType: string }) => event.eventType)).toContain(
+			'created'
+		);
+		expect(events.events.map((event: { eventType: string }) => event.eventType)).toContain(
+			'updated'
+		);
+		expect(events.events.map((event: { eventType: string }) => event.eventType)).toContain(
+			'status_changed'
+		);
+		expect(events.events.map((event: { eventType: string }) => event.eventType)).toContain(
+			'task_triggered'
+		);
+	});
+
+	test('rejects cross-space goal access', async () => {
+		const otherGoal = ctx.goalService.createGoal({
+			spaceId: ctx.spaceId,
+			title: 'Other-space goal',
+		});
+		const otherSpaceId = 'other-space-tools-test';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-workspace');
+		ctx.db
+			.prepare(`UPDATE space_goals SET space_id = ? WHERE id = ?`)
+			.run(otherSpaceId, otherGoal.id);
+
+		const handlers = makeHandlers(ctx);
+		const out = await handlers.get_goal({ goal_id: otherGoal.id });
+		const parsed = JSON.parse(out.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Goal not found');
+
+		const eventsOut = await handlers.list_goal_events({ goal_id: otherGoal.id });
+		const events = JSON.parse(eventsOut.content[0].text);
+		expect(events.success).toBe(false);
+		expect(events.error).toContain('Goal not found');
 	});
 });
 

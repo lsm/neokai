@@ -255,6 +255,20 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 			'Tasks within a space with numbering, status, PR tracking, and workflow run associations.',
 	},
 	{
+		tableName: 'space_goals',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Space-native long-horizon goals with rolling state, progress, and recurring check-in schedules.',
+	},
+	{
+		tableName: 'space_goal_events',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Append-only history events for Space goals, including state diffs, source metadata, and linked task IDs.',
+	},
+	{
 		tableName: 'space_worktrees',
 		scopeColumn: 'space_id',
 		blacklistedColumns: [],

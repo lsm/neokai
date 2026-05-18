@@ -132,6 +132,8 @@ export interface SpaceRuntimeServiceConfig {
 	replyRoutingRegistry?: ReplyRoutingRegistry;
 	/** Persistent per-space agent memory repository. */
 	memoryRepo?: AgentMemoryRepository;
+	/** Optional goal service for processing terminal goal-task side effects. */
+	goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
 }
 
 export class SpaceRuntimeService {
@@ -190,6 +192,11 @@ export class SpaceRuntimeService {
 			selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
 			internalEventBus: config.internalEventBus,
 			onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
+				try {
+					this.config.goalService?.handleTaskTerminal(task.id);
+				} catch (err) {
+					log.warn(`goal terminal handling failed for task ${task.id}:`, err);
+				}
 				if (!this.config.internalEventBus) return;
 				await this.config.internalEventBus.publish('space.task.updated', {
 					sessionId: 'global',

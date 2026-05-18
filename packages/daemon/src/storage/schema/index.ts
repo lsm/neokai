@@ -98,9 +98,13 @@ export { runMigration128 } from './migrations';
 // knip-ignore-next-line
 export { runMigration129 } from './migrations';
 // knip-ignore-next-line
+export { runMigration130 } from './migrations';
+// knip-ignore-next-line
 export { runMigration131 } from './migrations';
 // knip-ignore-next-line
 export { runMigration132 } from './migrations';
+// knip-ignore-next-line
+export { runMigration133 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -302,6 +306,63 @@ export function createTables(db: BunDatabase): void {
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
+
+	// Space-native long-horizon goals. These intentionally do not couple to
+	// the legacy room `goals` / mission execution tables above: goal state lives
+	// here, concrete execution happens through linked `space_tasks` rows.
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS space_goals (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK(status IN ('active', 'paused', 'completed', 'archived')),
+        type TEXT NOT NULL DEFAULT 'one_shot'
+          CHECK(type IN ('one_shot', 'measurable', 'recurring')),
+        priority TEXT NOT NULL DEFAULT 'normal'
+          CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+        labels TEXT NOT NULL DEFAULT '[]',
+        metrics TEXT NOT NULL DEFAULT '{}',
+        summary TEXT NOT NULL DEFAULT '',
+        progress INTEGER NOT NULL DEFAULT 0,
+        next_steps TEXT NOT NULL DEFAULT '[]',
+        preferred_workflow_id TEXT,
+        task_schedule_id TEXT,
+        auto_trigger_next INTEGER NOT NULL DEFAULT 0,
+        pending_next_run INTEGER NOT NULL DEFAULT 0,
+        active_task_id TEXT,
+        last_task_id TEXT,
+        last_check_in_at INTEGER,
+        next_check_in_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+      )
+    `);
+
+	db.exec(`
+	      CREATE TABLE IF NOT EXISTS space_goal_events (
+	        id TEXT PRIMARY KEY,
+	        space_id TEXT NOT NULL,
+	        goal_id TEXT NOT NULL,
+	        event_type TEXT NOT NULL
+	          CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated')),
+	        source TEXT NOT NULL
+	          CHECK(source IN ('rpc', 'space_agent_tool', 'workflow_node_agent', 'scheduler', 'system')),
+	        source_task_id TEXT,
+	        source_session_id TEXT,
+	        previous_state TEXT,
+	        new_state TEXT,
+	        diff TEXT,
+	        note TEXT,
+	        created_at INTEGER NOT NULL,
+	        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+	        FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
+	        FOREIGN KEY (source_task_id) REFERENCES space_tasks(id) ON DELETE SET NULL
+	      )
+	    `);
 
 	// Short ID counters — per-(entity_type, scope_id) monotonic counter for short ID allocation
 	db.exec(`
@@ -735,6 +796,12 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goals_next_check_in ON space_goals(status, next_check_in_at)`
+	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler ON goals(mission_type, schedule_paused, next_run_at)`
 	);
@@ -743,6 +810,16 @@ function createIndexes(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running ON mission_executions(goal_id) WHERE status = 'running'`
+	);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_goal_created ON space_goal_events(goal_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_space_created ON space_goal_events(space_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
 	);
 
 	// GitHub integration indexes

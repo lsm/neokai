@@ -11,6 +11,9 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
+import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
+import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service';
 import {
 	createInternalEventBus,
 	type DaemonInternalEventMap,
@@ -42,6 +45,8 @@ describe('handleTaskScheduleFire', () => {
 	let jobQueue: JobQueueRepository;
 	let spaceRepo: SpaceRepository;
 	let taskRepo: SpaceTaskRepository;
+	let goalRepo: SpaceGoalRepository;
+	let goalService: SpaceGoalService;
 	let spaceId: string;
 
 	beforeEach(() => {
@@ -73,6 +78,20 @@ describe('handleTaskScheduleFire', () => {
 		scheduleRepo = new TaskScheduleRepository(db as never);
 		jobQueue = new JobQueueRepository(db as never);
 		taskRepo = new SpaceTaskRepository(db as never);
+		goalRepo = new SpaceGoalRepository(db as never);
+		const scheduleService = new ScheduleService({
+			db: db as never,
+			scheduleRepo,
+			jobQueue,
+			spaceRepo,
+		});
+		goalService = new SpaceGoalService({
+			goalRepo,
+			taskRepo,
+			spaceRepo,
+			scheduleService,
+			db: db as never,
+		});
 
 		const space = spaceRepo.createSpace({
 			slug: 'test',
@@ -91,7 +110,13 @@ describe('handleTaskScheduleFire', () => {
 		return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub };
 	}
 
-	function createCronSchedule(): string {
+	function makeGoalDeps(eventHub?: {
+		publish: (event: string, data: unknown) => Promise<unknown>;
+	}) {
+		return { ...makeDeps(eventHub), goalService };
+	}
+
+	function createCronSchedule(goalId?: string): string {
 		const future = Date.now() + 60_000;
 		const schedule = scheduleRepo.create({
 			spaceId,
@@ -101,6 +126,7 @@ describe('handleTaskScheduleFire', () => {
 			cronExpression: '0 9 * * 1-5',
 			timezone: 'UTC',
 			nextRunAt: future,
+			goalId,
 		});
 		return schedule.id;
 	}
@@ -117,7 +143,7 @@ describe('handleTaskScheduleFire', () => {
 	}
 
 	it('creates a SpaceTask from the cron schedule template and re-enqueues itself', async () => {
-		const scheduleId = createCronSchedule();
+		const scheduleId = createCronSchedule('goal-1');
 		// Set pendingJobId so idempotency check sees a match.
 		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 
@@ -132,6 +158,7 @@ describe('handleTaskScheduleFire', () => {
 		const task = taskRepo.getTask(result.taskId as string);
 		expect(task).not.toBeNull();
 		expect(task?.createdByTaskScheduleId).toBe(scheduleId);
+		expect(task?.goalId).toBe('goal-1');
 		expect(task?.title).toBe('Daily Standup');
 
 		// A new fire job was enqueued.
@@ -140,6 +167,62 @@ describe('handleTaskScheduleFire', () => {
 		expect(updated?.pendingJobId).not.toBe('job-1');
 		expect(updated?.lastCreatedTaskId).toBe(result.taskId);
 		expect(updated?.status).toBe('active');
+	});
+
+	it('claims scheduled goal tasks and syncs the next check-in time', async () => {
+		const goal = goalRepo.create({
+			spaceId,
+			title: 'Scheduled Goal',
+			autoTriggerNext: true,
+		});
+		const scheduleId = createCronSchedule(goal.id);
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+		goalRepo.setTaskScheduleId(goal.id, scheduleId);
+		goalRepo.update(goal.id, { nextCheckInAt: Date.now() + 1_000 });
+
+		const result = await handleTaskScheduleFire(
+			makeJob({ payload: { scheduleId } }),
+			makeGoalDeps()
+		);
+
+		expect(result.skipped).toBe(false);
+		expect(result.taskId).not.toBeNull();
+		const updated = goalRepo.getById(goal.id);
+		expect(updated?.activeTaskId).toBe(result.taskId);
+		expect(updated?.lastTaskId).toBe(result.taskId);
+		expect(updated?.nextCheckInAt).toBe(result.nextRunAt);
+	});
+
+	it('advances the schedule without creating a task when another goal task is active', async () => {
+		const goal = goalRepo.create({
+			spaceId,
+			title: 'Busy Goal',
+			autoTriggerNext: true,
+		});
+		const activeTask = taskRepo.createTask({
+			spaceId,
+			title: 'Existing goal task',
+			goalId: goal.id,
+		});
+		expect(goalRepo.claimActiveTask(goal.id, activeTask.id)).toBe(true);
+
+		const scheduleId = createCronSchedule(goal.id);
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+
+		const result = await handleTaskScheduleFire(
+			makeJob({ payload: { scheduleId } }),
+			makeGoalDeps()
+		);
+
+		expect(result.skipped).toBe(true);
+		expect(result.skipReason).toBe('goal_task_already_active');
+		expect(result.taskId).toBeNull();
+		expect(taskRepo.listBySpace(spaceId).map((task) => task.id)).toEqual([activeTask.id]);
+		const updated = scheduleRepo.getById(scheduleId);
+		expect(updated?.lastCreatedTaskId).toBeNull();
+		expect(updated?.pendingJobId).not.toBe('job-1');
+		expect(updated?.pendingJobId).not.toBeNull();
+		expect(goalRepo.getById(goal.id)?.activeTaskId).toBe(activeTask.id);
 	});
 
 	it('marks one-shot schedule as completed and does not re-enqueue', async () => {

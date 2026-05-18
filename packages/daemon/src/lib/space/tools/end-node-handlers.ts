@@ -27,6 +27,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceGoalService } from '../goals/goal-service';
 import type {
 	ApproveTaskInput,
 	MarkCompleteInput,
@@ -92,6 +93,8 @@ export interface MarkCompleteHandlerDeps {
 	taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
 	/** Optional hub for emitting `space.task.updated` events. */
 	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
+	/** Optional goal service for processing terminal goal-task side effects. */
+	goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal' | 'handleTaskTerminal'>;
 }
 
 /**
@@ -102,7 +105,18 @@ export interface MarkCompleteHandlerDeps {
 export function createMarkCompleteHandler(
 	deps: MarkCompleteHandlerDeps
 ): (args: MarkCompleteInput) => Promise<ToolResult> {
-	const { taskId, spaceId, taskRepo, taskManager, internalEventBus } = deps;
+	const { taskId, spaceId, taskRepo, taskManager, internalEventBus, goalService } = deps;
+
+	const handleGoalTerminal = (task: SpaceTask): void => {
+		if (!goalService) return;
+		try {
+			goalService.handleTaskTerminal(task.id);
+		} catch (err) {
+			log.warn(
+				`Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	};
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
 		if (!internalEventBus) return;
@@ -115,7 +129,7 @@ export function createMarkCompleteHandler(
 			});
 	};
 
-	return async (_args: MarkCompleteInput): Promise<ToolResult> => {
+	return async (args: MarkCompleteInput): Promise<ToolResult> => {
 		const task = taskRepo.getTask(taskId);
 		if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
@@ -126,6 +140,30 @@ export function createMarkCompleteHandler(
 					`task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
 					`mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
 			});
+		}
+
+		let goalUpdate: {
+			goalId: string;
+			updates: NonNullable<MarkCompleteInput['goal_update']>;
+		} | null = null;
+		if (args.goal_update) {
+			if (!goalService) {
+				return jsonResult({
+					success: false,
+					error: 'Goal update is not available in this context.',
+				});
+			}
+			if (!task.goalId) {
+				return jsonResult({
+					success: false,
+					error: 'Cannot apply goal_update: this task is not linked to a goal.',
+				});
+			}
+			const goal = goalService.getGoal(task.goalId);
+			if (!goal || goal.spaceId !== task.spaceId) {
+				return jsonResult({ success: false, error: `Goal not found: ${task.goalId}` });
+			}
+			goalUpdate = { goalId: goal.id, updates: args.goal_update };
 		}
 
 		try {
@@ -139,6 +177,19 @@ export function createMarkCompleteHandler(
 					for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 				},
 			});
+			if (goalUpdate) {
+				goalService?.updateGoal(
+					goalUpdate.goalId,
+					{
+						summary: goalUpdate.updates.summary,
+						progress: goalUpdate.updates.progress,
+						metrics: goalUpdate.updates.metrics,
+						nextSteps: goalUpdate.updates.nextSteps,
+					},
+					{ source: 'workflow_node_agent', sourceTaskId: taskId }
+				);
+			}
+			handleGoalTerminal(updated);
 			emitTaskUpdated(updated);
 			log.info(
 				`post-approval.complete: spaceId=${spaceId} taskId=${taskId} outcome=done mode=${task.postApprovalSessionId ? 'spawn' : 'inline'}`

@@ -95,7 +95,11 @@ import { TaskScheduleRepository } from '../../storage/repositories/task-schedule
 import { SpaceRepository } from '../../storage/repositories/space-repository';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers';
+import { setupSpaceGoalHandlers } from './space-goal-handlers';
 import { ScheduleService } from '../space/schedule/schedule-service';
+import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
+import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
+import { SpaceGoalService } from '../space/goals/goal-service';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -159,6 +163,7 @@ export interface RPCHandlerSetupResult {
 	spaceRuntimeService: SpaceRuntimeService;
 	taskAgentManager: TaskAgentManager;
 	spaceWorktreeManager: SpaceWorktreeManager;
+	spaceGoalService: SpaceGoalService;
 }
 
 /**
@@ -266,6 +271,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		scheduleRepo: taskScheduleRepo,
 		jobQueue: deps.jobQueue,
 		spaceRepo,
+	});
+
+	// Space Goal service — goal lifecycle, terminal handling, schedule sync.
+	const spaceGoalRepo = new SpaceGoalRepository(deps.db.getDatabase(), deps.reactiveDb);
+	const spaceGoalEventRepo = new SpaceGoalEventRepository(deps.db.getDatabase(), deps.reactiveDb);
+	const spaceGoalService = new SpaceGoalService({
+		goalRepo: spaceGoalRepo,
+		goalEventRepo: spaceGoalEventRepo,
+		taskRepo: spaceTaskRepo,
+		spaceRepo,
+		scheduleService,
+		db: deps.db.getDatabase(),
+		eventHub: {
+			publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
+		},
 	});
 
 	// When a space is resumed/started, re-seed any of its active schedules
@@ -381,6 +401,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		externalEventService: deps.externalEventService,
 		replyRoutingRegistry,
 		memoryRepo: deps.db.agentMemory,
+		goalService: spaceGoalService,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -403,12 +424,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.spaceManager,
 		spaceTaskManagerFactory,
 		deps.internalEventBus,
-		spaceRuntimeService
+		spaceRuntimeService,
+		spaceGoalService
 	);
 
 	// Task schedule handlers — create/list/get/update/pause/resume/delete schedules.
 	setupTaskScheduleHandlers(deps.messageHub, {
 		scheduleService,
+		spaceManager: deps.spaceManager,
+	});
+
+	// Space goal handlers — create/list/get/update/pause/resume/createImmediateTask.
+	setupSpaceGoalHandlers(deps.messageHub, {
+		goalService: spaceGoalService,
 		spaceManager: deps.spaceManager,
 	});
 
@@ -501,6 +529,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		internalEventBus: deps.internalEventBus,
 		replyRoutingRegistry,
 		memoryRepo: deps.db.agentMemory,
+		goalService: spaceGoalService,
 	});
 
 	deps.commandBus.register('agent.message.inject', async (command) => {
@@ -607,5 +636,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceRuntimeService,
 		taskAgentManager,
 		spaceWorktreeManager,
+		spaceGoalService,
 	};
 }
