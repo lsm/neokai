@@ -128,6 +128,17 @@ describe('CustomEndpointsSettings — helpers', () => {
 		expect(cfg.baseUrl).toBe('https://openrouter.ai/api/v1');
 	});
 
+	it('presetToEditor carries defaultModelCapabilities onto the editor state', () => {
+		const editor = __test__.presetToEditor(findPreset('openrouter')!);
+		// OpenRouter preset opts into streamUsage. Newly-added models in the
+		// editor must inherit it, not just the seeded ones.
+		expect(editor.presetCapabilities?.streamUsage).toBe(true);
+		const fresh = __test__.makeModelDraft(editor.type, {
+			capabilities: editor.presetCapabilities,
+		});
+		expect(fresh.resolved.streamUsage).toBe(true);
+	});
+
 	it('capability edits survive an endpoint type switch', () => {
 		// Simulate the editor flow: user enables `thinking` on an openai-chat
 		// model, then switches the endpoint type to ollama-native. The override

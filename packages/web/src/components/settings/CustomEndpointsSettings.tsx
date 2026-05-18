@@ -93,6 +93,13 @@ interface EditorState {
 	headersText: string;
 	defaultModelId: string;
 	models: ModelDraft[];
+	/**
+	 * Capability overrides carried from the chosen preset (if any). Applied to
+	 * every newly added model so preset behaviour (e.g. `streamUsage: true` for
+	 * OpenRouter / LiteLLM) follows through the editor instead of being lost
+	 * on subsequent `addModel` clicks.
+	 */
+	presetCapabilities?: Partial<CustomEndpointModelCapabilities>;
 }
 
 function presetToEditor(preset: CustomEndpointPreset): EditorState {
@@ -110,6 +117,7 @@ function presetToEditor(preset: CustomEndpointPreset): EditorState {
 					.join('\n')
 			: '',
 		defaultModelId: preset.template.defaultModelId ?? '',
+		presetCapabilities: preset.defaultModelCapabilities,
 		models: (preset.template.models ?? []).map((m) =>
 			makeModelDraft(type, {
 				...m,
@@ -386,7 +394,13 @@ function EditorModal({
 		models[index] = next;
 		update({ models });
 	};
-	const addModel = () => update({ models: [...state.models, makeModelDraft(state.type)] });
+	const addModel = () =>
+		update({
+			models: [
+				...state.models,
+				makeModelDraft(state.type, { capabilities: state.presetCapabilities }),
+			],
+		});
 	const removeModel = (index: number) =>
 		update({ models: state.models.filter((_, i) => i !== index) });
 
