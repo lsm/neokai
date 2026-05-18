@@ -4,6 +4,7 @@ import {
 	createSessionPath,
 	createSpaceAgentPath,
 	createSpaceConfigurePath,
+	createSpaceGoalsPath,
 	createSpacePath,
 	createSpaceSessionPath,
 	createSpaceSessionsPath,
@@ -12,21 +13,22 @@ import {
 	getSessionIdFromPath,
 	getSpaceAgentFromPath,
 	getSpaceConfigureTabFromPath,
+	getSpaceGoalsFromPath,
 	getSpaceIdFromPath,
-	getSpaceSessionIdFromPath,
 	getSpaceTaskIdFromPath,
 	getSpaceTaskViewFromPath,
 	initializeRouter,
 	navigateToHome,
 	navigateToSession,
+	navigateToSettings,
 	navigateToSpace,
 	navigateToSpaceAgent,
 	navigateToSpaceConfigure,
+	navigateToSpaceGoals,
 	navigateToSpaceSession,
+	navigateToSpacesPage,
 	navigateToSpaceTask,
 	navigateToSpaceTasks,
-	navigateToSpacesPage,
-	navigateToSettings,
 } from '../router';
 import {
 	currentSessionIdSignal,
@@ -94,6 +96,8 @@ describe('router', () => {
 		expect(createSpaceConfigurePath(SPACE_ID, 'settings')).toBe(
 			`/space/${SPACE_ID}/configure/settings`
 		);
+		expect(createSpaceGoalsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/goals`);
+		expect(getSpaceGoalsFromPath(`/space/${SPACE_ID}/goals`)).toBe(SPACE_ID);
 		expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
 		expect(createSpaceSessionsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/sessions`);
 		expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agent`);
@@ -156,6 +160,15 @@ describe('router', () => {
 
 		expect(currentSpaceViewModeSignal.value).toBe('tasks');
 		expect(currentSpaceTasksFilterTabSignal.value).toBe('completed');
+
+		cleanupRouter();
+		setPath(`/space/${SPACE_ID}/goals`);
+		initializeRouter();
+
+		expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+		expect(currentSpaceViewModeSignal.value).toBe('goals');
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
 	});
 
 	it('redirects legacy archived task tabs to completed', () => {
@@ -245,6 +258,12 @@ describe('router', () => {
 		navigateToSpaceTasks(SPACE_ID, 'action');
 		expect(currentSpaceViewModeSignal.value).toBe('tasks');
 		expect(currentSpaceTasksFilterTabSignal.value).toBe('action');
+		finishNavigation();
+
+		navigateToSpaceGoals(SPACE_ID);
+		expect(currentSpaceViewModeSignal.value).toBe('goals');
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
 		finishNavigation();
 
 		navigateToSpaceConfigure(SPACE_ID, 'settings');

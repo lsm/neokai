@@ -25,6 +25,7 @@
 
 import type {
 	CreateSpaceAgentParams,
+	CreateSpaceGoalParams,
 	CreateSpaceTaskParams,
 	CreateSpaceWorkflowParams,
 	LiveQueryDeltaEvent,
@@ -36,17 +37,21 @@ import type {
 	Space,
 	SpaceAgent,
 	SpaceBlockReason,
+	SpaceGoal,
+	SpaceGoalEvent,
+	SpaceGoalListParams,
 	SpaceTask,
 	SpaceTaskActivityMember,
+	SpaceTaskPriority,
 	SpaceTaskStatus,
 	SpaceWorkflow,
-	SpaceWorkflowSummary,
 	SpaceWorkflowRun,
+	SpaceWorkflowSummary,
 	TaskSchedule,
 	TaskScheduleStatus,
 	TaskScheduleTriggerType,
-	SpaceTaskPriority,
 	UpdateSpaceAgentParams,
+	UpdateSpaceGoalParams,
 	UpdateSpaceParams,
 	UpdateSpaceTaskParams,
 	UpdateSpaceWorkflowParams,
@@ -142,6 +147,12 @@ class SpaceStore {
 
 	/** Task schedules for this space */
 	readonly schedules = signal<TaskSchedule[]>([]);
+
+	/** Space goals for this space */
+	readonly goals = signal<SpaceGoal[]>([]);
+
+	/** Goal events keyed by goal ID */
+	readonly goalEvents = signal<Map<string, SpaceGoalEvent[]>>(new Map());
 
 	/** Live task-agent activity rows keyed by task ID */
 	readonly taskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
@@ -329,39 +340,6 @@ class SpaceStore {
 				current.id !== task.id &&
 				(!task.workflowRunId || current.workflowRunId !== task.workflowRunId)
 		);
-	}
-
-	private collapseTasksOnePerRun(tasks: SpaceTask[], runs: SpaceWorkflowRun[]): SpaceTask[] {
-		if (tasks.length === 0) return [];
-		const runsById = new Map(runs.map((run) => [run.id, run]));
-		const groupedByRun = new Map<string, SpaceTask[]>();
-		const standalone: SpaceTask[] = [];
-
-		for (const task of tasks) {
-			if (!task.workflowRunId) {
-				standalone.push(task);
-				continue;
-			}
-			const existing = groupedByRun.get(task.workflowRunId) ?? [];
-			existing.push(task);
-			groupedByRun.set(task.workflowRunId, existing);
-		}
-
-		const canonicalWorkflowTasks = Array.from(groupedByRun.entries()).map(([runId, runTasks]) => {
-			const runTitle = runsById.get(runId)?.title?.trim().toLowerCase() ?? null;
-			const byRunTitle = runTitle
-				? runTasks.find((task) => task.title.trim().toLowerCase() === runTitle)
-				: undefined;
-			return (
-				byRunTitle ??
-				[...runTasks].sort((a, b) => {
-					if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-					return a.taskNumber - b.taskNumber;
-				})[0]
-			);
-		});
-
-		return [...standalone, ...canonicalWorkflowTasks].sort((a, b) => b.updatedAt - a.updatedAt);
 	}
 
 	// ========================================
@@ -582,6 +560,8 @@ class SpaceStore {
 		this.nodeExecPromise = null;
 		this.sessions.value = [];
 		this.schedules.value = [];
+		this.goals.value = [];
+		this.goalEvents.value = new Map();
 		this.clearWorkflowDetailCache();
 		this.workflowVersions.value = new Map();
 		this.disposeSpaceSessionsSubscription();
@@ -917,6 +897,9 @@ class SpaceStore {
 		this.workflowRuns.value = overview.workflowRuns ?? [];
 		// Server already returns collapsed tasks via collapseToCanonicalTasks — use directly
 		this.tasks.value = overview.tasks ?? [];
+		this.listGoals({ includeArchived: false }).catch((err) => {
+			logger.warn('Failed to fetch space goals:', err);
+		});
 
 		return overview.space.id;
 	}
@@ -2119,6 +2102,157 @@ class SpaceStore {
 			{ id: workflowId, spaceId }
 		);
 		return workflow;
+	}
+
+	// ========================================
+	// Goal Methods
+	// ========================================
+
+	private upsertGoal(goal: SpaceGoal): void {
+		const existing = this.goals.value.filter((current) => current.id !== goal.id);
+		this.goals.value = [...existing, goal].sort((a, b) => b.updatedAt - a.updatedAt);
+	}
+
+	async listGoals(options: Omit<SpaceGoalListParams, 'spaceId'> = {}): Promise<SpaceGoal[]> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { goals } = await hub.request<{ goals: SpaceGoal[] }>('spaceGoal.list', {
+			...options,
+			spaceId,
+		});
+		if (this.spaceId.value === spaceId) {
+			this.goals.value = goals ?? [];
+		}
+		return goals ?? [];
+	}
+
+	async fetchGoal(goalId: string): Promise<SpaceGoal> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { goal } = await hub.request<{ goal: SpaceGoal }>('spaceGoal.get', { spaceId, goalId });
+		if (goal && this.spaceId.value === spaceId) this.upsertGoal(goal);
+		return goal;
+	}
+
+	async createGoal(params: Omit<CreateSpaceGoalParams, 'spaceId'>): Promise<SpaceGoal> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { goal } = await hub.request<{ goal: SpaceGoal }>('spaceGoal.create', {
+			...params,
+			spaceId,
+		});
+		if (goal && this.spaceId.value === spaceId) this.upsertGoal(goal);
+		return goal;
+	}
+
+	async updateGoal(
+		goalId: string,
+		params: Pick<
+			UpdateSpaceGoalParams,
+			| 'title'
+			| 'description'
+			| 'status'
+			| 'type'
+			| 'priority'
+			| 'labels'
+			| 'metrics'
+			| 'summary'
+			| 'progress'
+			| 'nextSteps'
+			| 'preferredWorkflowId'
+			| 'autoTriggerNext'
+		>
+	): Promise<SpaceGoal> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { goal } = await hub.request<{ goal: SpaceGoal }>('spaceGoal.update', {
+			...params,
+			spaceId,
+			goalId,
+		});
+		if (goal && this.spaceId.value === spaceId) this.upsertGoal(goal);
+		return goal;
+	}
+
+	async pauseGoal(goalId: string): Promise<SpaceGoal> {
+		return this.runGoalAction('spaceGoal.pause', goalId);
+	}
+
+	async resumeGoal(goalId: string): Promise<SpaceGoal> {
+		return this.runGoalAction('spaceGoal.resume', goalId);
+	}
+
+	async archiveGoal(goalId: string): Promise<SpaceGoal> {
+		return this.updateGoal(goalId, { status: 'archived' });
+	}
+
+	async createImmediateGoalTask(goalId: string): Promise<{
+		goal: SpaceGoal;
+		task: SpaceTask | null;
+		queued: boolean;
+	}> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const result = await hub.request<{
+			goal: SpaceGoal;
+			task: SpaceTask | null;
+			queued: boolean;
+		}>('spaceGoal.createImmediateTask', { spaceId, goalId });
+		if (result?.goal && this.spaceId.value === spaceId) this.upsertGoal(result.goal);
+		if (result?.task && this.spaceId.value === spaceId) {
+			this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, result.task);
+		}
+		return result;
+	}
+
+	async listGoalEvents(goalId: string): Promise<SpaceGoalEvent[]> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { events } = await hub.request<{ events: SpaceGoalEvent[] }>('spaceGoal.listEvents', {
+			spaceId,
+			goalId,
+			limit: 20,
+		});
+		if (this.spaceId.value === spaceId) {
+			this.goalEvents.value = new Map(this.goalEvents.value).set(goalId, events ?? []);
+		}
+		return events ?? [];
+	}
+
+	private async runGoalAction(method: 'spaceGoal.pause' | 'spaceGoal.resume', goalId: string) {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { goal } = await hub.request<{ goal: SpaceGoal }>(method, { spaceId, goalId });
+		if (goal && this.spaceId.value === spaceId) this.upsertGoal(goal);
+		return goal;
 	}
 
 	// ========================================

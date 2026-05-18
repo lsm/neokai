@@ -11,16 +11,18 @@
  * - CRUD methods call correct RPC endpoints
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type {
 	NodeExecution,
 	Space,
-	SpaceTask,
-	SpaceWorkflowRun,
 	SpaceAgent,
-	SpaceWorkflow,
+	SpaceGoal,
+	SpaceGoalEvent,
+	SpaceTask,
 	SpaceTaskActivityMember,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
 } from '@neokai/shared';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // -------------------------------------------------------
 // Mocks — declared before imports so vi.mock hoisting works
@@ -33,7 +35,9 @@ let mockHub: ReturnType<typeof makeMockHub>;
 
 /** Fire all registered handlers for an event (both single and multi-handler maps) */
 function fireMockEvent(eventName: string, data: unknown): void {
-	mockEventHandlerSets.get(eventName)?.forEach((h) => h(data));
+	mockEventHandlerSets.get(eventName)?.forEach((h) => {
+		h(data);
+	});
 }
 
 function makeSpace(id = 'space-1'): Space {
@@ -81,6 +85,53 @@ function makeTask(id: string, status = 'open', workflowRunId?: string): SpaceTas
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...(workflowRunId ? { workflowRunId } : {}),
+	};
+}
+
+function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
+	return {
+		id: 'goal-1',
+		spaceId: 'space-1',
+		title: 'Goal 1',
+		description: '',
+		status: 'active',
+		type: 'one_shot',
+		priority: 'normal',
+		labels: [],
+		metrics: {},
+		summary: '',
+		progress: 0,
+		nextSteps: [],
+		preferredWorkflowId: null,
+		taskScheduleId: null,
+		autoTriggerNext: false,
+		pendingNextRun: false,
+		activeTaskId: null,
+		lastTaskId: null,
+		lastCheckInAt: null,
+		nextCheckInAt: null,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		completedAt: null,
+		...overrides,
+	};
+}
+
+function makeGoalEvent(overrides: Partial<SpaceGoalEvent> = {}): SpaceGoalEvent {
+	return {
+		id: 'goal-event-1',
+		spaceId: 'space-1',
+		goalId: 'goal-1',
+		eventType: 'created',
+		source: 'rpc',
+		sourceTaskId: null,
+		sourceSessionId: null,
+		previousState: null,
+		newState: null,
+		diff: null,
+		note: null,
+		createdAt: Date.now(),
+		...overrides,
 	};
 }
 
@@ -169,7 +220,7 @@ function makeMockHub() {
 			if (!mockEventHandlerSets.has(eventName)) {
 				mockEventHandlerSets.set(eventName, new Set());
 			}
-			mockEventHandlerSets.get(eventName)!.add(handler);
+			mockEventHandlerSets.get(eventName)?.add(handler);
 			return () => {
 				mockEventHandlers.delete(eventName);
 				mockEventHandlerSets.get(eventName)?.delete(handler);
@@ -205,6 +256,26 @@ function makeMockHub() {
 			if (method === 'spaceWorkflow.create') return { workflow: makeWorkflow('new-wf') };
 			if (method === 'spaceWorkflow.update') return { workflow: makeWorkflow('wf1') };
 			if (method === 'nodeExecution.list') return { executions: [] };
+			if (method === 'spaceGoal.list') return { goals: [] };
+			if (method === 'spaceGoal.get') return { goal: makeGoal({ id: params?.goalId as string }) };
+			if (method === 'spaceGoal.create') return { goal: makeGoal({ id: 'new-goal' }) };
+			if (method === 'spaceGoal.update') {
+				return { goal: makeGoal({ id: params?.goalId as string, ...(params ?? {}) }) };
+			}
+			if (method === 'spaceGoal.pause') {
+				return { goal: makeGoal({ id: params?.goalId as string, status: 'paused' }) };
+			}
+			if (method === 'spaceGoal.resume') {
+				return { goal: makeGoal({ id: params?.goalId as string, status: 'active' }) };
+			}
+			if (method === 'spaceGoal.createImmediateTask') {
+				return {
+					goal: makeGoal({ id: params?.goalId as string, activeTaskId: 'goal-task' }),
+					task: makeTask('goal-task'),
+					queued: false,
+				};
+			}
+			if (method === 'spaceGoal.listEvents') return { events: [makeGoalEvent()] };
 			// space.listWithTasks returns array of spaces enriched with tasks
 			if (method === 'space.listWithTasks')
 				return [
@@ -457,7 +528,7 @@ describe('SpaceStore — space.updated event', () => {
 		const handler = mockEventHandlers.get('space.updated');
 		expect(handler).toBeDefined();
 
-		handler!({ sessionId: 'global', spaceId: 'space-1', space: { name: 'Renamed Space' } });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', space: { name: 'Renamed Space' } });
 
 		expect(spaceStore.space.value?.name).toBe('Renamed Space');
 		// Other fields preserved
@@ -469,7 +540,7 @@ describe('SpaceStore — space.updated event', () => {
 		const originalName = spaceStore.space.value?.name;
 
 		const handler = mockEventHandlers.get('space.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-1' });
+		handler?.({ sessionId: 'global', spaceId: 'space-1' });
 
 		expect(spaceStore.space.value?.name).toBe(originalName);
 	});
@@ -479,7 +550,7 @@ describe('SpaceStore — space.updated event', () => {
 		const originalName = spaceStore.space.value?.name;
 
 		const handler = mockEventHandlers.get('space.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-99', space: { name: 'Other' } });
+		handler?.({ sessionId: 'global', spaceId: 'space-99', space: { name: 'Other' } });
 
 		expect(spaceStore.space.value?.name).toBe(originalName);
 	});
@@ -494,7 +565,7 @@ describe('SpaceStore — space.archived event', () => {
 		expect(spaceStore.spaceId.value).toBe('space-1');
 
 		const handler = mockEventHandlers.get('space.archived');
-		handler!({ sessionId: 'global', spaceId: 'space-1', space: makeSpace() });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', space: makeSpace() });
 
 		// Allow the async clearSpace to run
 		await new Promise((r) => setTimeout(r, 0));
@@ -506,7 +577,7 @@ describe('SpaceStore — space.archived event', () => {
 		await spaceStore.selectSpace('space-1');
 
 		const handler = mockEventHandlers.get('space.archived');
-		handler!({ sessionId: 'global', spaceId: 'space-99', space: makeSpace('space-99') });
+		handler?.({ sessionId: 'global', spaceId: 'space-99', space: makeSpace('space-99') });
 
 		await new Promise((r) => setTimeout(r, 0));
 
@@ -523,7 +594,7 @@ describe('SpaceStore — space.deleted event', () => {
 		expect(spaceStore.spaceId.value).toBe('space-1');
 
 		const handler = mockEventHandlers.get('space.deleted');
-		handler!({ sessionId: 'global', spaceId: 'space-1' });
+		handler?.({ sessionId: 'global', spaceId: 'space-1' });
 
 		await new Promise((r) => setTimeout(r, 0));
 
@@ -534,7 +605,7 @@ describe('SpaceStore — space.deleted event', () => {
 		await spaceStore.selectSpace('space-1');
 
 		const handler = mockEventHandlers.get('space.deleted');
-		handler!({ sessionId: 'global', spaceId: 'space-99' });
+		handler?.({ sessionId: 'global', spaceId: 'space-99' });
 
 		await new Promise((r) => setTimeout(r, 0));
 
@@ -553,7 +624,7 @@ describe('SpaceStore — space.task.created event', () => {
 		expect(handler).toBeDefined();
 
 		const task = makeTask('new-t');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 'new-t', task });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 'new-t', task });
 
 		expect(spaceStore.tasks.value).toContainEqual(task);
 	});
@@ -564,7 +635,7 @@ describe('SpaceStore — space.task.created event', () => {
 		spaceStore.tasks.value = [task];
 
 		const handler = mockEventHandlers.get('space.task.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 'dup', task });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 'dup', task });
 
 		expect(spaceStore.tasks.value.length).toBe(1);
 	});
@@ -574,7 +645,7 @@ describe('SpaceStore — space.task.created event', () => {
 		const task = makeTask('other');
 
 		const handler = mockEventHandlers.get('space.task.created');
-		handler!({ sessionId: 'global', spaceId: 'space-99', taskId: 'other', task });
+		handler?.({ sessionId: 'global', spaceId: 'space-99', taskId: 'other', task });
 
 		expect(spaceStore.tasks.value).not.toContainEqual(task);
 	});
@@ -590,7 +661,7 @@ describe('SpaceStore — space.task.updated event', () => {
 
 		const updated = makeTask('t1', 'in_progress');
 		const handler = mockEventHandlers.get('space.task.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
 
 		expect(spaceStore.tasks.value[0].status).toBe('in_progress');
 	});
@@ -601,7 +672,7 @@ describe('SpaceStore — space.task.updated event', () => {
 
 		const task = makeTask('t2', 'in_progress');
 		const handler = mockEventHandlers.get('space.task.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't2', task });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 't2', task });
 
 		expect(spaceStore.tasks.value).toContainEqual(task);
 	});
@@ -612,7 +683,7 @@ describe('SpaceStore — space.task.updated event', () => {
 
 		const updated = makeTask('t1', 'in_progress');
 		const handler = mockEventHandlers.get('space.task.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-99', taskId: 't1', task: updated });
+		handler?.({ sessionId: 'global', spaceId: 'space-99', taskId: 't1', task: updated });
 
 		expect(spaceStore.tasks.value[0].status).toBe('pending');
 	});
@@ -627,7 +698,7 @@ describe('SpaceStore — space.workflowRun.created event', () => {
 
 		const run = makeRun('run-1');
 		const handler = mockEventHandlers.get('space.workflowRun.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', runId: 'run-1', run });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', runId: 'run-1', run });
 
 		expect(spaceStore.workflowRuns.value).toContainEqual(run);
 	});
@@ -638,7 +709,7 @@ describe('SpaceStore — space.workflowRun.created event', () => {
 		spaceStore.workflowRuns.value = [run];
 
 		const handler = mockEventHandlers.get('space.workflowRun.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', runId: 'run-dup', run });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', runId: 'run-dup', run });
 
 		expect(spaceStore.workflowRuns.value.length).toBe(1);
 	});
@@ -648,7 +719,7 @@ describe('SpaceStore — space.workflowRun.created event', () => {
 		const run = makeRun('run-other');
 
 		const handler = mockEventHandlers.get('space.workflowRun.created');
-		handler!({ sessionId: 'global', spaceId: 'space-99', runId: 'run-other', run });
+		handler?.({ sessionId: 'global', spaceId: 'space-99', runId: 'run-other', run });
 
 		expect(spaceStore.workflowRuns.value.length).toBe(0);
 	});
@@ -663,7 +734,7 @@ describe('SpaceStore — space.workflowRun.updated event', () => {
 		spaceStore.workflowRuns.value = [makeRun('run-1', 'pending')];
 
 		const handler = mockEventHandlers.get('space.workflowRun.updated');
-		handler!({
+		handler?.({
 			sessionId: 'global',
 			spaceId: 'space-1',
 			runId: 'run-1',
@@ -678,7 +749,7 @@ describe('SpaceStore — space.workflowRun.updated event', () => {
 		spaceStore.workflowRuns.value = [makeRun('run-1', 'pending')];
 
 		const handler = mockEventHandlers.get('space.workflowRun.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-1', runId: 'run-1' });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', runId: 'run-1' });
 
 		expect(spaceStore.workflowRuns.value[0].status).toBe('pending');
 	});
@@ -693,7 +764,7 @@ describe('SpaceStore — spaceAgent events', () => {
 		const agent = makeAgent('a1');
 
 		const handler = mockEventHandlers.get('spaceAgent.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', agent });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
 
 		expect(spaceStore.agents.value).toContainEqual(agent);
 	});
@@ -704,7 +775,7 @@ describe('SpaceStore — spaceAgent events', () => {
 
 		const updated = { ...makeAgent('a1'), name: 'New Name' };
 		const handler = mockEventHandlers.get('spaceAgent.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-1', agent: updated });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', agent: updated });
 
 		expect(spaceStore.agents.value[0].name).toBe('New Name');
 	});
@@ -714,7 +785,7 @@ describe('SpaceStore — spaceAgent events', () => {
 		spaceStore.agents.value = [makeAgent('a1'), makeAgent('a2')];
 
 		const handler = mockEventHandlers.get('spaceAgent.deleted');
-		handler!({ sessionId: 'global', spaceId: 'space-1', agentId: 'a1' });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', agentId: 'a1' });
 
 		expect(spaceStore.agents.value.map((a) => a.id)).toEqual(['a2']);
 	});
@@ -722,7 +793,7 @@ describe('SpaceStore — spaceAgent events', () => {
 	it('ignores events for a different space', async () => {
 		await spaceStore.selectSpace('space-1');
 		const handler = mockEventHandlers.get('spaceAgent.created');
-		handler!({ sessionId: 'global', spaceId: 'space-99', agent: makeAgent('a1') });
+		handler?.({ sessionId: 'global', spaceId: 'space-99', agent: makeAgent('a1') });
 
 		expect(spaceStore.agents.value.length).toBe(0);
 	});
@@ -737,7 +808,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 		const wf = makeWorkflow('wf1');
 
 		const handler = mockEventHandlers.get('spaceWorkflow.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', workflow: wf });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', workflow: wf });
 
 		expect(spaceStore.workflows.value).toContainEqual(
 			expect.objectContaining({ id: 'wf1', name: 'Workflow wf1' })
@@ -752,7 +823,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 		const updated = makeWorkflow('wf1');
 		updated.name = 'New';
 		const handler = mockEventHandlers.get('spaceWorkflow.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-1', workflow: updated });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', workflow: updated });
 
 		expect(spaceStore.workflows.value[0].name).toBe('New');
 	});
@@ -762,7 +833,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 		spaceStore.workflows.value = [makeWorkflowSummary('wf1'), makeWorkflowSummary('wf2')];
 
 		const handler = mockEventHandlers.get('spaceWorkflow.deleted');
-		handler!({ sessionId: 'global', spaceId: 'space-1', workflowId: 'wf1' });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', workflowId: 'wf1' });
 
 		expect(spaceStore.workflows.value.map((w) => w.id)).toEqual(['wf2']);
 	});
@@ -772,7 +843,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 		const handler = mockEventHandlers.get('spaceWorkflow.deleted');
 		spaceStore.workflows.value = [makeWorkflowSummary('wf1')];
 
-		handler!({ sessionId: 'global', spaceId: 'space-99', workflowId: 'wf1' });
+		handler?.({ sessionId: 'global', spaceId: 'space-99', workflowId: 'wf1' });
 
 		expect(spaceStore.workflows.value.length).toBe(1);
 	});
@@ -853,7 +924,7 @@ describe('SpaceStore — task visibility after real-time events', () => {
 
 		const task = makeTask('t-new', 'open');
 		const handler = mockEventHandlers.get('space.task.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't-new', task });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 't-new', task });
 
 		expect(spaceStore.tasks.value).toHaveLength(1);
 		expect(spaceStore.tasks.value[0].id).toBe('t-new');
@@ -864,7 +935,7 @@ describe('SpaceStore — task visibility after real-time events', () => {
 
 		const task = makeTask('t-active', 'in_progress');
 		const handler = mockEventHandlers.get('space.task.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't-active', task });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 't-active', task });
 
 		expect(spaceStore.activeTasks.value).toHaveLength(1);
 		expect(spaceStore.activeTasks.value[0].id).toBe('t-active');
@@ -877,7 +948,7 @@ describe('SpaceStore — task visibility after real-time events', () => {
 
 		const updated = makeTask('t1', 'in_progress');
 		const handler = mockEventHandlers.get('space.task.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
 
 		expect(spaceStore.activeTasks.value).toHaveLength(1);
 		expect(spaceStore.activeTasks.value[0].status).toBe('in_progress');
@@ -888,7 +959,7 @@ describe('SpaceStore — task visibility after real-time events', () => {
 
 		const task = makeTask('t-wf', 'open', 'run-1');
 		const handler = mockEventHandlers.get('space.task.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't-wf', task });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 't-wf', task });
 
 		expect(spaceStore.tasksByRun.value.get('run-1')).toHaveLength(1);
 		expect(spaceStore.standaloneTasks.value).toHaveLength(0);
@@ -899,7 +970,7 @@ describe('SpaceStore — task visibility after real-time events', () => {
 
 		const task = makeTask('t-solo', 'open');
 		const handler = mockEventHandlers.get('space.task.created');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't-solo', task });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 't-solo', task });
 
 		expect(spaceStore.standaloneTasks.value).toHaveLength(1);
 		expect(spaceStore.standaloneTasks.value[0].id).toBe('t-solo');
@@ -909,19 +980,19 @@ describe('SpaceStore — task visibility after real-time events', () => {
 		await spaceStore.selectSpace('space-1');
 		const handler = mockEventHandlers.get('space.task.created');
 
-		handler!({
+		handler?.({
 			sessionId: 'global',
 			spaceId: 'space-1',
 			taskId: 't1',
 			task: makeTask('t1', 'open'),
 		});
-		handler!({
+		handler?.({
 			sessionId: 'global',
 			spaceId: 'space-1',
 			taskId: 't2',
 			task: makeTask('t2', 'in_progress'),
 		});
-		handler!({
+		handler?.({
 			sessionId: 'global',
 			spaceId: 'space-1',
 			taskId: 't3',
@@ -939,7 +1010,7 @@ describe('SpaceStore — task visibility after real-time events', () => {
 
 		const updated = makeTask('t1', 'done');
 		const handler = mockEventHandlers.get('space.task.updated');
-		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
+		handler?.({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
 
 		expect(spaceStore.activeTasks.value).toHaveLength(0);
 		expect(spaceStore.tasks.value[0].status).toBe('done');
@@ -1013,6 +1084,82 @@ describe('SpaceStore — CRUD methods', () => {
 			status: 'in_progress',
 		});
 		expect(task.status).toBe('in_progress');
+	});
+
+	it('listGoals calls spaceGoal.list RPC and updates goal state', async () => {
+		await spaceStore.selectSpace('space-1');
+		const goal = makeGoal({ id: 'goal-a', title: 'Alpha' });
+		mockHub.request.mockResolvedValueOnce({ goals: [goal] } as Awaited<
+			ReturnType<typeof mockHub.request>
+		>);
+
+		const goals = await spaceStore.listGoals({ includeArchived: true });
+
+		expect(mockHub.request).toHaveBeenLastCalledWith('spaceGoal.list', {
+			spaceId: 'space-1',
+			includeArchived: true,
+		});
+		expect(goals).toEqual([goal]);
+		expect(spaceStore.goals.value).toEqual([goal]);
+	});
+
+	it('createGoal and updateGoal call goal RPCs with current space', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		await spaceStore.createGoal({ title: 'New goal', labels: ['release'] });
+		expect(mockHub.request).toHaveBeenLastCalledWith('spaceGoal.create', {
+			spaceId: 'space-1',
+			title: 'New goal',
+			labels: ['release'],
+		});
+
+		await spaceStore.updateGoal('goal-1', { progress: 50, autoTriggerNext: true });
+		expect(mockHub.request).toHaveBeenLastCalledWith('spaceGoal.update', {
+			spaceId: 'space-1',
+			goalId: 'goal-1',
+			progress: 50,
+			autoTriggerNext: true,
+		});
+	});
+
+	it('goal actions update goals and immediate tasks in local state', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const paused = await spaceStore.pauseGoal('goal-1');
+		expect(mockHub.request).toHaveBeenLastCalledWith('spaceGoal.pause', {
+			spaceId: 'space-1',
+			goalId: 'goal-1',
+		});
+		expect(paused.status).toBe('paused');
+
+		const resumed = await spaceStore.resumeGoal('goal-1');
+		expect(mockHub.request).toHaveBeenLastCalledWith('spaceGoal.resume', {
+			spaceId: 'space-1',
+			goalId: 'goal-1',
+		});
+		expect(resumed.status).toBe('active');
+
+		const result = await spaceStore.createImmediateGoalTask('goal-1');
+		expect(mockHub.request).toHaveBeenLastCalledWith('spaceGoal.createImmediateTask', {
+			spaceId: 'space-1',
+			goalId: 'goal-1',
+		});
+		expect(result.queued).toBe(false);
+		expect(spaceStore.tasks.value.some((task) => task.id === 'goal-task')).toBe(true);
+	});
+
+	it('listGoalEvents stores events by goal id', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const events = await spaceStore.listGoalEvents('goal-1');
+
+		expect(mockHub.request).toHaveBeenLastCalledWith('spaceGoal.listEvents', {
+			spaceId: 'space-1',
+			goalId: 'goal-1',
+			limit: 20,
+		});
+		expect(events).toHaveLength(1);
+		expect(spaceStore.goalEvents.value.get('goal-1')).toEqual(events);
 	});
 
 	it('subscribeTaskActivity subscribes to LiveQuery and applies snapshots', async () => {

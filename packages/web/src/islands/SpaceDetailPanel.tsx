@@ -9,10 +9,10 @@ import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { createSession } from '../lib/api-helpers';
-import { spaceStore } from '../lib/space-store';
 import {
 	navigateToSpace,
 	navigateToSpaceAgent,
+	navigateToSpaceGoals,
 	navigateToSpaceSession,
 	navigateToSpaceSessions,
 	navigateToSpaceTask,
@@ -23,6 +23,7 @@ import {
 	currentSpaceTaskIdSignal,
 	currentSpaceViewModeSignal,
 } from '../lib/signals';
+import { spaceStore } from '../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
 import { cn } from '../lib/utils';
 
@@ -134,6 +135,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const isLoading = spaceStore.loading.value;
 	const loadedSpaceId = spaceStore.spaceId.value;
 	const tasks = spaceStore.tasks.value;
+	const goals = spaceStore.goals.value;
 	const space = spaceStore.space.value;
 
 	const isReady = !isLoading && loadedSpaceId === spaceId;
@@ -168,6 +170,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		selectedTaskId === null &&
 		currentSpaceViewModeSignal.value === 'overview';
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
+	const isGoalsSelected = currentSpaceViewModeSignal.value === 'goals';
 	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
 	const isSessionsSelected = currentSpaceViewModeSignal.value === 'sessions';
 
@@ -209,6 +212,11 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	const handleSpaceAgentClick = useCallback(() => {
 		navigateToSpaceAgent(spaceId);
+		onNavigate?.();
+	}, [spaceId, onNavigate]);
+
+	const handleGoalsClick = useCallback(() => {
+		navigateToSpaceGoals(spaceId);
 		onNavigate?.();
 	}, [spaceId, onNavigate]);
 
@@ -265,7 +273,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					testId="space-detail-dashboard"
 					accentClass="text-blue-400"
 					icon={
-						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<svg
+							class="w-4 h-4"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							aria-hidden="true"
+						>
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
@@ -282,7 +296,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					testId="space-detail-agent"
 					accentClass="text-purple-400"
 					icon={
-						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<svg
+							class="w-4 h-4"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							aria-hidden="true"
+						>
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
@@ -292,6 +312,37 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 						</svg>
 					}
 				/>
+
+				<SpaceNavItem
+					label="Goals"
+					active={isGoalsSelected}
+					onClick={handleGoalsClick}
+					testId="space-detail-goals"
+					accentClass="text-blue-400"
+					icon={
+						<svg
+							class="w-4 h-4"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							aria-hidden="true"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z"
+							/>
+						</svg>
+					}
+					badge={
+						goals.length > 0 ? (
+							<span class="flex-shrink-0 text-xs tabular-nums text-gray-500">
+								{goals.filter((goal) => goal.status !== 'archived').length}
+							</span>
+						) : undefined
+					}
+				/>
 				<SpaceNavItem
 					label="Tasks"
 					active={isTasksSelected}
@@ -299,7 +350,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					testId="space-detail-tasks"
 					accentClass="text-green-400"
 					icon={
-						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<svg
+							class="w-4 h-4"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							aria-hidden="true"
+						>
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
@@ -323,7 +380,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					testId="space-detail-sessions"
 					accentClass="text-amber-400"
 					icon={
-						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<svg
+							class="w-4 h-4"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							aria-hidden="true"
+						>
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
@@ -376,6 +439,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 						tasksForTab.map((task) => (
 							<button
 								key={task.id}
+								type="button"
 								onClick={() => handleTaskClick(task.id)}
 								class={cn(
 									'w-full px-3 py-1.5 flex items-center gap-2 rounded-lg transition-colors text-left',
@@ -397,11 +461,18 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					defaultExpanded={true}
 					headerRight={
 						<button
+							type="button"
 							onClick={handleCreateSession}
 							class="rounded-md p-0.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-300"
 							aria-label="Create session"
 						>
-							<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<svg
+								class="w-3.5 h-3.5"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+								aria-hidden="true"
+							>
 								<path
 									stroke-linecap="round"
 									stroke-linejoin="round"
@@ -418,6 +489,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 						sessions.map((session) => (
 							<button
 								key={session.id}
+								type="button"
 								onClick={() => handleSessionClick(session.id)}
 								class={cn(
 									'w-full px-3 py-2 flex items-center gap-2.5 rounded-lg transition-colors',
