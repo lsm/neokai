@@ -86,6 +86,7 @@ export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
 export type SettingsSection =
 	| 'general'
 	| 'providers'
+	| 'custom-endpoints'
 	| 'app-mcp-servers'
 	| 'skills'
 	| 'models'

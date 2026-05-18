@@ -23,6 +23,7 @@ import {
 	getModelFamilyIcon,
 	mapRawModelsToModelInfos,
 	PROVIDER_LABELS,
+	getProviderLabel,
 } from '../../hooks/useModelSwitcher.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Spinner } from '../ui/Spinner';
@@ -154,7 +155,7 @@ function ModelPickerModal({
 						return (
 							<div key={provider}>
 								<div class="px-4 py-1.5 text-xs font-semibold text-gray-400">
-									{PROVIDER_LABELS[provider] || provider}
+									{PROVIDER_LABELS[provider] || getProviderLabel(provider)}
 									{!isAuthenticated && <span class="text-gray-600 ml-1">(not authenticated)</span>}
 								</div>
 								{models.map((model) => {
@@ -224,7 +225,7 @@ function FallbackChainEditor({
 						<div class="flex-1 min-w-0">
 							<div class="text-sm text-gray-200 truncate">{displayInfo.name}</div>
 							<div class="text-xs text-gray-500">
-								{PROVIDER_LABELS[entry.provider] || entry.provider}
+								{PROVIDER_LABELS[entry.provider] || getProviderLabel(entry.provider)}
 							</div>
 						</div>
 						<div class="flex items-center gap-1">
@@ -362,7 +363,7 @@ function OverrideEditorModal({
 								<div class="flex-1 min-w-0">
 									<div class="text-sm text-gray-200 truncate">{sourceInfo.name}</div>
 									<div class="text-xs text-gray-500">
-										{PROVIDER_LABELS[sourceInfo.provider] || sourceInfo.provider}
+										{PROVIDER_LABELS[sourceInfo.provider] || getProviderLabel(sourceInfo.provider)}
 									</div>
 								</div>
 								{editingKey === null && (
@@ -768,7 +769,8 @@ export function ModelsSettings() {
 											<div class="flex-1 min-w-0">
 												<div class="text-sm text-gray-200 truncate">{sourceInfo.name}</div>
 												<div class="text-xs text-gray-500">
-													{PROVIDER_LABELS[sourceInfo.provider] || sourceInfo.provider}
+													{PROVIDER_LABELS[sourceInfo.provider] ||
+														getProviderLabel(sourceInfo.provider)}
 												</div>
 											</div>
 											<button

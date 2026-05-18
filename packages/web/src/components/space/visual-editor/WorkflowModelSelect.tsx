@@ -5,6 +5,7 @@ import {
 	groupModelsByProvider,
 	mapRawModelsToModelInfos,
 	PROVIDER_LABELS,
+	getProviderLabel,
 	type RawModelEntry,
 } from '../../../hooks/useModelSwitcher';
 
@@ -99,7 +100,7 @@ export function WorkflowModelSelect({
 			<option value="">— No override —</option>
 			{hasCurrentOutsideList && <option value={value}>{`Current (${value})`}</option>}
 			{Array.from(groupedModels.entries()).map(([provider, providerModels]) => (
-				<optgroup key={provider} label={PROVIDER_LABELS[provider] || provider}>
+				<optgroup key={provider} label={PROVIDER_LABELS[provider] || getProviderLabel(provider)}>
 					{providerModels.map((model) => (
 						<option key={`${provider}:${model.id}`} value={model.id}>
 							{`${model.name} (${model.id})`}

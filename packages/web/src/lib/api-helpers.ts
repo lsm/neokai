@@ -344,3 +344,33 @@ export async function setSessionWorkspace(
 	}>('session.setWorkspace', { sessionId, workspacePath, worktreeMode });
 	return session;
 }
+
+// ==================== Custom Endpoints ====================
+
+export async function listCustomEndpoints(): Promise<{
+	endpoints: import('@neokai/shared').CustomEndpointConfig[];
+}> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ endpoints: import('@neokai/shared').CustomEndpointConfig[] }>(
+		'customEndpoints.list'
+	);
+}
+
+export async function addCustomEndpoint(
+	endpoint: import('@neokai/shared').CustomEndpointConfig
+): Promise<{ success: boolean; endpoint: import('@neokai/shared').CustomEndpointConfig }> {
+	const hub = getHubOrThrow();
+	return await hub.request('customEndpoints.add', { endpoint });
+}
+
+export async function updateCustomEndpoint(
+	endpoint: import('@neokai/shared').CustomEndpointConfig
+): Promise<{ success: boolean; endpoint: import('@neokai/shared').CustomEndpointConfig }> {
+	const hub = getHubOrThrow();
+	return await hub.request('customEndpoints.update', { endpoint });
+}
+
+export async function removeCustomEndpoint(id: string): Promise<{ success: boolean }> {
+	const hub = getHubOrThrow();
+	return await hub.request('customEndpoints.remove', { id });
+}
