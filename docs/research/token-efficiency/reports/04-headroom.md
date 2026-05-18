@@ -3,7 +3,8 @@
 **Resource:** https://github.com/chopratejas/headroom  
 **Local repo:** `~/focus/tmp/token-efficiency/repos/headroom`  
 **Type:** local proxy, SDK, agent wrapper, MCP/tools/hooks  
-**Focus:** provider-request compression, structured JSON/log compression, cache alignment, reversible retrieval
+**Focus:** provider-request compression, structured JSON/log compression, cache alignment, reversible retrieval  
+**License:** Apache-2.0
 
 ## Architecture
 

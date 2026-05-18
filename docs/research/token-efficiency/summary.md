@@ -128,6 +128,16 @@ Most reliable savings by category:
 
 ## Applicability to NeoKai
 
+### License notes
+
+Adoption recommendations must account for license differences:
+
+- **Context Mode:** Elastic License 2.0 in the inspected repo, despite the article summary claiming MIT. This can restrict commercial competing use; borrow patterns cautiously and avoid copying code without legal review.
+- **Headroom:** Apache-2.0. More permissive for commercial adaptation, with patent/license notice obligations.
+- **Governor:** MIT. Permissive for reuse with attribution/license preservation.
+- **Caveman:** MIT. Permissive for reuse with attribution/license preservation.
+- **The Harness Problem:** article/research source, not a reusable codebase; treat ideas as design input and verify any linked implementation license separately.
+
 ### Current NeoKai touchpoints
 
 Relevant current architecture from codebase:
