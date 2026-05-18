@@ -1,10 +1,29 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { AgentMemoryRepository } from '../../../src/storage/repositories/agent-memory-repository.ts';
+import {
+	AgentMemoryRepository,
+	type AgentMemoryEmbedder,
+} from '../../../src/storage/repositories/agent-memory-repository.ts';
 
 let db: BunDatabase;
 let repo: AgentMemoryRepository;
+
+class KeywordEmbedder implements AgentMemoryEmbedder {
+	model = 'test-keyword';
+	dimensions = 3;
+
+	embed(text: string): Float32Array {
+		const lower = text.toLowerCase();
+		return new Float32Array([
+			lower.includes('delete') || lower.includes('remove') || lower.includes('erase') ? 1 : 0,
+			lower.includes('session') || lower.includes('conversation') || lower.includes('thread')
+				? 1
+				: 0,
+			lower.includes('credential') || lower.includes('secret') || lower.includes('token') ? 1 : 0,
+		]);
+	}
+}
 
 function seedSpace(spaceId: string): void {
 	const now = Date.now();
@@ -258,5 +277,58 @@ describe('AgentMemoryRepository', () => {
 		expect(repo.delete('space-a', 'obsolete')).toBe(true);
 		expect(repo.read('space-a', 'obsolete')).toBeNull();
 		expect(repo.search('space-a', 'Flowbite', 10)).toHaveLength(0);
+	});
+
+	test('semantic paraphrase query finds memory with zero keyword overlap', () => {
+		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+		repo.write({
+			spaceId: 'space-a',
+			key: 'cleanup.sessions',
+			content: 'Delete stale session records after retention expires.',
+		});
+		repo.write({
+			spaceId: 'space-a',
+			key: 'auth.tokens',
+			content: 'Store credential material only in secure storage.',
+		});
+
+		const results = repo.search('space-a', 'erase old conversation data', 5);
+
+		expect(results.map((result) => result.memory.key)).toContain('cleanup.sessions');
+		expect(results[0].memory.key).toBe('cleanup.sessions');
+	});
+
+	test('pending entries still appear in FTS results while embedding is incomplete', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'pending.memory',
+			content: 'Pending embedding still searchable through lexical fallback.',
+		});
+
+		const row = db
+			.prepare(`SELECT embedding_status FROM space_agent_memory WHERE space_id = ? AND key = ?`)
+			.get('space-a', 'pending.memory') as { embedding_status: string };
+		expect(row.embedding_status).toBe('pending');
+		expect(
+			repo.search('space-a', 'lexical fallback', 5).map((result) => result.memory.key)
+		).toEqual(['pending.memory']);
+	});
+
+	test('vector search preserves space isolation', () => {
+		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+		repo.write({
+			spaceId: 'space-a',
+			key: 'cleanup.local',
+			content: 'Delete stale session records after retention expires.',
+		});
+		repo.write({
+			spaceId: 'space-b',
+			key: 'cleanup.other',
+			content: 'Delete stale session records after retention expires.',
+		});
+
+		const results = repo.search('space-a', 'erase old conversation data', 5);
+
+		expect(results.map((result) => result.memory.key)).toEqual(['cleanup.local']);
 	});
 });

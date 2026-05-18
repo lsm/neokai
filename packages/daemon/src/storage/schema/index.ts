@@ -708,6 +708,10 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			access_count INTEGER NOT NULL DEFAULT 0,
 			last_accessed_at INTEGER,
+			embedding_status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(embedding_status IN ('pending', 'ready', 'failed')),
+			embedding_model TEXT,
+			embedding_updated_at INTEGER,
 			UNIQUE(space_id, key),
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
@@ -720,6 +724,16 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			content='space_agent_memory',
 			content_rowid='rowid',
 			tokenize='trigram'
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS memory_vectors (
+			memory_rowid INTEGER PRIMARY KEY,
+			embedding BLOB NOT NULL,
+			dimensions INTEGER NOT NULL,
+			model TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (memory_rowid) REFERENCES space_agent_memory(rowid) ON DELETE CASCADE
 		)
 	`);
 	db.exec(`
@@ -790,6 +804,9 @@ function createIndexes(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
 	);
 
 	// Room indexes

@@ -430,7 +430,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'space_external_event_source_configs',
 	'space_external_events',
 	'space_external_event_deliveries',
-	// FTS5 shadow tables for space_agent_memory — query through space_agent_memory instead.
+	// Agent memory search index/vector storage — query through space_agent_memory instead.
+	'memory_vectors',
 	'space_agent_memory_fts',
 	'space_agent_memory_fts_config',
 	'space_agent_memory_fts_data',

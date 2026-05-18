@@ -41,6 +41,7 @@ import { TaskRepository } from './repositories/task-repository';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 import { SkillRepository } from './repositories/skill-repository';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
+import { FastembedAgentMemoryEmbedder } from './repositories/agent-memory-embeddings';
 import { AgentMemoryRepository } from './repositories/agent-memory-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
@@ -120,7 +121,11 @@ export class Database {
 		this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
 		this.skillRepo = new SkillRepository(db, reactiveDb);
 		this.workspaceHistoryRepo = new WorkspaceHistoryRepository(db);
-		this.agentMemoryRepo = new AgentMemoryRepository(db, reactiveDb);
+		this.agentMemoryRepo = new AgentMemoryRepository(
+			db,
+			reactiveDb,
+			new FastembedAgentMemoryEmbedder()
+		);
 	}
 
 	// ============================================================================

@@ -638,6 +638,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 135: Add space-scoped pending message lookup index for actor registry.
 	runMigration135(db);
+
+	// Migration 136: Add agent-memory embedding status and vector storage.
+	runMigration136(db);
 }
 
 /**
@@ -9016,6 +9019,36 @@ export function runMigration131(db: BunDatabase): void {
  * searched text is derived from SDK JSON. Repository writes maintain rows for new messages; this
  * migration backfills existing messages and task titles/descriptions.
  */
+export function runMigration136(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agent_memory')) return;
+
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_status')) {
+		db.exec(
+			`ALTER TABLE space_agent_memory ADD COLUMN embedding_status TEXT NOT NULL DEFAULT 'pending'`
+		);
+	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_model')) {
+		db.exec(`ALTER TABLE space_agent_memory ADD COLUMN embedding_model TEXT`);
+	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_updated_at')) {
+		db.exec(`ALTER TABLE space_agent_memory ADD COLUMN embedding_updated_at INTEGER`);
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS memory_vectors (
+			memory_rowid INTEGER PRIMARY KEY,
+			embedding BLOB NOT NULL,
+			dimensions INTEGER NOT NULL,
+			model TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (memory_rowid) REFERENCES space_agent_memory(rowid) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+	);
+}
+
 export function runMigration134(db: BunDatabase): void {
 	const existed = tableExists(db, 'message_search_fts');
 	createMessageSearchFtsTable(db);
