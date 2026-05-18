@@ -71,6 +71,16 @@ export class SpaceTaskRepository {
 	}
 
 	/**
+	 * Remove both the task-kind row and any message-kind projection rows linked
+	 * to this task. Hard-deleting a task FK-cascades its `sdk_messages` rows, so
+	 * the message search projection must be cleaned up to avoid orphaned hits.
+	 */
+	private deleteTaskMessageSearchRows(taskId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		this.db.prepare(`DELETE FROM message_search_fts WHERE task_id = ?`).run(taskId);
+	}
+
+	/**
 	 * Create a new space task
 	 */
 	createTask(params: InternalCreateSpaceTaskParams): SpaceTask {
@@ -511,7 +521,7 @@ export class SpaceTaskRepository {
 		const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE id = ?`);
 		const result = stmt.run(id);
 		if (result.changes > 0) {
-			this.deleteTaskSearchRow(id);
+			this.deleteTaskMessageSearchRows(id);
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 		return result.changes > 0;
@@ -527,7 +537,7 @@ export class SpaceTaskRepository {
 			id: string;
 		}>;
 		this.db.prepare(`DELETE FROM space_tasks WHERE space_id = ?`).run(spaceId);
-		for (const row of rows) this.deleteTaskSearchRow(row.id);
+		for (const row of rows) this.deleteTaskMessageSearchRows(row.id);
 		this.reactiveDb?.notifyChange('space_tasks');
 	}
 

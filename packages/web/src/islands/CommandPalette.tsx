@@ -328,7 +328,13 @@ export function CommandPalette() {
 		const requestId = ++requestIdRef.current;
 		const timeout = setTimeout(async () => {
 			const hub = connectionManager.getHubIfConnected();
-			if (!hub) return;
+			if (!hub) {
+				if (requestId === requestIdRef.current) {
+					setLoadingMessages(false);
+					setMessageResults([]);
+				}
+				return;
+			}
 			try {
 				setLoadingMessages(true);
 				const response = await hub.request<MessageSearchResponse>('message.search', {
