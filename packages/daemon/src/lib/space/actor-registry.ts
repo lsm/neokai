@@ -172,7 +172,7 @@ function agentActor(agent: SpaceAgent, handleCounts: Map<string, number>): Actor
 		kind: 'agent',
 		spaceId: agent.spaceId,
 		handle: `@${handleSlug}`,
-		roles: unique(['space-agent', routableRole(slug)]),
+		roles: unique(['space-agent', routingRole(handleSlug)]),
 		status: 'active',
 	};
 }
@@ -183,7 +183,7 @@ function workerActorFromExecution(spaceId: string, execution: NodeExecution): Ac
 		kind: 'worker',
 		spaceId,
 		handle: workerHandle(execution.workflowRunId, execution.workflowNodeId, execution.agentName),
-		roles: unique([routableRole(execution.agentName), routableRole(execution.workflowNodeId)]),
+		roles: unique([routingRole(execution.agentName), routingRole(execution.workflowNodeId)]),
 		status: statusFromNodeExecution(execution),
 	};
 }
@@ -199,14 +199,17 @@ function pendingWorkerActors(
 		[];
 	if (nodes.length === 0) return [];
 
-	return nodes.map((node) => ({
-		actorId: workerActorId(workflowRunId, node.id, targetAgentName),
-		kind: 'worker',
-		spaceId,
-		handle: workerHandle(workflowRunId, node.id, targetAgentName),
-		roles: unique([routableRole(targetAgentName), routableRole(node.id)]),
-		status: 'inactive',
-	}));
+	const node = nodes[0];
+	return [
+		{
+			actorId: workerActorId(workflowRunId, node.id, targetAgentName),
+			kind: 'worker',
+			spaceId,
+			handle: workerHandle(workflowRunId, node.id, targetAgentName),
+			roles: unique([routingRole(targetAgentName), routingRole(node.id)]),
+			status: 'inactive',
+		},
+	];
 }
 
 function workerActorId(workflowRunId: string, nodeId: string, agentName: string): string {
@@ -221,18 +224,10 @@ function reservedHandles(): string[] {
 	return ['coordinator', ...SPACE_SYSTEM_ACTORS.map((actor) => actor.handle.slice(1))];
 }
 
-const RESERVED_ROLES = new Set([
-	'coordinator',
-	'member',
-	'member-session',
-	'runtime',
-	'workflow-runtime',
-	'messaging',
-	'space-agent',
-]);
+const ROUTING_ROLE_PREFIX = 'actor-role:';
 
-function routableRole(role: string): string {
-	return RESERVED_ROLES.has(role) ? `custom-${role}` : role;
+function routingRole(role: string): string {
+	return `${ROUTING_ROLE_PREFIX}${encodeURIComponent(role)}`;
 }
 
 function encodeActorIdComponent(value: string): string {

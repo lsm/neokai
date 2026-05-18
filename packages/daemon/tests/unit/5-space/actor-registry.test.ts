@@ -172,6 +172,11 @@ describe('SpaceActorRegistryAdapter', () => {
 					name: 'Coordinator Worker',
 					agents: [{ agentId: agent.id, name: 'messaging' }],
 				},
+				{
+					id: 'OtherReview',
+					name: 'Other Review',
+					agents: [{ agentId: agent.id, name: 'reviewer:lead' }],
+				},
 			],
 			transitions: [],
 			startNodeId: 'Coding',
@@ -261,7 +266,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			kind: 'agent',
 			spaceId: space.id,
 			handle: '@long-term-agent',
-			roles: ['long-term-agent', 'space-agent'],
+			roles: ['actor-role:long-term-agent', 'space-agent'],
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
@@ -269,7 +274,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			kind: 'agent',
 			spaceId: space.id,
 			handle: `@coordinator-${reservedNameAgent.id.slice(0, 8)}`,
-			roles: ['custom-coordinator', 'space-agent'],
+			roles: [`actor-role:coordinator-${reservedNameAgent.id.slice(0, 8)}`, 'space-agent'],
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
@@ -277,7 +282,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			kind: 'worker',
 			spaceId: space.id,
 			handle: `@worker:${encodeURIComponent(run.id)}/Coding%3ANode/coder%2Flead`,
-			roles: ['Coding:Node', 'coder/lead'],
+			roles: ['actor-role:Coding%3ANode', 'actor-role:coder%2Flead'],
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
@@ -285,7 +290,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			kind: 'worker',
 			spaceId: space.id,
 			handle: `@worker:${encodeURIComponent(run.id)}/Review%2FQA/reviewer%3Alead`,
-			roles: ['Review/QA', 'reviewer:lead'],
+			roles: ['actor-role:Review%2FQA', 'actor-role:reviewer%3Alead'],
 			status: 'inactive',
 		});
 		expect(actors).toContainEqual({
@@ -293,9 +298,15 @@ describe('SpaceActorRegistryAdapter', () => {
 			kind: 'worker',
 			spaceId: space.id,
 			handle: `@worker:${encodeURIComponent(run.id)}/coordinator/messaging`,
-			roles: ['custom-coordinator', 'custom-messaging'],
+			roles: ['actor-role:coordinator', 'actor-role:messaging'],
 			status: 'archived',
 		});
+		expect(
+			actors.some(
+				(actor) =>
+					actor.actorId === `worker:${encodeURIComponent(run.id)}:OtherReview:reviewer%3Alead`
+			)
+		).toBe(false);
 		expect(actors.some((actor) => actor.actorId === `worker:${run.id}:reviewer:reviewer`)).toBe(
 			false
 		);
@@ -331,6 +342,7 @@ describe('SpaceActorRegistryAdapter', () => {
 		});
 		const first = spaceAgentRepo.create({ spaceId: space.id, name: 'A-B' });
 		const second = spaceAgentRepo.create({ spaceId: space.id, name: 'A B' });
+		const prefixed = spaceAgentRepo.create({ spaceId: space.id, name: 'custom-coordinator' });
 		const cjk = spaceAgentRepo.create({ spaceId: space.id, name: '助手' });
 
 		const actors = registry.listActors(space.id);
@@ -341,6 +353,18 @@ describe('SpaceActorRegistryAdapter', () => {
 		expect(registry.getActor(space.id, `agent:${second.id}`)?.handle).toBe(
 			`@a-b-${second.id.slice(0, 8)}`
 		);
+		expect(registry.getActor(space.id, `agent:${first.id}`)?.roles).toEqual([
+			`actor-role:a-b-${first.id.slice(0, 8)}`,
+			'space-agent',
+		]);
+		expect(registry.getActor(space.id, `agent:${second.id}`)?.roles).toEqual([
+			`actor-role:a-b-${second.id.slice(0, 8)}`,
+			'space-agent',
+		]);
+		expect(registry.getActor(space.id, `agent:${prefixed.id}`)?.roles).toEqual([
+			'actor-role:custom-coordinator',
+			'space-agent',
+		]);
 		expect(registry.getActor(space.id, `agent:${cjk.id}`)?.handle).toBe(
 			`@agent-${cjk.id.slice(0, 8)}`
 		);
