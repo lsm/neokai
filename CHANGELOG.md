@@ -2,6 +2,26 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.27.1] - 2026-05-18
+
+### Fixed
+
+- Removed AppImage from Linux desktop release (unreliable linuxdeploy bundling); deb and rpm remain
+
+## [0.27.0] - 2026-05-18
+
+A major release adding full-text message search, custom OpenAI-compatible endpoints, persistent agent memory, Space-native goals, and signed desktop release artifacts. 8 commits since v0.26.0.
+
+### Added
+
+- **Full-text message search**: FTS5-backed search across session messages with quick-open UI in command palette; highlighted snippets; cross-session search; task title indexing
+- **Custom OpenAI-compatible endpoints**: User-defined endpoints (LM Studio, vLLM, LiteLLM) with embedded Anthropic↔OpenAI bridge; tool_calls streaming; vision/thinking/reasoning_effort support; loopback binding; baseUrl normalisation; settings panel with presets
+- **Persistent agent memory**: Agents retain memory across sessions
+- **Space-native goal backend**: Goals reimplemented on Space infrastructure; rolling state (summary, progress, metrics, nextSteps); autoTriggerNext; goal-task-schedule linkage; MCP tools for agents; append-only event history
+- **Generic messaging contracts**: Unified messaging abstractions
+- **Signed macOS desktop release artifacts**: CI produces signed desktop builds for macOS
+- **Linux desktop release artifacts**: Unsigned Linux desktop builds in CI
+
 ## [0.26.0] - 2026-05-17
 
 A major release with a full Codex-style /sessions UI redesign, command palette, Space actor communication model, and node-level post-approval routing. 10 commits since v0.25.0.
