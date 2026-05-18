@@ -359,8 +359,10 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 		let cancelled = false;
 		setLoading(true);
 		setError(null);
-		spaceStore
-			.listGoals({ includeArchived: showArchived })
+		Promise.all([
+			spaceStore.listGoals({ includeArchived: showArchived }),
+			spaceStore.ensureConfigData(),
+		])
 			.catch((err) => {
 				if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load goals');
 			})

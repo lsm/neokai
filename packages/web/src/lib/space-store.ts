@@ -583,6 +583,9 @@ class SpaceStore {
 					if (resolvedId !== spaceIdOrSlug) {
 						this.spaceId.value = resolvedId;
 					}
+					this.listGoals({ includeArchived: false }).catch((err) => {
+						logger.warn('Failed to fetch space goals:', err);
+					});
 					await this.startSubscriptions(resolvedId);
 				}
 			} catch (err) {
@@ -900,10 +903,6 @@ class SpaceStore {
 		this.workflowRuns.value = overview.workflowRuns ?? [];
 		// Server already returns collapsed tasks via collapseToCanonicalTasks — use directly
 		this.tasks.value = overview.tasks ?? [];
-		this.listGoals({ includeArchived: false }).catch((err) => {
-			logger.warn('Failed to fetch space goals:', err);
-		});
-
 		return overview.space.id;
 	}
 
