@@ -14,12 +14,14 @@ const {
 	mockNavigateToSpaceAgent,
 	mockNavigateToSpaceTask,
 	mockNavigateToSpaceSession,
+	mockNavigateToSpaceGoals,
 	mockNavigateToSpaceTasks,
 } = vi.hoisted(() => ({
 	mockNavigateToSpace: vi.fn(),
 	mockNavigateToSpaceAgent: vi.fn(),
 	mockNavigateToSpaceTask: vi.fn(),
 	mockNavigateToSpaceSession: vi.fn(),
+	mockNavigateToSpaceGoals: vi.fn(),
 	mockNavigateToSpaceTasks: vi.fn(),
 }));
 
@@ -30,6 +32,7 @@ let mockSpaceIdSignal!: Signal<string | null>;
 let mockSessionsSignal!: Signal<
 	Array<{ id: string; title: string; status: string; lastActiveAt: number }>
 >;
+let mockGoalsSignal!: Signal<[]>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
@@ -41,6 +44,7 @@ function initSignals() {
 	mockLoadingSignal = signal(false);
 	mockSpaceIdSignal = signal('space-1');
 	mockSessionsSignal = signal([]);
+	mockGoalsSignal = signal([]);
 	mockCurrentSpaceSessionIdSignal = signal(null);
 	mockCurrentSpaceTaskIdSignal = signal(null);
 	mockSpaceOverlaySessionIdSignal = signal(null);
@@ -57,6 +61,7 @@ vi.mock('../../lib/space-store.ts', () => ({
 			loading: mockLoadingSignal,
 			spaceId: mockSpaceIdSignal,
 			sessions: mockSessionsSignal,
+			goals: mockGoalsSignal,
 		};
 	},
 }));
@@ -66,6 +71,7 @@ vi.mock('../../lib/router.ts', () => ({
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 	navigateToSpaceTask: mockNavigateToSpaceTask,
 	navigateToSpaceSession: mockNavigateToSpaceSession,
+	navigateToSpaceGoals: mockNavigateToSpaceGoals,
 	navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));
 

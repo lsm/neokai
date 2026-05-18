@@ -9,23 +9,23 @@
 import { batch } from '@preact/signals';
 import {
 	currentSessionIdSignal,
+	currentSpaceConfigureTabSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
-	currentSpaceViewModeSignal,
-	currentSpaceConfigureTabSignal,
 	currentSpaceTasksFilterTabSignal,
 	currentSpaceTaskViewTabSignal,
+	currentSpaceViewModeSignal,
 	navSectionSignal,
-	settingsSectionSignal,
 	type SettingsSection,
-	spaceOverlaySessionIdSignal,
+	type SpaceOverlayTaskContext,
+	settingsSectionSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
-	type SpaceOverlayTaskContext,
-	spaceOverlayTaskContextSignal,
-	spaceOverlayPendingTaskIdSignal,
 	spaceOverlayPendingAgentNameSignal,
+	spaceOverlayPendingTaskIdSignal,
+	spaceOverlaySessionIdSignal,
+	spaceOverlayTaskContextSignal,
 } from './signals.ts';
 
 const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/i;
@@ -36,6 +36,7 @@ const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/;
 const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/;
 const SPACE_CONFIGURE_TAB_ROUTE_PATTERN =
 	/^\/space\/([a-z0-9-]+)\/configure\/(agents|workflows|settings)$/;
+const SPACE_GOALS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/goals$/;
 const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
 const SPACE_TASKS_ARCHIVED_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks\/archived$/;
 const SPACE_TASKS_TAB_ROUTE_PATTERN =
@@ -86,6 +87,9 @@ export function getSpaceIdFromPath(path: string): string | null {
 	const tasksTabMatch = path.match(SPACE_TASKS_TAB_ROUTE_PATTERN);
 	if (tasksTabMatch) return tasksTabMatch[1];
 
+	const goalsMatch = path.match(SPACE_GOALS_ROUTE_PATTERN);
+	if (goalsMatch) return goalsMatch[1];
+
 	const tasksMatch = path.match(SPACE_TASKS_ROUTE_PATTERN);
 	if (tasksMatch) return tasksMatch[1];
 
@@ -124,6 +128,11 @@ export function getSpaceConfigureTabFromPath(
 	const match = path.match(SPACE_CONFIGURE_TAB_ROUTE_PATTERN);
 	if (!match) return null;
 	return { spaceId: match[1], tab: match[2] as 'agents' | 'workflows' | 'settings' };
+}
+
+export function getSpaceGoalsFromPath(path: string): string | null {
+	const match = path.match(SPACE_GOALS_ROUTE_PATTERN);
+	return match ? match[1] : null;
 }
 
 export function getSpaceTasksFromPath(path: string): string | null {
@@ -202,6 +211,10 @@ export function createSpacePath(spaceId: string): string {
 
 export function createSpaceConfigurePath(spaceId: string, tab?: string): string {
 	return tab ? `/space/${spaceId}/configure/${tab}` : `/space/${spaceId}/configure`;
+}
+
+export function createSpaceGoalsPath(spaceId: string): string {
+	return `/space/${spaceId}/goals`;
 }
 
 export function createSpaceTasksPath(spaceId: string, tab?: string): string {
@@ -410,6 +423,28 @@ export function navigateToSpaceConfigure(
 	navSectionSignal.value = 'spaces';
 }
 
+export function navigateToSpaceGoals(spaceId: string, replace = false): void {
+	if (routerState.isNavigating) return;
+
+	const targetPath = createSpaceGoalsPath(spaceId);
+	if (getCurrentPath() !== targetPath) {
+		routerState.isNavigating = true;
+		try {
+			pushPath(targetPath, { spaceId }, replace);
+		} finally {
+			finishNavigation();
+		}
+	}
+
+	currentSpaceIdSignal.value = spaceId;
+	currentSpaceViewModeSignal.value = 'goals';
+	currentSpaceSessionIdSignal.value = null;
+	currentSpaceTaskIdSignal.value = null;
+	currentSpaceTaskViewTabSignal.value = 'thread';
+	currentSessionIdSignal.value = null;
+	navSectionSignal.value = 'spaces';
+}
+
 export function navigateToSpaceTasks(
 	spaceId: string,
 	tab?: 'action' | 'active' | 'completed' | 'draft' | 'scheduled',
@@ -547,6 +582,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
 	const spaceConfigure = spaceConfigureTab
 		? spaceConfigureTab.spaceId
 		: getSpaceConfigureFromPath(path);
+	const spaceGoals = getSpaceGoalsFromPath(path);
 	const spaceTasksTab = getSpaceTasksTabFromPath(path);
 	const spaceTasks = spaceTasksTab ? spaceTasksTab.spaceId : getSpaceTasksFromPath(path);
 	const spaceTaskView = getSpaceTaskViewFromPath(path);
@@ -579,6 +615,14 @@ function applyPathToSignals(path: string, search = window.location.search): stri
 			currentSpaceIdSignal.value = spaceAgent;
 			currentSpaceViewModeSignal.value = 'overview';
 			currentSpaceSessionIdSignal.value = `space:chat:${spaceAgent}`;
+			currentSpaceTaskIdSignal.value = null;
+			currentSpaceTaskViewTabSignal.value = 'thread';
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else if (spaceGoals) {
+			currentSpaceIdSignal.value = spaceGoals;
+			currentSpaceViewModeSignal.value = 'goals';
+			currentSpaceSessionIdSignal.value = null;
 			currentSpaceTaskIdSignal.value = null;
 			currentSpaceTaskViewTabSignal.value = 'thread';
 			currentSessionIdSignal.value = null;
