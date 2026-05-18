@@ -119,18 +119,36 @@ describe('SpaceActorRegistryAdapter', () => {
 		const workerSubSession = makeSession('space:task:t1:exec:e1', {
 			context: { spaceId: space.id },
 		});
+		const namedAgentSubSession = makeSession('named-agent-session', {
+			context: { spaceId: space.id },
+			metadata: {
+				messageCount: 0,
+				totalTokens: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				toolCallCount: 0,
+				promptProvenance: { workflowRunId: 'run-from-prompt' },
+			},
+		});
 		sessionRepo.createSession(member);
 		sessionRepo.createSession(coordinator);
 		sessionRepo.createSession(taskAgent);
 		sessionRepo.createSession(workerSubSession);
+		sessionRepo.createSession(namedAgentSubSession);
 		spaceRepo.addSessionToSpace(space.id, member.id);
 		spaceRepo.addSessionToSpace(space.id, coordinator.id);
 		spaceRepo.addSessionToSpace(space.id, taskAgent.id);
 		spaceRepo.addSessionToSpace(space.id, workerSubSession.id);
+		spaceRepo.addSessionToSpace(space.id, namedAgentSubSession.id);
 
 		const agent = spaceAgentRepo.create({
 			spaceId: space.id,
 			name: 'Long Term Agent',
+		});
+		const reservedNameAgent = spaceAgentRepo.create({
+			spaceId: space.id,
+			name: 'Coordinator',
 		});
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: space.id,
@@ -142,9 +160,9 @@ describe('SpaceActorRegistryAdapter', () => {
 					agents: [{ agentId: agent.id, name: 'coder' }],
 				},
 				{
-					id: 'Review',
-					name: 'Review',
-					agents: [{ agentId: agent.id, name: 'reviewer' }],
+					id: 'Review/QA',
+					name: 'Review/QA',
+					agents: [{ agentId: agent.id, name: 'reviewer:lead' }],
 				},
 			],
 			transitions: [],
@@ -159,8 +177,8 @@ describe('SpaceActorRegistryAdapter', () => {
 		});
 		nodeExecutionRepo.create({
 			workflowRunId: run.id,
-			workflowNodeId: 'Coding',
-			agentName: 'coder',
+			workflowNodeId: 'Coding:Node',
+			agentName: 'coder/lead',
 			agentId: agent.id,
 			agentSessionId: workerSubSession.id,
 			status: 'in_progress',
@@ -169,7 +187,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			workflowRunId: run.id,
 			spaceId: space.id,
 			targetKind: 'node_agent',
-			targetAgentName: 'reviewer',
+			targetAgentName: 'reviewer:lead',
 			message: 'review this',
 		});
 
@@ -208,19 +226,27 @@ describe('SpaceActorRegistryAdapter', () => {
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
-			actorId: `worker:${run.id}:Coding:coder`,
-			kind: 'worker',
+			actorId: `agent:${reservedNameAgent.id}`,
+			kind: 'agent',
 			spaceId: space.id,
-			handle: `@worker:${run.id}/Coding/coder`,
-			roles: ['Coding', 'coder'],
+			handle: `@coordinator-${reservedNameAgent.id.slice(0, 8)}`,
+			roles: ['coordinator', 'space-agent'],
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
-			actorId: `worker:${run.id}:Review:reviewer`,
+			actorId: `worker:${encodeURIComponent(run.id)}:Coding%3ANode:coder%2Flead`,
 			kind: 'worker',
 			spaceId: space.id,
-			handle: `@worker:${run.id}/Review/reviewer`,
-			roles: ['Review', 'reviewer'],
+			handle: `@worker:${encodeURIComponent(run.id)}/Coding%3ANode/coder%2Flead`,
+			roles: ['Coding:Node', 'coder/lead'],
+			status: 'active',
+		});
+		expect(actors).toContainEqual({
+			actorId: `worker:${encodeURIComponent(run.id)}:Review%2FQA:reviewer%3Alead`,
+			kind: 'worker',
+			spaceId: space.id,
+			handle: `@worker:${encodeURIComponent(run.id)}/Review%2FQA/reviewer%3Alead`,
+			roles: ['Review/QA', 'reviewer:lead'],
 			status: 'inactive',
 		});
 		expect(actors.some((actor) => actor.actorId === `worker:${run.id}:reviewer:reviewer`)).toBe(
@@ -237,8 +263,14 @@ describe('SpaceActorRegistryAdapter', () => {
 		expect(actors.some((actor) => actor.actorId === `session:${coordinator.id}`)).toBe(false);
 		expect(actors.some((actor) => actor.actorId === `session:${taskAgent.id}`)).toBe(false);
 		expect(actors.some((actor) => actor.actorId === `session:${workerSubSession.id}`)).toBe(false);
+		expect(actors.some((actor) => actor.actorId === `session:${namedAgentSubSession.id}`)).toBe(
+			false
+		);
 		expect(actors.some((actor) => actor.actorId === `human:${taskAgent.id}`)).toBe(false);
 		expect(actors.some((actor) => actor.actorId === `human:${workerSubSession.id}`)).toBe(false);
+		expect(actors.some((actor) => actor.actorId === `human:${namedAgentSubSession.id}`)).toBe(
+			false
+		);
 		for (const actor of actors) {
 			if (actor.handle) expect(() => parseAddress(actor.handle!)).not.toThrow();
 		}

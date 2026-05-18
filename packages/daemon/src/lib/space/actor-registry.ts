@@ -94,13 +94,16 @@ export class SpaceActorRegistryAdapter {
 
 	private agentActors(spaceId: string): ActorRef[] {
 		const agents = this.repos.spaceAgentRepo.getBySpaceId(spaceId);
-		const slugCounts = new Map<string, number>();
+		const handleCounts = new Map<string, number>();
+		for (const handle of reservedHandles()) {
+			handleCounts.set(handle, 1);
+		}
 		for (const agent of agents) {
 			const slug = baseHandleSlug(agent.name, agent.id);
-			slugCounts.set(slug, (slugCounts.get(slug) ?? 0) + 1);
+			handleCounts.set(slug, (handleCounts.get(slug) ?? 0) + 1);
 		}
 
-		return agents.map((agent) => agentActor(agent, slugCounts));
+		return agents.map((agent) => agentActor(agent, handleCounts));
 	}
 
 	private findCoordinatorSession(spaceId: string): Session | null {
@@ -131,7 +134,7 @@ function humanActorForSession(session: Session, space: Space): ActorRef {
 		actorId: `human:${session.id}`,
 		kind: 'human',
 		spaceId: space.id,
-		handle: session.id === `space:chat:${space.id}` ? '@human-coordinator' : undefined,
+		handle: undefined,
 		roles: ['member'],
 		status: statusFromSession(session),
 	};
@@ -161,11 +164,11 @@ function sessionActorForSession(session: Session, spaceId: string): ActorRef | n
 	};
 }
 
-function agentActor(agent: SpaceAgent, slugCounts: Map<string, number>): ActorRef {
+function agentActor(agent: SpaceAgent, handleCounts: Map<string, number>): ActorRef {
 	const slug = baseHandleSlug(agent.name, agent.id);
-	const handleSlug = slugCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
+	const handleSlug = handleCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
 	return {
-		actorId: `agent:${agent.id}`,
+		actorId: `agent:${encodeActorIdComponent(agent.id)}`,
 		kind: 'agent',
 		spaceId: agent.spaceId,
 		handle: `@${handleSlug}`,
@@ -207,11 +210,23 @@ function pendingWorkerActors(
 }
 
 function workerActorId(workflowRunId: string, nodeId: string, agentName: string): string {
-	return `worker:${workflowRunId}:${nodeId}:${agentName}`;
+	return `worker:${[workflowRunId, nodeId, agentName].map(encodeActorIdComponent).join(':')}`;
 }
 
 function workerHandle(workflowRunId: string, nodeId: string, agentName: string): string {
-	return `@worker:${workflowRunId}/${nodeId}/${agentName}`;
+	return `@worker:${encodeWorkerHandleSegment(workflowRunId)}/${encodeWorkerHandleSegment(nodeId)}/${encodeWorkerHandleSegment(agentName)}`;
+}
+
+function reservedHandles(): string[] {
+	return ['coordinator', ...SPACE_SYSTEM_ACTORS.map((actor) => actor.handle.slice(1))];
+}
+
+function encodeActorIdComponent(value: string): string {
+	return encodeURIComponent(value);
+}
+
+function encodeWorkerHandleSegment(value: string): string {
+	return encodeURIComponent(value);
 }
 
 function isSessionInSpace(session: Session, spaceId: string): boolean {
