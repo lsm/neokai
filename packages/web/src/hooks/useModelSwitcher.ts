@@ -253,10 +253,16 @@ export const PROVIDER_LABELS: Record<string, string> = {
 };
 
 /**
- * Get the display label for a provider
+ * Get the display label for a provider, with friendly fallback for
+ * `custom:<id>` providers (renders as "Custom — <id>").
  */
 export function getProviderLabel(provider: string): string {
-	return PROVIDER_LABELS[provider] || provider;
+	if (PROVIDER_LABELS[provider]) return PROVIDER_LABELS[provider];
+	if (provider.startsWith('custom:')) {
+		const slug = provider.slice('custom:'.length);
+		return `Custom — ${slug}`;
+	}
+	return provider;
 }
 
 /**

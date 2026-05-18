@@ -38,6 +38,12 @@ const SETTINGS_SECTIONS: Array<{
 	{ id: 'general', label: 'General', icon: 'settings', accent: 'text-blue-300 bg-blue-500/15' },
 	{ id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-sky-300 bg-sky-500/15' },
 	{
+		id: 'custom-endpoints',
+		label: 'Custom Endpoints',
+		icon: 'plug',
+		accent: 'text-fuchsia-300 bg-fuchsia-500/15',
+	},
+	{
 		id: 'app-mcp-servers',
 		label: 'MCP Servers',
 		icon: 'server',
@@ -89,6 +95,17 @@ function SectionIcon({ type }: { type: string }) {
 						stroke-linejoin="round"
 						stroke-width={2}
 						d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
+					/>
+				</svg>
+			);
+		case 'plug':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M13 10V3L4 14h7v7l9-11h-7z"
 					/>
 				</svg>
 			);

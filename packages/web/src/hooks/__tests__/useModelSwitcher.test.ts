@@ -176,6 +176,11 @@ describe('useModelSwitcher', () => {
 			expect(getProviderLabel('unknown')).toBe('unknown');
 			expect(getProviderLabel('some-provider')).toBe('some-provider');
 		});
+
+		it('should render custom: providers as "Custom — <slug>"', () => {
+			expect(getProviderLabel('custom:ollama-local')).toBe('Custom — ollama-local');
+			expect(getProviderLabel('custom:lmstudio')).toBe('Custom — lmstudio');
+		});
 	});
 
 	describe('loadModelInfo with mocked hub', () => {
