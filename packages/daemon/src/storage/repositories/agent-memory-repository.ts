@@ -26,7 +26,7 @@ export interface AgentMemoryEmbedder {
 }
 
 interface AgentMemoryRow {
-	rowid: number;
+	id: number;
 	key: string;
 	space_id: string;
 	content: string;
@@ -229,7 +229,7 @@ export class AgentMemoryRepository {
 			.prepare(
 				`SELECT m.*, bm25(space_agent_memory_fts) AS rank
 				 FROM space_agent_memory_fts
-				 JOIN space_agent_memory m ON m.rowid = space_agent_memory_fts.rowid
+				 JOIN space_agent_memory m ON m.id = space_agent_memory_fts.rowid
 				 WHERE space_agent_memory_fts MATCH ? AND m.space_id = ?
 				 ORDER BY rank ASC, m.updated_at DESC, m.key ASC
 				 LIMIT ? OFFSET ?`
@@ -245,7 +245,7 @@ export class AgentMemoryRepository {
 			.prepare(
 				`SELECT m.*, v.embedding, v.dimensions, v.model
 				 FROM memory_vectors v
-				 JOIN space_agent_memory m ON m.rowid = v.memory_rowid
+				 JOIN space_agent_memory m ON m.id = v.memory_id
 				 WHERE m.space_id = ?
 					AND m.embedding_status = 'ready'
 					AND v.model = ?
@@ -290,36 +290,36 @@ export class AgentMemoryRepository {
 			if (!embedding) return;
 			if (embedding instanceof Promise) {
 				embedding
-					.then((vector) => this.storeEmbedding(row.rowid, sourceRevision, vector))
-					.catch((error: unknown) => this.markEmbeddingFailed(row.rowid, sourceRevision, error));
+					.then((vector) => this.storeEmbedding(row.id, sourceRevision, vector))
+					.catch((error: unknown) => this.markEmbeddingFailed(row.id, sourceRevision, error));
 				return;
 			}
-			this.storeEmbedding(row.rowid, sourceRevision, embedding);
+			this.storeEmbedding(row.id, sourceRevision, embedding);
 		} catch (error) {
-			this.markEmbeddingFailed(row.rowid, sourceRevision, error);
+			this.markEmbeddingFailed(row.id, sourceRevision, error);
 		}
 	}
 
-	private storeEmbedding(rowid: number, sourceRevision: number, embedding: Float32Array): void {
+	private storeEmbedding(memoryId: number, sourceRevision: number, embedding: Float32Array): void {
 		const now = Date.now();
 		const store = this.db.transaction(() => {
 			const current = this.db
-				.prepare(`SELECT embedding_revision FROM space_agent_memory WHERE rowid = ?`)
-				.get(rowid) as { embedding_revision: number } | undefined;
+				.prepare(`SELECT embedding_revision FROM space_agent_memory WHERE id = ?`)
+				.get(memoryId) as { embedding_revision: number } | undefined;
 			if (!current || current.embedding_revision !== sourceRevision) return;
 
 			this.db
 				.prepare(
-					`INSERT INTO memory_vectors (memory_rowid, embedding, dimensions, model, updated_at)
+					`INSERT INTO memory_vectors (memory_id, embedding, dimensions, model, updated_at)
 					 VALUES (?, ?, ?, ?, ?)
-					 ON CONFLICT(memory_rowid) DO UPDATE SET
+					 ON CONFLICT(memory_id) DO UPDATE SET
 						embedding = excluded.embedding,
 						dimensions = excluded.dimensions,
 						model = excluded.model,
 						updated_at = excluded.updated_at`
 				)
 				.run(
-					rowid,
+					memoryId,
 					float32ArrayToBlob(embedding),
 					embedding.length,
 					this.embedder?.model ?? 'unknown',
@@ -329,26 +329,26 @@ export class AgentMemoryRepository {
 				.prepare(
 					`UPDATE space_agent_memory
 					 SET embedding_status = 'ready', embedding_model = ?, embedding_updated_at = ?, embedding_error = NULL
-					 WHERE rowid = ?`
+					 WHERE id = ?`
 				)
-				.run(this.embedder?.model ?? 'unknown', now, rowid);
+				.run(this.embedder?.model ?? 'unknown', now, memoryId);
 		});
 		store();
 	}
 
-	private markEmbeddingFailed(rowid: number, sourceRevision: number, error: unknown): void {
+	private markEmbeddingFailed(memoryId: number, sourceRevision: number, error: unknown): void {
 		const now = Date.now();
 		this.db
 			.prepare(
 				`UPDATE space_agent_memory
 				 SET embedding_status = 'failed', embedding_model = ?, embedding_updated_at = ?, embedding_error = ?
-				 WHERE rowid = ? AND embedding_revision = ?`
+				 WHERE id = ? AND embedding_revision = ?`
 			)
 			.run(
 				this.embedder?.model ?? 'unknown',
 				now,
 				embeddingErrorMessage(error),
-				rowid,
+				memoryId,
 				sourceRevision
 			);
 	}
@@ -411,19 +411,19 @@ function mergeRankedRows(
 	const merged = new Map<number, { row: AgentMemorySearchRow; score: number }>();
 
 	ftsRows.forEach((row, index) => {
-		merged.set(row.rowid, {
+		merged.set(row.id, {
 			row,
 			score: 1 / (RRF_K + index + 1),
 		});
 	});
 
 	vectorRows.forEach((item, index) => {
-		const existing = merged.get(item.row.rowid);
+		const existing = merged.get(item.row.id);
 		const score = 1 / (RRF_K + index + 1);
 		if (existing) {
 			existing.score += score;
 		} else {
-			merged.set(item.row.rowid, { row: item.row, score });
+			merged.set(item.row.id, { row: item.row, score });
 		}
 	});
 

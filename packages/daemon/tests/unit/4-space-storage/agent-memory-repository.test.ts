@@ -382,8 +382,14 @@ describe('AgentMemoryRepository', () => {
 			content: 'Store credential material only in secure storage.',
 		});
 
+		const vectorCount = db.prepare(`SELECT count(*) AS count FROM memory_vectors`).get() as {
+			count: number;
+		};
+		const fkCheck = db.prepare(`PRAGMA foreign_key_check(memory_vectors)`).all();
 		const results = await repo.search('space-a', 'erase old conversation data', 5);
 
+		expect(vectorCount.count).toBe(2);
+		expect(fkCheck).toEqual([]);
 		expect(results.map((result) => result.memory.key)).toContain('cleanup.sessions');
 		expect(results[0].memory.key).toBe('cleanup.sessions');
 	});
@@ -523,7 +529,7 @@ describe('AgentMemoryRepository', () => {
 		embedder.resolveNext();
 
 		const vectorRow = db
-			.prepare(`SELECT embedding FROM memory_vectors WHERE memory_rowid = 1`)
+			.prepare(`SELECT embedding FROM memory_vectors WHERE memory_id = 1`)
 			.get() as {
 			embedding: Buffer;
 		};
@@ -564,7 +570,7 @@ describe('AgentMemoryRepository', () => {
 			key: 'cleanup.model',
 			content: 'Delete stale session records after retention expires.',
 		});
-		db.prepare(`UPDATE memory_vectors SET model = ? WHERE memory_rowid = 1`).run('old-model');
+		db.prepare(`UPDATE memory_vectors SET model = ? WHERE memory_id = 1`).run('old-model');
 
 		const results = await repo.search('space-a', 'erase old conversation data', 5);
 

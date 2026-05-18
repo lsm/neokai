@@ -698,7 +698,7 @@ export function createTables(db: BunDatabase): void {
 function createAgentMemoryTables(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_memory (
-			rowid INTEGER PRIMARY KEY,
+			id INTEGER PRIMARY KEY,
 			key TEXT NOT NULL,
 			space_id TEXT NOT NULL,
 			content TEXT NOT NULL,
@@ -724,41 +724,41 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			content,
 			tags,
 			content='space_agent_memory',
-			content_rowid='rowid',
+			content_rowid='id',
 			tokenize='trigram'
 		)
 	`);
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS memory_vectors (
-			memory_rowid INTEGER PRIMARY KEY,
+			memory_id INTEGER PRIMARY KEY,
 			embedding BLOB NOT NULL,
 			dimensions INTEGER NOT NULL,
 			model TEXT NOT NULL,
 			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (memory_rowid) REFERENCES space_agent_memory(rowid) ON DELETE CASCADE
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
 		)
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
 		AFTER INSERT ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
-			VALUES (new.rowid, new.key, new.content, new.tags);
+			VALUES (new.id, new.key, new.content, new.tags);
 		END
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
 		AFTER DELETE ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
-			VALUES ('delete', old.rowid, old.key, old.content, old.tags);
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
 		END
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
 		AFTER UPDATE OF key, content, tags ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
-			VALUES ('delete', old.rowid, old.key, old.content, old.tags);
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
 			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
-			VALUES (new.rowid, new.key, new.content, new.tags);
+			VALUES (new.id, new.key, new.content, new.tags);
 		END
 	`);
 }
