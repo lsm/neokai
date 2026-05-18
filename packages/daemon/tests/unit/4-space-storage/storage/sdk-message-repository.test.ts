@@ -85,6 +85,25 @@ describe('SDKMessageRepository', () => {
 		db.close();
 	});
 
+	function createSearchIndex(): void {
+		db.exec(`
+			CREATE VIRTUAL TABLE message_search_fts USING fts5(
+				kind UNINDEXED,
+				source_id UNINDEXED,
+				message_id UNINDEXED,
+				session_id UNINDEXED,
+				task_id UNINDEXED,
+				space_id UNINDEXED,
+				task_number UNINDEXED,
+				message_type UNINDEXED,
+				title,
+				body,
+				timestamp UNINDEXED,
+				tokenize = 'unicode61'
+			)
+		`);
+	}
+
 	describe('saveSDKMessage', () => {
 		it('should save a user message and return true', () => {
 			const message = createUserMessage('Hello world');
@@ -215,6 +234,7 @@ describe('SDKMessageRepository', () => {
 
 			// Should include both top-level and subagent messages
 			expect(messages.length).toBe(3);
+			expect(messages.every((message) => (message as { id?: string }).id)).toBe(true);
 		});
 
 		it('should exclude subagent messages without matching parent', () => {
@@ -230,12 +250,13 @@ describe('SDKMessageRepository', () => {
 			expect(messages.length).toBe(1);
 		});
 
-		it('should inject timestamp into returned messages', () => {
+		it('should inject id and timestamp into returned messages', () => {
 			repository.saveSDKMessage('session-1', createUserMessage('Test'));
 
 			const { messages } = repository.getSDKMessages('session-1');
 
 			expect(messages.length).toBe(1);
+			expect((messages[0] as { id?: string }).id).toBeDefined();
 			expect((messages[0] as { timestamp?: number }).timestamp).toBeDefined();
 			expect(typeof (messages[0] as { timestamp?: number }).timestamp).toBe('number');
 		});
@@ -873,6 +894,89 @@ describe('SDKMessageRepository', () => {
 			const count = repository.countMessagesAfter('session-1', middleTime);
 
 			expect(count).toBe(0);
+		});
+	});
+
+	describe('searchMessages', () => {
+		it('returns scoped matches with snippets', () => {
+			createSearchIndex();
+			repository.saveSDKMessage('session-1', createUserMessage('alpha regression bug'));
+			repository.saveSDKMessage('session-2', createUserMessage('alpha unrelated'));
+
+			const result = repository.searchMessages({ query: 'alpha', sessionId: 'session-1' });
+
+			expect(result.results.length).toBe(1);
+			expect(result.results[0].sessionId).toBe('session-1');
+			expect(result.results[0].snippet).toContain('<mark>alpha</mark>');
+		});
+
+		it('returns cross-session matches when no session filter is provided', () => {
+			createSearchIndex();
+			repository.saveSDKMessage('session-1', createUserMessage('global comet marker'));
+			repository.saveSDKMessage('session-2', createUserMessage('global comet marker'));
+
+			const result = repository.searchMessages({ query: 'comet' });
+
+			expect(result.results.map((row) => row.sessionId).sort()).toEqual(['session-1', 'session-2']);
+		});
+
+		it('filters by message type and date range', async () => {
+			createSearchIndex();
+			const oldId = repository.saveUserMessage(
+				'session-1',
+				createUserMessage('filter beacon old'),
+				'consumed'
+			);
+			repository.updateMessageTimestamp(oldId, Date.now() - 10_000);
+			const from = Date.now() - 1_000;
+			repository.saveSDKMessage('session-1', createAssistantMessage('filter beacon current'));
+			repository.saveSDKMessage('session-1', createUserMessage('filter beacon user'));
+
+			const result = repository.searchMessages({
+				query: 'beacon',
+				messageType: 'assistant',
+				from,
+				to: Date.now() + 1_000,
+			});
+
+			expect(result.results).toHaveLength(1);
+			expect(result.results[0].messageType).toBe('assistant');
+			expect(result.results[0].snippet).toContain('<mark>beacon</mark>');
+			expect(result.results[0].loadTarget).toMatchObject({ sessionId: 'session-1' });
+			expect(result.results[0].loadTarget?.before).toBeGreaterThan(result.results[0].timestamp);
+		});
+
+		it('returns task search rows from indexed titles and descriptions', () => {
+			createSearchIndex();
+			db.prepare(
+				`INSERT INTO message_search_fts (
+					kind, source_id, task_id, space_id, task_number, title, body, timestamp
+				) VALUES ('task', ?, ?, ?, ?, ?, ?, ?)`
+			).run('task-1', 'task-1', 'space-1', 12, 'Orion title', 'Task description', Date.now());
+
+			const titleResult = repository.searchMessages({ query: 'orion' });
+			const bodyResult = repository.searchMessages({ query: 'description' });
+
+			expect(titleResult.results).toHaveLength(1);
+			expect(bodyResult.results).toHaveLength(1);
+			expect(titleResult.results[0]).toMatchObject({
+				kind: 'task',
+				taskId: 'task-1',
+				spaceId: 'space-1',
+				taskNumber: 12,
+				title: 'Orion title',
+			});
+		});
+
+		it('removes deleted messages from search index', () => {
+			createSearchIndex();
+			const before = Date.now() - 1000;
+			repository.saveSDKMessage('session-1', createUserMessage('temporary rollback marker'));
+
+			expect(repository.searchMessages({ query: 'rollback' }).results.length).toBe(1);
+			repository.deleteMessagesAfter('session-1', before);
+
+			expect(repository.searchMessages({ query: 'rollback' }).results.length).toBe(0);
 		});
 	});
 });

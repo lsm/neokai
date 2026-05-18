@@ -17,6 +17,7 @@ import {
 import type { SessionManager } from '../session-manager';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager';
 import type { Database } from '../../storage/database';
+import type { MessageSearchResponse } from '../../storage/message-search';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 
 export function setupMessageHandlers(
@@ -24,6 +25,37 @@ export function setupMessageHandlers(
 	sessionManager: SessionManager,
 	db?: Database
 ): void {
+	messageHub.onRequest('message.search', async (data) => {
+		if (!db) throw new Error('Database not available');
+		const request = data as {
+			query?: string;
+			sessionId?: string;
+			limit?: number;
+			offset?: number;
+			from?: number;
+			to?: number;
+			messageType?: string;
+		};
+		const query = request.query?.trim() ?? '';
+		const limit = sanitizeInteger(request.limit, 25, 1, 50);
+		const offset = sanitizeInteger(request.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+		const from = sanitizeTimestamp(request.from, 'from');
+		const to = sanitizeTimestamp(request.to, 'to');
+		if (!query) {
+			return { results: [], limit, offset };
+		}
+		const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
+		return sdkMessageRepo.searchMessages({
+			query,
+			sessionId: request.sessionId,
+			limit,
+			offset,
+			from,
+			to,
+			messageType: request.messageType,
+		}) satisfies MessageSearchResponse;
+	});
+
 	// Remove large task output from a message to reduce session size
 	// This modifies the .jsonl file in ~/.claude/projects/ (SDK session storage)
 	// No SDK initialization required - only file system operations
@@ -201,6 +233,20 @@ function convertToMarkdown(
 	}
 
 	return lines.join('\n');
+}
+
+function sanitizeInteger(value: unknown, fallback: number, min: number, max: number): number {
+	if (value === undefined) return fallback;
+	if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+	return Math.min(Math.max(Math.trunc(value), min), max);
+}
+
+function sanitizeTimestamp(value: unknown, fieldName: string): number | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		throw new Error(`${fieldName} must be a finite epoch millisecond timestamp`);
+	}
+	return value;
 }
 
 /**

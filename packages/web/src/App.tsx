@@ -205,11 +205,11 @@ export function App() {
 
 	return (
 		<>
-			<div class="desktop-window-shell flex h-dvh overflow-hidden bg-dark-800 relative pt-safe">
+			<div class="desktop-window-shell flex h-dvh overflow-hidden bg-app-sidebar relative pt-safe">
 				{/* Sidebar — section switcher, section content, settings */}
 				<ContextPanel />
 
-				{/* Main Content — rounded-left "card" on desktop; the dark-950 shell
+				{/* Main Content — rounded-left "card" on desktop; the sidebar shell
 				    behind shows through the corners to separate it from the panels.
 				    BottomTabBar is inline (flex-shrink-0) so no extra padding needed. */}
 				<div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-app-content md:rounded-l-[28px]">

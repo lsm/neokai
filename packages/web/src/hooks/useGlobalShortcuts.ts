@@ -1,8 +1,9 @@
 /**
  * Global keyboard shortcut hook.
  *
- * Listens for Cmd+K (mac) / Ctrl+K (non-mac) to toggle the command palette and
- * dispatches any other shortcuts registered on commands in the registry.
+ * Listens for Cmd+K (mac) / Ctrl+K (non-mac) to open command mode, Cmd+P /
+ * Ctrl+P to open quick-open mode, and dispatches any other shortcuts registered
+ * on commands in the registry.
  *
  * Ignores key events that originate from text inputs / contenteditable nodes so
  * we don't hijack typing inside the chat composer. The palette toggle is also
@@ -15,7 +16,7 @@
 
 import { useEffect } from 'preact/hooks';
 import { commandRegistry } from '../lib/command-registry.ts';
-import { commandPaletteOpenSignal } from '../lib/signals.ts';
+import { commandPaletteModeSignal, commandPaletteOpenSignal } from '../lib/signals.ts';
 
 function isTextEditingTarget(target: EventTarget | null): boolean {
 	if (!(target instanceof HTMLElement)) return false;
@@ -36,12 +37,14 @@ function isMacPlatform(): boolean {
 	return /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent ?? '');
 }
 
-function isPaletteToggle(event: KeyboardEvent, isMac: boolean): boolean {
-	if (event.shiftKey || event.altKey) return false;
-	if (event.code !== 'KeyK') return false;
+function isPaletteShortcut(event: KeyboardEvent, isMac: boolean): 'commands' | 'quick-open' | null {
+	if (event.shiftKey || event.altKey) return null;
+	if (event.code !== 'KeyK' && event.code !== 'KeyP') return null;
 	// On mac, only Cmd+K toggles. Ctrl+K is a native editing shortcut.
 	// On non-mac, only Ctrl+K toggles.
-	return isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+	const hasPlatformMod = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+	if (!hasPlatformMod) return null;
+	return event.code === 'KeyK' ? 'commands' : 'quick-open';
 }
 
 export function useGlobalShortcuts(): void {
@@ -52,10 +55,16 @@ export function useGlobalShortcuts(): void {
 			// Skip auto-repeat: each shortcut fires once per physical press.
 			if (event.repeat) return;
 
-			// Palette toggle works everywhere, including inside text inputs.
-			if (isPaletteToggle(event, isMac)) {
+			// Palette shortcuts work everywhere, including inside text inputs.
+			const paletteMode = isPaletteShortcut(event, isMac);
+			if (paletteMode) {
 				event.preventDefault();
-				commandPaletteOpenSignal.value = !commandPaletteOpenSignal.value;
+				if (commandPaletteOpenSignal.value && commandPaletteModeSignal.value === paletteMode) {
+					commandPaletteOpenSignal.value = false;
+					return;
+				}
+				commandPaletteModeSignal.value = paletteMode;
+				commandPaletteOpenSignal.value = true;
 				return;
 			}
 

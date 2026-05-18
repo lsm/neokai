@@ -465,5 +465,41 @@ describe('SpaceRepository', () => {
 		it('returns false for unknown ID', () => {
 			expect(repo.deleteSpace('nonexistent')).toBe(false);
 		});
+
+		it('deletes task search rows before task rows cascade', () => {
+			db.exec(`
+				CREATE VIRTUAL TABLE message_search_fts USING fts5(
+					kind UNINDEXED,
+					source_id UNINDEXED,
+					message_id UNINDEXED,
+					session_id UNINDEXED,
+					task_id UNINDEXED,
+					space_id UNINDEXED,
+					task_number UNINDEXED,
+					message_type UNINDEXED,
+					title,
+					body,
+					timestamp UNINDEXED,
+					tokenize = 'unicode61'
+				)
+			`);
+			const deleted = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			const kept = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, task_id, space_id, title, body, timestamp)
+				 VALUES ('task', ?, ?, ?, ?, ?, ?)`
+			).run('task-1', 'task-1', deleted.id, 'Deleted', 'needle deleted', Date.now());
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, task_id, space_id, title, body, timestamp)
+				 VALUES ('task', ?, ?, ?, ?, ?, ?)`
+			).run('task-2', 'task-2', kept.id, 'Kept', 'needle kept', Date.now());
+
+			repo.deleteSpace(deleted.id);
+
+			const rows = db
+				.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+				.all('needle') as Array<{ source_id: string }>;
+			expect(rows.map((row) => row.source_id)).toEqual(['task-2']);
+		});
 	});
 });

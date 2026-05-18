@@ -12,6 +12,13 @@ import { generateUUID } from '@neokai/shared';
 import type { MessageOrigin, NeokaiActionMessage, ChatMessage } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../../lib/logger';
+import {
+	buildFtsQuery,
+	extractVisibleSearchText,
+	type MessageSearchParams,
+	type MessageSearchResponse,
+	type MessageSearchResult,
+} from '../message-search';
 import type { SQLiteValue } from '../types';
 
 export type SendStatus = 'deferred' | 'enqueued' | 'consumed' | 'failed';
@@ -83,6 +90,106 @@ export class SDKMessageRepository {
 	private logger = new Logger('Database');
 
 	constructor(private db: BunDatabase) {}
+
+	private hasMessageSearchIndex(): boolean {
+		return this.tableExists('message_search_fts');
+	}
+
+	private tableExists(tableName: string): boolean {
+		try {
+			const row = this.db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(tableName);
+			return !!row;
+		} catch {
+			return false;
+		}
+	}
+
+	private upsertMessageSearchRow(rowId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		const hasSessions = this.tableExists('sessions');
+		const hasSpaceTasks = this.tableExists('space_tasks');
+		const sessionTitleSelect = hasSessions
+			? 's.title AS session_title'
+			: 'sm.session_id AS session_title';
+		const spaceTaskSelect = hasSpaceTasks
+			? 'st.space_id, st.task_number'
+			: 'NULL AS space_id, NULL AS task_number';
+		const sessionJoin = hasSessions ? 'LEFT JOIN sessions s ON s.id = sm.session_id' : '';
+		const spaceTaskJoin = hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id' : '';
+		const row = this.db
+			.prepare(
+				`SELECT sm.id, sm.session_id, sm.task_id, sm.message_type, sm.sdk_message, sm.timestamp,
+				        ${sessionTitleSelect}, ${spaceTaskSelect}
+				 FROM sdk_messages sm
+				 ${sessionJoin}
+				 ${spaceTaskJoin}
+				 WHERE sm.id = ?`
+			)
+			.get(rowId) as
+			| {
+					id: string;
+					session_id: string;
+					task_id: string | null;
+					message_type: string;
+					sdk_message: string;
+					timestamp: string;
+					session_title: string | null;
+					space_id: string | null;
+					task_number: number | null;
+			  }
+			| undefined;
+		if (!row) return;
+
+		let parsed: SDKMessage | null = null;
+		try {
+			parsed = JSON.parse(row.sdk_message) as SDKMessage;
+		} catch {
+			return;
+		}
+		const body = extractVisibleSearchText(parsed);
+		this.db
+			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND source_id = ?`)
+			.run(row.id);
+		if (!body) return;
+		if (row.message_type === 'user' && !this.isSearchableUserMessageStatus(row.id)) {
+			return;
+		}
+		this.db
+			.prepare(
+				`INSERT INTO message_search_fts (
+					kind, source_id, message_id, session_id, task_id, space_id, task_number,
+					message_type, title, body, timestamp
+				) VALUES ('message', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				row.id,
+				(parsed as { uuid?: string }).uuid ?? row.id,
+				row.session_id,
+				row.task_id,
+				row.space_id,
+				row.task_number,
+				row.message_type,
+				row.session_title ?? row.session_id,
+				body,
+				parseSearchTimestamp(row.timestamp)
+			);
+	}
+
+	private deleteMessageSearchRow(rowId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		this.db
+			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND source_id = ?`)
+			.run(rowId);
+	}
+
+	private isSearchableUserMessageStatus(rowId: string): boolean {
+		const row = this.db
+			.prepare(
+				`SELECT COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages WHERE id = ?`
+			)
+			.get(rowId) as { send_status: SendStatus } | undefined;
+		return row?.send_status === 'consumed' || row?.send_status === 'failed';
+	}
 
 	/**
 	 * Derive `sdk_messages.task_id` from the writing session's
@@ -166,6 +273,7 @@ export class SDKMessageRepository {
 				extractParentToolUseId(message),
 				this.resolveTaskIdForSession(sessionId)
 			);
+			this.upsertMessageSearchRow(id);
 			return true;
 		} catch (error) {
 			// Log error but don't throw - prevents stream from dying
@@ -225,7 +333,7 @@ export class SDKMessageRepository {
 	} {
 		// Step 1: Get top-level messages (excluding subagent messages)
 		// Show user messages that were consumed to SDK, plus any that failed to deliver.
-		let query = `SELECT sdk_message, timestamp, send_status, origin FROM sdk_messages
+		let query = `SELECT id, sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
@@ -260,6 +368,7 @@ export class SDKMessageRepository {
 			const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 			const timestamp = new Date(r.timestamp as string).getTime();
 			const extra: Record<string, unknown> = {
+				id: r.id,
 				timestamp,
 				// DB origin wins; undefined explicitly clears any SDK-level origin object.
 				origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
@@ -296,7 +405,7 @@ export class SDKMessageRepository {
 			const placeholders = Array.from(toolUseIds)
 				.map(() => '?')
 				.join(',');
-			const subagentQuery = `SELECT sdk_message, timestamp FROM sdk_messages
+			const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
@@ -311,7 +420,12 @@ export class SDKMessageRepository {
 				const timestamp = new Date(r.timestamp as string).getTime();
 				// Subagent messages have no DB origin column; explicitly set undefined to strip
 				// any SDK-level origin object from the JSON blob (same reasoning as top-level).
-				return { ...sdkMessage, timestamp, origin: undefined } as SDKMessage & {
+				return {
+					...sdkMessage,
+					id: r.id,
+					timestamp,
+					origin: undefined,
+				} as unknown as SDKMessage & {
 					timestamp: number;
 				};
 			});
@@ -453,6 +567,7 @@ export class SDKMessageRepository {
 			extractParentToolUseId(message),
 			this.resolveTaskIdForSession(sessionId)
 		);
+		this.upsertMessageSearchRow(id);
 		return id;
 	}
 
@@ -539,6 +654,7 @@ export class SDKMessageRepository {
 			`UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
 		);
 		stmt.run(newStatus, ...messageIds);
+		for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
 	}
 
 	/**
@@ -552,6 +668,7 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
 		const ts = timestampMs !== undefined ? new Date(timestampMs) : new Date();
 		stmt.run(ts.toISOString(), messageId);
+		this.upsertMessageSearchRow(messageId);
 	}
 
 	/**
@@ -578,8 +695,12 @@ export class SDKMessageRepository {
 	 */
 	deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
 		const isoTimestamp = new Date(afterTimestamp).toISOString();
+		const rows = this.db
+			.prepare(`SELECT id FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
+			.all(sessionId, isoTimestamp) as Array<{ id: string }>;
 		const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
 		const result = stmt.run(sessionId, isoTimestamp);
+		for (const row of rows) this.deleteMessageSearchRow(row.id);
 		return result.changes;
 	}
 
@@ -595,10 +716,14 @@ export class SDKMessageRepository {
 	 */
 	deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
 		const isoTimestamp = new Date(atTimestamp).toISOString();
+		const rows = this.db
+			.prepare(`SELECT id FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
+			.all(sessionId, isoTimestamp) as Array<{ id: string }>;
 		const stmt = this.db.prepare(
 			`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
 		);
 		const result = stmt.run(sessionId, isoTimestamp);
+		for (const row of rows) this.deleteMessageSearchRow(row.id);
 		return result.changes;
 	}
 
@@ -916,6 +1041,7 @@ export class SDKMessageRepository {
 			timestamp,
 			this.resolveTaskIdForSession(sessionId)
 		);
+		this.upsertMessageSearchRow(id);
 		return id;
 	}
 
@@ -929,6 +1055,7 @@ export class SDKMessageRepository {
 	updateNeokaiActionMessage(rowId: string, updated: NeokaiActionMessage): void {
 		const stmt = this.db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`);
 		stmt.run(JSON.stringify(updated), rowId);
+		this.upsertMessageSearchRow(rowId);
 	}
 
 	/**
@@ -942,6 +1069,14 @@ export class SDKMessageRepository {
 		messageUuid: string,
 		updated: NeokaiActionMessage
 	): void {
+		const row = this.db
+			.prepare(
+				`SELECT id FROM sdk_messages
+       WHERE session_id = ?
+         AND message_type = 'neokai_action'
+         AND json_extract(sdk_message, '$.uuid') = ?`
+			)
+			.get(sessionId, messageUuid) as { id: string } | undefined;
 		const stmt = this.db.prepare(
 			`UPDATE sdk_messages SET sdk_message = ?
        WHERE session_id = ?
@@ -949,5 +1084,94 @@ export class SDKMessageRepository {
          AND json_extract(sdk_message, '$.uuid') = ?`
 		);
 		stmt.run(JSON.stringify(updated), sessionId, messageUuid);
+		if (row) this.upsertMessageSearchRow(row.id);
 	}
+
+	searchMessages(params: MessageSearchParams): MessageSearchResponse {
+		if (!this.hasMessageSearchIndex()) {
+			return { results: [], limit: params.limit ?? 25, offset: params.offset ?? 0 };
+		}
+
+		const ftsQuery = buildFtsQuery(params.query);
+		const limit = Math.min(Math.max(params.limit ?? 25, 1), 50);
+		const offset = Math.max(params.offset ?? 0, 0);
+		if (!ftsQuery) return { results: [], limit, offset };
+
+		let sql = `
+			SELECT
+				kind, source_id, message_id, session_id, task_id, space_id, task_number,
+				message_type, title,
+				snippet(message_search_fts, 9, '<mark>', '</mark>', '…', 16) AS snippet,
+				timestamp,
+				bm25(message_search_fts) AS rank
+			FROM message_search_fts
+			WHERE message_search_fts MATCH ?`;
+		const values: SQLiteValue[] = [ftsQuery];
+
+		if (params.sessionId) {
+			sql += ` AND session_id = ?`;
+			values.push(params.sessionId);
+		}
+		if (params.messageType) {
+			sql += ` AND message_type = ?`;
+			values.push(params.messageType);
+		}
+		if (params.from !== undefined) {
+			sql += ` AND timestamp >= ?`;
+			values.push(params.from);
+		}
+		if (params.to !== undefined) {
+			sql += ` AND timestamp <= ?`;
+			values.push(params.to);
+		}
+
+		sql += ` ORDER BY rank ASC, timestamp DESC, source_id ASC LIMIT ? OFFSET ?`;
+		values.push(limit, offset);
+
+		const rows = this.db.prepare(sql).all(...values) as Array<{
+			kind: 'message' | 'task';
+			source_id: string;
+			message_id: string | null;
+			session_id: string | null;
+			task_id: string | null;
+			space_id: string | null;
+			task_number: number | null;
+			message_type: string | null;
+			title: string | null;
+			snippet: string | null;
+			timestamp: string | null;
+			rank: number;
+		}>;
+
+		const results: MessageSearchResult[] = rows.map((row) => {
+			const timestamp = parseSearchTimestamp(row.timestamp);
+			return {
+				kind: row.kind,
+				sourceId: row.source_id,
+				messageId: row.message_id ?? row.source_id,
+				sessionId: row.session_id ?? undefined,
+				taskId: row.task_id ?? undefined,
+				spaceId: row.space_id ?? undefined,
+				taskNumber: row.task_number ?? undefined,
+				messageType: row.message_type ?? undefined,
+				title: row.title ?? (row.kind === 'task' ? 'Task' : 'Session'),
+				snippet: row.snippet ?? '',
+				timestamp,
+				loadTarget: row.session_id
+					? { sessionId: row.session_id, before: timestamp + 1 }
+					: undefined,
+				rank: row.rank,
+			};
+		});
+
+		return { results, limit, offset };
+	}
+}
+
+function parseSearchTimestamp(value: string | null): number {
+	if (!value) return 0;
+	const numeric = Number(value);
+	if (Number.isFinite(numeric)) return numeric;
+	const parsed = new Date(value).getTime();
+	return Number.isFinite(parsed) ? parsed : 0;
 }

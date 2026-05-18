@@ -69,6 +69,7 @@ import {
 	replaceOverlayHistory,
 } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
+import { searchHighlightMessageIdSignal, type SearchMessageLoadTarget } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -284,6 +285,9 @@ export default function ChatContainer({
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
+	const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
+	const searchLoadTargetRef = useRef<SearchMessageLoadTarget | null>(null);
+	const [searchLoadTarget, setSearchLoadTarget] = useState<SearchMessageLoadTarget | null>(null);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -632,6 +636,24 @@ export default function ChatContainer({
 		setSandboxEnabled,
 	});
 
+	const selectSearchMessage = useCallback(
+		(messageId: string, loadTarget?: SearchMessageLoadTarget) => {
+			const nextLoadTarget = loadTarget ?? null;
+			searchLoadTargetRef.current = nextLoadTarget;
+			setSearchLoadTarget(nextLoadTarget);
+			setSearchTargetMessageId(messageId);
+		},
+		[]
+	);
+
+	useSignalEffect(() => {
+		const target = searchHighlightMessageIdSignal.value;
+		if (target?.sessionId === sessionId && sessionStore.activeSessionId.value === sessionId) {
+			selectSearchMessage(target.messageId, target.loadTarget);
+			searchHighlightMessageIdSignal.value = null;
+		}
+	});
+
 	// ========================================
 	// Session Actions
 	// ========================================
@@ -795,7 +817,7 @@ export default function ChatContainer({
 		// Disable tail-following auto-scroll while the caller is asking us to
 		// scroll a specific message into view. The highlight id is cleared once
 		// that anchor succeeds, so normal tail-following resumes for new rows.
-		enabled: autoScroll && !highlightMessageId,
+		enabled: autoScroll && !highlightMessageId && !searchTargetMessageId,
 		messageCount: messages.length,
 		isInitialLoad,
 		loadingOlder,
@@ -809,12 +831,104 @@ export default function ChatContainer({
 	// Note: `enabled: autoScroll && !highlightMessageId` is also passed to
 	// `useAutoScroll` above so the initial-load tail-follow can't race the
 	// deep-link scroll.
+	useEffect(() => {
+		if (!searchTargetMessageId || isInitialLoad) return;
+		const isLoaded = messages.some(
+			(message) =>
+				message.uuid === searchTargetMessageId ||
+				(message as ChatMessage & { id?: string }).id === searchTargetMessageId
+		);
+		if (isLoaded) return;
+
+		if (!searchLoadTarget?.before) {
+			const timeout = setTimeout(() => {
+				setSearchTargetMessageId(null);
+				searchLoadTargetRef.current = null;
+				setSearchLoadTarget(null);
+			}, 750);
+			return () => clearTimeout(timeout);
+		}
+
+		let cancelled = false;
+		const resetSearchTarget = () => {
+			setSearchTargetMessageId(null);
+			searchLoadTargetRef.current = null;
+			setSearchLoadTarget(null);
+		};
+		const hasTargetMessage = (messageList: ChatMessage[]) =>
+			messageList.some(
+				(message) =>
+					message.uuid === searchTargetMessageId ||
+					(message as ChatMessage & { id?: string }).id === searchTargetMessageId
+			);
+		const applyTargetWindow = async () => {
+			setLoadingOlder(true);
+			let before = searchLoadTarget.before;
+			if (!before) return;
+			while (!cancelled) {
+				const { messages: targetWindow, hasMore } = await sessionStore.loadOlderMessages(
+					before,
+					100,
+					searchLoadTarget.sessionId
+				);
+				if (cancelled) return;
+				if (sessionStore.activeSessionId.value !== searchLoadTarget.sessionId) {
+					resetSearchTarget();
+					return;
+				}
+				if (targetWindow.length === 0) {
+					setHasMoreMessages(false);
+					resetSearchTarget();
+					return;
+				}
+				sessionStore.prependMessages(targetWindow);
+				setHasMoreMessages(hasMore);
+				if (hasTargetMessage(targetWindow)) {
+					searchLoadTargetRef.current = null;
+					setSearchLoadTarget(null);
+					return;
+				}
+				if (!hasMore) {
+					resetSearchTarget();
+					return;
+				}
+				const oldestMessage = targetWindow[0] as ChatMessage & { timestamp?: number };
+				if (!oldestMessage.timestamp || oldestMessage.timestamp >= before) {
+					resetSearchTarget();
+					return;
+				}
+				before = oldestMessage.timestamp;
+			}
+		};
+		applyTargetWindow()
+			.catch(() => {
+				if (cancelled) return;
+				if (sessionStore.activeSessionId.value === searchLoadTarget.sessionId) {
+					toast.error('Failed to load search result context');
+				}
+				resetSearchTarget();
+			})
+			.finally(() => {
+				if (!cancelled) setLoadingOlder(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [searchTargetMessageId, searchLoadTarget, isInitialLoad, sessionId]);
+
 	useScrollToMessage({
 		containerRef: messagesContainerRef,
-		messageId: highlightMessageId,
+		messageId: searchTargetMessageId || highlightMessageId,
 		messageCount: messages.length,
 		isInitialLoad,
-		onAnchored: clearOverlayHighlightMessageId,
+		onAnchored: (messageId) => {
+			if (messageId === searchTargetMessageId) {
+				setSearchTargetMessageId(null);
+				searchLoadTargetRef.current = null;
+				setSearchLoadTarget(null);
+			}
+			if (messageId === highlightMessageId) clearOverlayHighlightMessageId();
+		},
 	});
 
 	// ========================================
@@ -1346,7 +1460,11 @@ export default function ChatContainer({
 
 							{/* Messages - QuestionPrompt rendered inline with AskUserQuestion tool blocks */}
 							{messages.map((msg, idx) => (
-								<div key={msg.uuid || `msg-${idx}`} data-message-id={msg.uuid} class="scroll-mt-20">
+								<div
+									key={msg.uuid || `msg-${idx}`}
+									data-message-id={msg.uuid || (msg as ChatMessage & { id?: string }).id}
+									class="scroll-mt-20"
+								>
 									<SDKMessageRenderer
 										message={msg}
 										toolResultsMap={maps.toolResultsMap}

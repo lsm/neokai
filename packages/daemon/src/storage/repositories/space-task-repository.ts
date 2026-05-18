@@ -22,6 +22,64 @@ export class SpaceTaskRepository {
 		private reactiveDb?: ReactiveDatabase
 	) {}
 
+	private hasMessageSearchIndex(): boolean {
+		try {
+			const row = this.db
+				.prepare(`SELECT name FROM sqlite_master WHERE name = 'message_search_fts'`)
+				.get();
+			return !!row;
+		} catch {
+			return false;
+		}
+	}
+
+	private upsertTaskSearchRow(taskId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		const row = this.db
+			.prepare(
+				`SELECT id, space_id, task_number, title, description, updated_at
+				 FROM space_tasks WHERE id = ?`
+			)
+			.get(taskId) as
+			| {
+					id: string;
+					space_id: string;
+					task_number: number;
+					title: string;
+					description: string;
+					updated_at: number;
+			  }
+			| undefined;
+		this.deleteTaskSearchRow(taskId);
+		if (!row) return;
+		const body = `${row.title} ${row.description}`.trim();
+		if (!body) return;
+		this.db
+			.prepare(
+				`INSERT INTO message_search_fts (
+					kind, source_id, task_id, space_id, task_number, title, body, timestamp
+				) VALUES ('task', ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(row.id, row.id, row.space_id, row.task_number, row.title, body, row.updated_at);
+	}
+
+	private deleteTaskSearchRow(taskId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		this.db
+			.prepare(`DELETE FROM message_search_fts WHERE kind = 'task' AND source_id = ?`)
+			.run(taskId);
+	}
+
+	/**
+	 * Remove both the task-kind row and any message-kind projection rows linked
+	 * to this task. Hard-deleting a task FK-cascades its `sdk_messages` rows, so
+	 * the message search projection must be cleaned up to avoid orphaned hits.
+	 */
+	private deleteTaskMessageSearchRows(taskId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		this.db.prepare(`DELETE FROM message_search_fts WHERE task_id = ?`).run(taskId);
+	}
+
 	/**
 	 * Create a new space task
 	 */
@@ -71,6 +129,7 @@ export class SpaceTaskRepository {
 		});
 
 		insertTx();
+		this.upsertTaskSearchRow(id);
 		this.reactiveDb?.notifyChange('space_tasks');
 
 		return this.getTask(id)!;
@@ -432,6 +491,7 @@ export class SpaceTaskRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+			this.upsertTaskSearchRow(id);
 
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
@@ -449,6 +509,7 @@ export class SpaceTaskRepository {
 			`UPDATE space_tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?`
 		);
 		stmt.run(now, now, id);
+		this.upsertTaskSearchRow(id);
 		this.reactiveDb?.notifyChange('space_tasks');
 		return this.getTask(id);
 	}
@@ -460,6 +521,7 @@ export class SpaceTaskRepository {
 		const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE id = ?`);
 		const result = stmt.run(id);
 		if (result.changes > 0) {
+			this.deleteTaskMessageSearchRows(id);
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 		return result.changes > 0;
@@ -469,7 +531,13 @@ export class SpaceTaskRepository {
 	 * Delete all tasks for a space
 	 */
 	deleteTasksForSpace(spaceId: string): void {
+		const rows = this.db
+			.prepare(`SELECT id FROM space_tasks WHERE space_id = ?`)
+			.all(spaceId) as Array<{
+			id: string;
+		}>;
 		this.db.prepare(`DELETE FROM space_tasks WHERE space_id = ?`).run(spaceId);
+		for (const row of rows) this.deleteTaskMessageSearchRows(row.id);
 		this.reactiveDb?.notifyChange('space_tasks');
 	}
 
@@ -477,12 +545,16 @@ export class SpaceTaskRepository {
 	 * Promote draft tasks created by a planning task (legacy method, kept for API compatibility)
 	 */
 	promoteDraftTasksByCreator(createdByTaskId: string): number {
+		const rows = this.db
+			.prepare(`SELECT id FROM space_tasks WHERE created_by_task_id = ? AND status = 'draft'`)
+			.all(createdByTaskId) as Array<{ id: string }>;
 		const result = this.db
 			.prepare(
 				`UPDATE space_tasks SET status = 'open', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
 			)
 			.run(Date.now(), createdByTaskId);
 		if (result.changes > 0) {
+			for (const row of rows) this.upsertTaskSearchRow(row.id);
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 		return result.changes;

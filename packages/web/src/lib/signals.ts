@@ -52,6 +52,19 @@ export const spaceOverlayAgentNameSignal = signal<string | null>(null);
 // minimal thread feed so they land on the message they clicked instead of the
 // session's tail. Cleared along with the other overlay signals on close.
 export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
+
+// Message selected from search results. ChatContainer consumes this after routing to target session.
+export interface SearchMessageLoadTarget {
+	sessionId: string;
+	before?: number;
+}
+
+export interface SearchHighlightTarget {
+	sessionId: string;
+	messageId: string;
+	loadTarget?: SearchMessageLoadTarget;
+}
+export const searchHighlightMessageIdSignal = signal<SearchHighlightTarget | null>(null);
 // Task messaging context for live workflow node-agent overlays. When set, sends
 // from AgentOverlayChat route through space.task.sendMessage instead of the
 // generic message.send RPC so they target the already-live workflow sub-session.
@@ -74,8 +87,10 @@ export const spaceOverlayPendingAgentNameSignal = signal<string | null>(null);
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
-// Command palette visibility (Cmd+K / Ctrl+K)
+// Global palette visibility. Cmd+K opens command mode; Cmd+P opens quick-open mode.
+export type CommandPaletteMode = 'commands' | 'quick-open';
 export const commandPaletteOpenSignal = signal<boolean>(false);
+export const commandPaletteModeSignal = signal<CommandPaletteMode>('commands');
 
 // Global right-side panel. Starts with Git session status, but the shell is
 // intentionally target-based so Space can attach task/agent panels later.

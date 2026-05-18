@@ -14,6 +14,15 @@ import type { SQLiteValue } from '../types';
 export class SessionRepository {
 	constructor(private db: BunDatabase) {}
 
+	private tableExists(tableName: string): boolean {
+		try {
+			const row = this.db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(tableName);
+			return !!row;
+		} catch {
+			return false;
+		}
+	}
+
 	/**
 	 * Create a new session
 	 */
@@ -217,7 +226,17 @@ export class SessionRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+			if (updates.title !== undefined) {
+				this.updateMessageSearchSessionTitle(id, updates.title);
+			}
 		}
+	}
+
+	private updateMessageSearchSessionTitle(sessionId: string, title: string): void {
+		if (!this.tableExists('message_search_fts')) return;
+		this.db
+			.prepare(`UPDATE message_search_fts SET title = ? WHERE kind = 'message' AND session_id = ?`)
+			.run(title, sessionId);
 	}
 
 	/**
@@ -239,9 +258,13 @@ export class SessionRepository {
 		const deleteOverrides = this.db.prepare(
 			`DELETE FROM mcp_enablement WHERE scope_type = 'session' AND scope_id = ?`
 		);
+		const deleteSearchRows = this.tableExists('message_search_fts')
+			? this.db.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND session_id = ?`)
+			: null;
 		const deleteSession = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
 		const tx = this.db.transaction((sessionId: string) => {
 			deleteOverrides.run(sessionId);
+			deleteSearchRows?.run(sessionId);
 			deleteSession.run(sessionId);
 		});
 		tx(id);

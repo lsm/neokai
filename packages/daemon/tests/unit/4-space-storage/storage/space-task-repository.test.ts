@@ -51,6 +51,33 @@ describe('SpaceTaskRepository', () => {
 		db.close();
 	});
 
+	function createSearchIndex(): void {
+		db.exec(`
+			CREATE VIRTUAL TABLE message_search_fts USING fts5(
+				kind UNINDEXED,
+				source_id UNINDEXED,
+				message_id UNINDEXED,
+				session_id UNINDEXED,
+				task_id UNINDEXED,
+				space_id UNINDEXED,
+				task_number UNINDEXED,
+				message_type UNINDEXED,
+				title,
+				body,
+				timestamp UNINDEXED,
+				tokenize = 'unicode61'
+			)
+		`);
+	}
+
+	function searchIndexedTaskIds(query: string): string[] {
+		return (
+			(db as any)
+				.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+				.all(query) as Array<{ source_id: string }>
+		).map((row) => row.source_id);
+	}
+
 	describe('createTask', () => {
 		it('creates a task with required fields', () => {
 			const task = repo.createTask({
@@ -510,6 +537,29 @@ describe('SpaceTaskRepository', () => {
 			expect(draft!.status).toBe('open');
 			const inProgress = tasks.find((t) => t.title === 'P');
 			expect(inProgress!.status).toBe('in_progress');
+		});
+	});
+
+	describe('message search sync', () => {
+		it('syncs task search rows on create, update, and delete', () => {
+			createSearchIndex();
+
+			const task = repo.createTask({
+				spaceId,
+				title: 'Orion task',
+				description: 'Initial body',
+			});
+
+			expect(searchIndexedTaskIds('orion')).toEqual([task.id]);
+
+			repo.updateTask(task.id, { title: 'Updated task', description: 'Nebula body' });
+
+			expect(searchIndexedTaskIds('orion')).toEqual([]);
+			expect(searchIndexedTaskIds('nebula')).toEqual([task.id]);
+
+			repo.deleteTask(task.id);
+
+			expect(searchIndexedTaskIds('nebula')).toEqual([]);
 		});
 	});
 

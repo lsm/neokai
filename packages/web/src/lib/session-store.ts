@@ -749,9 +749,10 @@ class SessionStore {
 	 */
 	async loadOlderMessages(
 		beforeTimestamp: number,
-		limit = 100
+		limit = 100,
+		sessionIdOverride?: string
 	): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
-		const sessionId = this.activeSessionId.value;
+		const sessionId = sessionIdOverride ?? this.activeSessionId.value;
 		if (!sessionId) return { messages: [], hasMore: false };
 
 		try {
@@ -768,8 +769,9 @@ class SessionStore {
 			const messages = result?.sdkMessages ?? [];
 			const hasMore = result?.hasMore ?? false;
 
-			// Update hasMore signal from server response
-			this._hasMoreMessages.value = hasMore;
+			if (!sessionIdOverride || sessionId === this.activeSessionId.value) {
+				this._hasMoreMessages.value = hasMore;
+			}
 
 			return {
 				messages,
