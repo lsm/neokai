@@ -92,6 +92,28 @@ Cross-target builds use the `build:macos`, `build:macos-intel`, `build:macos-uni
 > at the monorepo root and copy the result yourself; richer cross-compilation
 > wiring is a follow-up.
 
+## GitHub release
+
+Tagged releases build desktop artifacts in `.github/workflows/release.yml`. The workflow
+produces signed and notarized macOS artifacts for Apple Silicon and Intel, plus unsigned
+Linux x64 artifacts, and attaches them to the GitHub Release after npm publishing succeeds.
+
+The release workflow requires these GitHub Actions secrets:
+
+| Secret | Value |
+|---|---|
+| `APPLE_CERTIFICATE` | Base64-encoded Developer ID Application `.p12` certificate |
+| `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` certificate |
+| `APPLE_SIGNING_IDENTITY` | Exact signing identity, for example `Developer ID Application: Example Inc (TEAMID)` |
+| `APPLE_API_ISSUER` | App Store Connect issuer ID |
+| `APPLE_API_KEY` | App Store Connect key ID |
+| `APPLE_API_PRIVATE_KEY` | Raw contents of the downloaded `AuthKey_<KEY_ID>.p8` private key |
+
+Use a Team App Store Connect API key for notarization. Individual keys cannot
+use Apple's notary service. The desktop package version, Tauri config version,
+and Cargo package version must match the release tag, just like the other
+workspace packages.
+
 ## Sidecar architecture
 
 Tauri's [sidecar](https://v2.tauri.app/develop/sidecar/) feature lets the
