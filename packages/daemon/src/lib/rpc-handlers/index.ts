@@ -94,6 +94,7 @@ import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace
 import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
 import { SpaceRepository } from '../../storage/repositories/space-repository';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers';
+import { setupAgentMemoryHandlers } from './agent-memory-handlers';
 import { ScheduleService } from '../space/schedule/schedule-service';
 
 export interface RPCHandlerDependencies {
@@ -227,6 +228,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Per-space MCP enablement RPC handlers + `.mcp.json` import refresh.
 	setupSpaceMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, deps.spaceManager);
+	setupAgentMemoryHandlers(deps.messageHub, { memoryRepo: deps.db.agentMemory });
 
 	// Skills registry RPC handlers
 	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.internalEventBus, undefined);
@@ -378,6 +380,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		externalEventStore: deps.externalEventStore,
 		externalEventService: deps.externalEventService,
 		replyRoutingRegistry,
+		memoryRepo: deps.db.agentMemory,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -497,6 +500,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		scheduleService,
 		internalEventBus: deps.internalEventBus,
 		replyRoutingRegistry,
+		memoryRepo: deps.db.agentMemory,
 	});
 
 	deps.commandBus.register('agent.message.inject', async (command) => {
