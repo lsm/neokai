@@ -45,26 +45,34 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
 
-      - name: Verify package.json versions match tag
+      - name: Verify package versions match tag
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          echo "Checking all package.json versions match tag version: $VERSION"
+          echo "Checking package versions match tag version: $VERSION"
           MISMATCHES=()
-          for pkg in npm/neokai packages/cli packages/daemon packages/e2e packages/shared packages/web; do
+          for pkg in npm/neokai packages/cli packages/daemon packages/e2e packages/shared packages/web packages/desktop; do
             PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
             if [ "$PKG_VERSION" != "$VERSION" ]; then
               MISMATCHES+=("$pkg/package.json: $PKG_VERSION (expected $VERSION)")
             fi
           done
+          TAURI_VERSION=$(node -p "require('./packages/desktop/src-tauri/tauri.conf.json').version")
+          if [ "$TAURI_VERSION" != "$VERSION" ]; then
+            MISMATCHES+=("packages/desktop/src-tauri/tauri.conf.json: $TAURI_VERSION (expected $VERSION)")
+          fi
+          DESKTOP_CARGO_VERSION=$(awk -F'"' '/^version = / { print $2; exit }' packages/desktop/src-tauri/Cargo.toml)
+          if [ "$DESKTOP_CARGO_VERSION" != "$VERSION" ]; then
+            MISMATCHES+=("packages/desktop/src-tauri/Cargo.toml: $DESKTOP_CARGO_VERSION (expected $VERSION)")
+          fi
           if [ ${#MISMATCHES[@]} -gt 0 ]; then
             echo "ERROR: Version mismatches found!"
             printf '  %s\n' "${MISMATCHES[@]}"
             echo ""
-            echo "All package.json versions must match the release tag (v$VERSION)."
-            echo "Bump all package.json versions to $VERSION before tagging."
+            echo "All package and desktop bundle versions must match the release tag (v$VERSION)."
+            echo "Bump all package and desktop bundle versions to $VERSION before tagging."
             exit 1
           fi
-          echo "All package.json versions match v$VERSION"
+          echo "All package and desktop bundle versions match v$VERSION"
 
       - name: Verify commit is on dev branch
         run: |
@@ -186,6 +194,186 @@ jobs:
           path: dist/bin/${{ matrix.binary }}
 
   # ============================================
+  # DESKTOP RELEASE BUILD
+  # Build, sign, and notarize macOS desktop artifacts; build unsigned Linux artifacts
+  # ============================================
+
+  desktop-release-build:
+    name: Desktop Release ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs: wait-for-ci
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            rust-target: aarch64-apple-darwin
+            arch: darwin-arm64
+          - runner: macos-15-intel
+            rust-target: x86_64-apple-darwin
+            arch: darwin-x64
+          - runner: ubuntu-latest
+            rust-target: x86_64-unknown-linux-gnu
+            arch: linux-x64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.13
+
+      - name: Verify Apple signing secrets
+        if: runner.os == 'macOS'
+        run: |
+          missing=0
+          for name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_API_ISSUER \
+            APPLE_API_KEY \
+            APPLE_API_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required Actions secret: $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+
+      - name: Configure App Store Connect API key
+        if: runner.os == 'macOS'
+        run: |
+          KEY_DIR="$RUNNER_TEMP/appstoreconnect"
+          KEY_PATH="$KEY_DIR/AuthKey_${APPLE_API_KEY}.p8"
+          mkdir -p "$KEY_DIR"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            rpm \
+            wget
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Setup Rust target
+        run: rustup target add ${{ matrix.rust-target }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/desktop/src-tauri/target
+          key: desktop-cargo-${{ runner.os }}-${{ matrix.rust-target }}-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            desktop-cargo-${{ runner.os }}-${{ matrix.rust-target }}-
+
+      - name: Install Tauri CLI
+        run: |
+          if ! cargo tauri --version >/dev/null 2>&1; then
+            cargo install tauri-cli --version "^2" --locked
+          fi
+
+      - name: Build desktop app
+        run: |
+          cd packages/desktop
+          bun run build:sidecar
+          cargo tauri build --target ${{ matrix.rust-target }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+
+      - name: Collect desktop artifacts
+        run: |
+          VERSION="${{ needs.wait-for-ci.outputs.version }}"
+          ARTIFACT_DIR="$PWD/dist/desktop/${{ matrix.arch }}"
+          BUNDLE_ROOT="$PWD/packages/desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle"
+          mkdir -p "$ARTIFACT_DIR"
+
+          find "$BUNDLE_ROOT" -maxdepth 4 -type f -print
+
+          for dmg in "$BUNDLE_ROOT"/dmg/*.dmg; do
+            [ -e "$dmg" ] || continue
+            cp "$dmg" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.dmg"
+          done
+
+          for deb in "$BUNDLE_ROOT"/deb/*.deb; do
+            [ -e "$deb" ] || continue
+            cp "$deb" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.deb"
+          done
+
+          for rpm in "$BUNDLE_ROOT"/rpm/*.rpm; do
+            [ -e "$rpm" ] || continue
+            cp "$rpm" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.rpm"
+          done
+
+          for appimage in "$BUNDLE_ROOT"/appimage/*.AppImage; do
+            [ -e "$appimage" ] || continue
+            cp "$appimage" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.AppImage"
+          done
+
+          if [ -d "$BUNDLE_ROOT/macos" ]; then
+            APP_PATH=$(find "$BUNDLE_ROOT/macos" -maxdepth 1 -name '*.app' -type d -print -quit)
+          else
+            APP_PATH=""
+          fi
+          if [ -n "$APP_PATH" ]; then
+            ditto -c -k --keepParent "$APP_PATH" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.app.zip"
+          fi
+
+          if ! compgen -G "$ARTIFACT_DIR/*" > /dev/null; then
+            echo "::error::No desktop artifacts were produced"
+            exit 1
+          fi
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd "$ARTIFACT_DIR" && sha256sum * > "Kai_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
+          else
+            (cd "$ARTIFACT_DIR" && shasum -a 256 * > "Kai_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
+          fi
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.arch }}
+          path: dist/desktop/${{ matrix.arch }}/*
+
+  # ============================================
   # PACKAGE
   # Create npm packages from built binaries
   # ============================================
@@ -242,7 +430,7 @@ jobs:
     name: Publish to npm
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [wait-for-ci, package]
+    needs: [wait-for-ci, package, desktop-release-build]
     permissions:
       contents: read
       id-token: write
@@ -310,8 +498,8 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [wait-for-ci, publish]
+    timeout-minutes: 15
+    needs: [wait-for-ci, publish, desktop-release-build]
     permissions:
       contents: write
 
@@ -320,13 +508,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop/
+          merge-multiple: true
+
       - name: Create GitHub Release
         run: |
           VERSION="${{ needs.wait-for-ci.outputs.version }}"
           echo "Creating GitHub Release for v$VERSION..."
           NOTES=$(sed -n "/^## \[${VERSION#v}\]/,/^## \[/p" CHANGELOG.md | sed '$d')
           echo "$NOTES" > /tmp/release-notes.md
+
+          ASSETS=()
+          while IFS= read -r asset; do
+            ASSETS+=("$asset")
+          done < <(find dist/desktop -type f | sort)
+
           gh release create "v$VERSION" \
+            "${ASSETS[@]}" \
             --title "v$VERSION" \
             --notes-file /tmp/release-notes.md
           echo "GitHub Release created: v$VERSION"
