@@ -37,6 +37,7 @@ import {
 	navigateToSpace,
 	navigateToSpaceConfigure,
 	navigateToSpaceSessions,
+	navigateToSpaceGoals,
 	navigateToSpaceTasks,
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
@@ -46,6 +47,7 @@ import {
 	createSpacePath,
 	createSpaceConfigurePath,
 	createSpaceSessionsPath,
+	createSpaceGoalsPath,
 	createSpaceTasksPath,
 	createSpaceAgentPath,
 	createSpaceSessionPath,
@@ -148,23 +150,25 @@ export function App() {
 							? createSpaceSessionPath(spaceId, spaceSessionId)
 							: spaceId && spaceViewMode === 'sessions'
 								? createSpaceSessionsPath(spaceId)
-								: spaceId && spaceViewMode === 'tasks'
-									? createSpaceTasksPath(
-											spaceId,
-											spaceTasksFilterTab !== 'active' ? spaceTasksFilterTab : undefined
-										)
-									: spaceId && spaceViewMode === 'configure'
-										? createSpaceConfigurePath(
+								: spaceId && spaceViewMode === 'goals'
+									? createSpaceGoalsPath(spaceId)
+									: spaceId && spaceViewMode === 'tasks'
+										? createSpaceTasksPath(
 												spaceId,
-												spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
+												spaceTasksFilterTab !== 'active' ? spaceTasksFilterTab : undefined
 											)
-										: spaceId
-											? createSpacePath(spaceId)
-											: navSection === 'chats'
-												? '/sessions'
-												: navSection === 'settings'
-													? '/settings'
-													: '/spaces';
+										: spaceId && spaceViewMode === 'configure'
+											? createSpaceConfigurePath(
+													spaceId,
+													spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
+												)
+											: spaceId
+												? createSpacePath(spaceId)
+												: navSection === 'chats'
+													? '/sessions'
+													: navSection === 'settings'
+														? '/settings'
+														: '/spaces';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -184,6 +188,8 @@ export function App() {
 					navigateToSpaceSession(spaceId, spaceSessionId, true);
 				} else if (spaceId && spaceViewMode === 'sessions') {
 					navigateToSpaceSessions(spaceId, true);
+				} else if (spaceId && spaceViewMode === 'goals') {
+					navigateToSpaceGoals(spaceId, true);
 				} else if (spaceId && spaceViewMode === 'tasks') {
 					navigateToSpaceTasks(spaceId, undefined, true);
 				} else if (spaceId && spaceViewMode === 'configure') {
