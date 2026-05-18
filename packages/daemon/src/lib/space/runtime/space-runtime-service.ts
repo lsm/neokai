@@ -192,7 +192,11 @@ export class SpaceRuntimeService {
 			selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
 			internalEventBus: config.internalEventBus,
 			onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
-				this.config.goalService?.handleTaskTerminal(task.id);
+				try {
+					this.config.goalService?.handleTaskTerminal(task.id);
+				} catch (err) {
+					log.warn(`goal terminal handling failed for task ${task.id}:`, err);
+				}
 				if (!this.config.internalEventBus) return;
 				await this.config.internalEventBus.publish('space.task.updated', {
 					sessionId: 'global',

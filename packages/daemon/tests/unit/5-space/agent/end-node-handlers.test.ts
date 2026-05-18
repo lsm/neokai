@@ -180,7 +180,7 @@ describe('createMarkCompleteHandler', () => {
 		ctx.db.close();
 	});
 
-	test('applies goal_update before marking a linked task complete', async () => {
+	test('applies goal_update after marking a linked task complete', async () => {
 		const goal = ctx.goalService.createGoal({
 			spaceId: ctx.spaceId,
 			title: 'Improve onboarding',
@@ -223,6 +223,43 @@ describe('createMarkCompleteHandler', () => {
 		expect(updateEvent?.source).toBe('workflow_node_agent');
 		expect(updateEvent?.sourceTaskId).toBe(task.id);
 		expect(updateEvent?.diff?.progress).toEqual({ previous: 0, current: 55 });
+	});
+
+	test('does not persist goal_update when marking the task complete fails', async () => {
+		const goal = ctx.goalService.createGoal({
+			spaceId: ctx.spaceId,
+			title: 'Keep consistent',
+		});
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'T',
+			description: '',
+			status: 'approved',
+			goalId: goal.id,
+		});
+		const setTaskStatus = mock(async () => {
+			throw new Error('transition raced');
+		});
+		const handler = createMarkCompleteHandler({
+			taskId: task.id,
+			spaceId: ctx.spaceId,
+			taskRepo: ctx.taskRepo,
+			taskManager: { setTaskStatus, updateTask: ctx.taskManager.updateTask.bind(ctx.taskManager) },
+			goalService: ctx.goalService,
+		});
+
+		const out = await handler({ goal_update: { summary: 'Should not persist', progress: 90 } });
+		const parsed = JSON.parse(out.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toBe('transition raced');
+		expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
+		const unchangedGoal = ctx.goalService.getGoal(goal.id);
+		expect(unchangedGoal?.summary).toBe('');
+		expect(unchangedGoal?.progress).toBe(0);
+		expect(ctx.goalEventRepo.listByGoal(goal.id).map((event) => event.eventType)).toEqual([
+			'created',
+		]);
 	});
 
 	test('rejects goal_update on a task without a linked goal', async () => {

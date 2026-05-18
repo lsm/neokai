@@ -142,6 +142,10 @@ export function createMarkCompleteHandler(
 			});
 		}
 
+		let goalUpdate: {
+			goalId: string;
+			updates: NonNullable<MarkCompleteInput['goal_update']>;
+		} | null = null;
 		if (args.goal_update) {
 			if (!goalService) {
 				return jsonResult({
@@ -159,16 +163,7 @@ export function createMarkCompleteHandler(
 			if (!goal || goal.spaceId !== task.spaceId) {
 				return jsonResult({ success: false, error: `Goal not found: ${task.goalId}` });
 			}
-			goalService.updateGoal(
-				goal.id,
-				{
-					summary: args.goal_update.summary,
-					progress: args.goal_update.progress,
-					metrics: args.goal_update.metrics,
-					nextSteps: args.goal_update.nextSteps,
-				},
-				{ source: 'workflow_node_agent', sourceTaskId: taskId }
-			);
+			goalUpdate = { goalId: goal.id, updates: args.goal_update };
 		}
 
 		try {
@@ -182,6 +177,18 @@ export function createMarkCompleteHandler(
 					for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
 				},
 			});
+			if (goalUpdate) {
+				goalService?.updateGoal(
+					goalUpdate.goalId,
+					{
+						summary: goalUpdate.updates.summary,
+						progress: goalUpdate.updates.progress,
+						metrics: goalUpdate.updates.metrics,
+						nextSteps: goalUpdate.updates.nextSteps,
+					},
+					{ source: 'workflow_node_agent', sourceTaskId: taskId }
+				);
+			}
 			handleGoalTerminal(updated);
 			emitTaskUpdated(updated);
 			log.info(
