@@ -79,7 +79,7 @@ describe('scope-config', () => {
 				'session_groups',
 				'session_group_members',
 			]);
-			expect(names).toHaveLength(18);
+			expect(names).toHaveLength(19);
 		});
 
 		it('all table configs have a description', () => {

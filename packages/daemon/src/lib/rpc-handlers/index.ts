@@ -400,8 +400,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		externalEventStore: deps.externalEventStore,
 		externalEventService: deps.externalEventService,
 		replyRoutingRegistry,
-			memoryRepo: deps.db.agentMemory,
-			goalService: spaceGoalService,
+		memoryRepo: deps.db.agentMemory,
+		goalService: spaceGoalService,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -528,8 +528,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		scheduleService,
 		internalEventBus: deps.internalEventBus,
 		replyRoutingRegistry,
-			memoryRepo: deps.db.agentMemory,
-			goalService: spaceGoalService,
+		memoryRepo: deps.db.agentMemory,
+		goalService: spaceGoalService,
 	});
 
 	deps.commandBus.register('agent.message.inject', async (command) => {
