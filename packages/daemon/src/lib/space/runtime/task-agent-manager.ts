@@ -892,9 +892,8 @@ export class TaskAgentManager {
 						// Re-merging with a fresh node-agent and restarting the query ensures the
 						// session's tool surface reflects the new node activation context.
 						//
-						// Re-inject node-agent and enforce the required-server invariant on
-						// the reused session. Node agents intentionally do not receive
-						// space-agent-tools; task creation is mirrored onto node-agent instead.
+						// Re-inject node-agent, attach specialised space-agent-tools, and enforce
+						// the required-server invariant on the reused session.
 						if (memberInfo.nodeId) {
 							const reuseWorkspacePath = this.taskWorktreePaths.get(taskId) ?? init.workspacePath;
 							const reuseCtx = {
