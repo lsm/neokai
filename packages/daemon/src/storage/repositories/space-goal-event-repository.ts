@@ -70,7 +70,7 @@ export class SpaceGoalEventRepository {
 					>[])
 				: (this.db
 						.prepare(
-							`SELECT * FROM space_goal_events WHERE goal_id = ? AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ?`
+							`SELECT * FROM space_goal_events WHERE goal_id = ? AND created_at < ? ORDER BY created_at DESC, id DESC LIMIT ?`
 						)
 						.all(goalId, params.before, limit) as Record<string, unknown>[])
 			: (this.db
@@ -96,7 +96,7 @@ export class SpaceGoalEventRepository {
 					>[])
 				: (this.db
 						.prepare(
-							`SELECT * FROM space_goal_events WHERE space_id = ? AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ?`
+							`SELECT * FROM space_goal_events WHERE space_id = ? AND created_at < ? ORDER BY created_at DESC, id DESC LIMIT ?`
 						)
 						.all(spaceId, params.before, limit) as Record<string, unknown>[])
 			: (this.db

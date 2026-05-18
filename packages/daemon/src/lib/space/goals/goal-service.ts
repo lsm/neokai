@@ -66,7 +66,6 @@ export class SpaceGoalService {
 
 		const result = this.runAtomic(() => {
 			const goal = this.deps.goalRepo.create(params);
-			this.recordGoalEvent(goal, 'created', null, goal, context);
 			if (params.checkInCronExpression) {
 				const schedule = this.deps.scheduleService.createGoalSchedule({
 					spaceId: params.spaceId,
@@ -85,8 +84,9 @@ export class SpaceGoalService {
 				this.deps.goalRepo.update(goal.id, { nextCheckInAt: schedule.nextRunAt });
 			}
 
-			if (!params.triggerImmediately)
-				return { goal: this.getGoal(goal.id) as SpaceGoal, task: null };
+			const createdGoal = this.getGoal(goal.id) as SpaceGoal;
+			this.recordGoalEvent(createdGoal, 'created', null, createdGoal, context);
+			if (!params.triggerImmediately) return { goal: createdGoal, task: null };
 			const created = this.createImmediateTaskInternal(goal.id, undefined, {
 				emitTaskCreated: false,
 			});

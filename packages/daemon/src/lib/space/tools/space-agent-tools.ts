@@ -1584,7 +1584,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			try {
 				requireGoalInSpace(args.goal_id);
 				const tasks = taskRepo
-					.listBySpace(spaceId)
+					.listBySpace(spaceId, args.status === 'archived')
 					.filter((task) => task.goalId === args.goal_id)
 					.filter((task) => (args.status ? task.status === args.status : true));
 				return jsonResult({ success: true, total: tasks.length, tasks });

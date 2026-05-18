@@ -111,6 +111,12 @@ describe('SpaceGoalService', () => {
 		expect(schedule?.goalId).toBe(goal.id);
 		expect(schedule?.preferredWorkflowId).toBe('workflow-1');
 		expect(schedule?.labels).toEqual(['goal', `goal:${goal.id}`, 'product']);
+
+		const createdEvent = goalEventRepo
+			.listByGoal(goal.id)
+			.find((event) => event.eventType === 'created');
+		expect(createdEvent?.newState?.taskScheduleId).toBe(goal.taskScheduleId);
+		expect(createdEvent?.newState?.nextCheckInAt).toBe(goal.nextCheckInAt);
 	});
 
 	it('paginates same-timestamp goal events with id cursor', () => {
@@ -150,6 +156,17 @@ describe('SpaceGoalService', () => {
 			beforeId: page1[0]!.id,
 		});
 		expect(page2.map((event) => event.id)).toEqual([ordered[1]!.id, ordered[2]!.id]);
+
+		const timestampOnlyGoalPage = goalEventRepo.listByGoal(goal.id, { before: timestamp });
+		expect(timestampOnlyGoalPage.every((event) => event.createdAt < timestamp)).toBe(true);
+		expect(timestampOnlyGoalPage.map((event) => event.id)).not.toContain(first.id);
+		expect(timestampOnlyGoalPage.map((event) => event.id)).not.toContain(second.id);
+		expect(timestampOnlyGoalPage.map((event) => event.id)).not.toContain(third.id);
+		const timestampOnlySpacePage = goalEventRepo.listBySpace(spaceId, { before: timestamp });
+		expect(timestampOnlySpacePage.every((event) => event.createdAt < timestamp)).toBe(true);
+		expect(timestampOnlySpacePage.map((event) => event.id)).not.toContain(first.id);
+		expect(timestampOnlySpacePage.map((event) => event.id)).not.toContain(second.id);
+		expect(timestampOnlySpacePage.map((event) => event.id)).not.toContain(third.id);
 	});
 
 	it('records goal update, status, task, and schedule events', () => {

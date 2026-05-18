@@ -352,6 +352,18 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
 		expect(tasks.total).toBe(1);
 		expect(tasks.tasks[0].id).toBe(triggered.task.id);
 
+		ctx.taskRepo.archiveTask(triggered.task.id);
+		const archivedTasks = JSON.parse(
+			(
+				await handlers.list_goal_tasks({
+					goal_id: created.goal.id,
+					status: 'archived',
+				})
+			).content[0].text
+		);
+		expect(archivedTasks.total).toBe(1);
+		expect(archivedTasks.tasks[0].id).toBe(triggered.task.id);
+
 		const events = JSON.parse(
 			(await handlers.list_goal_events({ goal_id: created.goal.id })).content[0].text
 		);
