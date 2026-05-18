@@ -9,10 +9,17 @@ export class FastembedAgentMemoryEmbedder implements AgentMemoryEmbedder {
 	dimensions = DIMENSIONS;
 	private embeddingPromise: Promise<FlagEmbedding> | null = null;
 
-	embed(text: string): Promise<Float32Array> {
+	embedQuery(text: string): Promise<Float32Array> {
 		return this.getEmbedding().then(async (embedding) =>
 			Float32Array.from(await embedding.queryEmbed(text))
 		);
+	}
+
+	async embedPassage(text: string): Promise<Float32Array> {
+		const embedding = await this.getEmbedding();
+		const batches = embedding.passageEmbed([text], 1);
+		const batch = await batches.next();
+		return Float32Array.from(batch.value?.[0] ?? []);
 	}
 
 	private getEmbedding(): Promise<FlagEmbedding> {

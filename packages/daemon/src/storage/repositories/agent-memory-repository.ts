@@ -21,7 +21,8 @@ export interface AgentMemorySearchResult {
 export interface AgentMemoryEmbedder {
 	model: string;
 	dimensions: number;
-	embed(text: string): Float32Array | number[] | Promise<Float32Array | number[]>;
+	embedQuery(text: string): Float32Array | number[] | Promise<Float32Array | number[]>;
+	embedPassage(text: string): Float32Array | number[] | Promise<Float32Array | number[]>;
 }
 
 interface AgentMemoryRow {
@@ -235,7 +236,7 @@ export class AgentMemoryRepository {
 	}
 
 	private async searchVector(spaceId: string, query: string, limit: number): Promise<RankedRow[]> {
-		const queryVector = await this.embedText(query);
+		const queryVector = await this.embedText(query, 'query', { fallbackToNull: true });
 		if (!queryVector || !this.embedder) return [];
 
 		const rows = this.db
@@ -270,7 +271,7 @@ export class AgentMemoryRepository {
 
 	private updateEmbedding(row: AgentMemoryRow): void {
 		const sourceUpdatedAt = row.updated_at;
-		const embedding = this.embedText(memoryEmbeddingText(row));
+		const embedding = this.embedText(memoryEmbeddingText(row), 'passage');
 		if (!embedding) return;
 		if (embedding instanceof Promise) {
 			embedding
@@ -334,16 +335,32 @@ export class AgentMemoryRepository {
 			);
 	}
 
-	private embedText(text: string): Float32Array | Promise<Float32Array> | null {
+	private embedText(
+		text: string,
+		kind: 'query' | 'passage'
+	): Float32Array | Promise<Float32Array> | null;
+	private embedText(
+		text: string,
+		kind: 'query' | 'passage',
+		options: { fallbackToNull: true }
+	): Float32Array | Promise<Float32Array | null> | null;
+	private embedText(
+		text: string,
+		kind: 'query' | 'passage',
+		options?: { fallbackToNull?: boolean }
+	): Float32Array | Promise<Float32Array | null> | null {
 		if (!this.embedder) return null;
 		try {
-			const embedding = this.embedder.embed(text);
+			const embedding =
+				kind === 'query' ? this.embedder.embedQuery(text) : this.embedder.embedPassage(text);
 			if (embedding instanceof Promise) {
-				return embedding.then((value) => this.normalizeEmbedding(value));
+				const normalized = embedding.then((value) => this.normalizeEmbedding(value));
+				return options?.fallbackToNull ? normalized.catch(() => null) : normalized;
 			}
 			return this.normalizeEmbedding(embedding);
-		} catch {
-			return null;
+		} catch (error) {
+			if (options?.fallbackToNull) return null;
+			throw error;
 		}
 	}
 

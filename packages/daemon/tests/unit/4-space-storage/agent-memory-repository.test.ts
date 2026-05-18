@@ -13,8 +13,27 @@ class KeywordEmbedder implements AgentMemoryEmbedder {
 	model = 'test-keyword';
 	dimensions = 3;
 
-	embed(text: string): Float32Array {
+	embedQuery(text: string): Float32Array {
 		return keywordVector(text);
+	}
+
+	embedPassage(text: string): Float32Array {
+		return keywordVector(text);
+	}
+}
+
+class TrackingEmbedder extends KeywordEmbedder {
+	queryTexts: string[] = [];
+	passageTexts: string[] = [];
+
+	override embedQuery(text: string): Float32Array {
+		this.queryTexts.push(text);
+		return super.embedQuery(text);
+	}
+
+	override embedPassage(text: string): Float32Array {
+		this.passageTexts.push(text);
+		return super.embedPassage(text);
 	}
 }
 
@@ -22,7 +41,11 @@ class AsyncKeywordEmbedder implements AgentMemoryEmbedder {
 	model = 'test-keyword';
 	dimensions = 3;
 
-	embed(text: string): Promise<Float32Array> {
+	embedQuery(text: string): Promise<Float32Array> {
+		return Promise.resolve(keywordVector(text));
+	}
+
+	embedPassage(text: string): Promise<Float32Array> {
 		return Promise.resolve(keywordVector(text));
 	}
 }
@@ -32,7 +55,13 @@ class DeferredKeywordEmbedder implements AgentMemoryEmbedder {
 	dimensions = 3;
 	private resolvers: Array<(vector: Float32Array) => void> = [];
 
-	embed(text: string): Promise<Float32Array> {
+	embedQuery(text: string): Promise<Float32Array> {
+		return new Promise((resolve) => {
+			this.resolvers.push(() => resolve(keywordVector(text)));
+		});
+	}
+
+	embedPassage(text: string): Promise<Float32Array> {
 		return new Promise((resolve) => {
 			this.resolvers.push(() => resolve(keywordVector(text)));
 		});
@@ -47,8 +76,18 @@ class FailingEmbedder implements AgentMemoryEmbedder {
 	model = 'test-failing';
 	dimensions = 3;
 
-	embed(): Promise<Float32Array> {
+	embedQuery(): Promise<Float32Array> {
 		return Promise.reject(new Error('embedding unavailable'));
+	}
+
+	embedPassage(): Promise<Float32Array> {
+		return Promise.reject(new Error('embedding unavailable'));
+	}
+}
+
+class QueryFailingEmbedder extends KeywordEmbedder {
+	override embedQuery(): Promise<Float32Array> {
+		return Promise.reject(new Error('query embedding unavailable'));
 	}
 }
 
@@ -356,6 +395,36 @@ describe('AgentMemoryRepository', () => {
 		expect(row.embedding_status).toBe('pending');
 		const results = await repo.search('space-a', 'lexical fallback', 5);
 		expect(results.map((result) => result.memory.key)).toEqual(['pending.memory']);
+	});
+
+	test('query embedding failures fall back to FTS results', async () => {
+		repo = new AgentMemoryRepository(db, undefined, new QueryFailingEmbedder());
+		repo.write({
+			spaceId: 'space-a',
+			key: 'fallback.memory',
+			content: 'Lexical fallback survives query embedding failure.',
+		});
+
+		const results = await repo.search('space-a', 'lexical fallback', 5);
+
+		expect(results.map((result) => result.memory.key)).toEqual(['fallback.memory']);
+	});
+
+	test('uses passage embeddings for memories and query embeddings for searches', async () => {
+		const embedder = new TrackingEmbedder();
+		repo = new AgentMemoryRepository(db, undefined, embedder);
+		repo.write({
+			spaceId: 'space-a',
+			key: 'embedding.kind',
+			content: 'Delete stale session records after retention expires.',
+		});
+
+		await repo.search('space-a', 'erase old conversation data', 5);
+
+		expect(embedder.passageTexts).toEqual([
+			'embedding.kind\nDelete stale session records after retention expires.',
+		]);
+		expect(embedder.queryTexts).toEqual(['erase old conversation data']);
 	});
 
 	test('vector search preserves space isolation', async () => {
