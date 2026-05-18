@@ -1,37 +1,32 @@
-import { EmbeddingModel, FlagEmbedding } from 'fastembed';
+import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import type { AgentMemoryEmbedder } from './agent-memory-repository';
 
-const MODEL = EmbeddingModel.BGESmallEN;
+const MODEL = 'BAAI/bge-small-en-v1.5';
 const DIMENSIONS = 384;
 
 export class FastembedAgentMemoryEmbedder implements AgentMemoryEmbedder {
 	model = MODEL;
 	dimensions = DIMENSIONS;
-	private embeddingPromise: Promise<FlagEmbedding> | null = null;
+	private pipePromise: Promise<FeatureExtractionPipeline> | null = null;
 
 	embedQuery(text: string): Promise<Float32Array> {
-		return this.getEmbedding().then(async (embedding) =>
-			Float32Array.from(await embedding.queryEmbed(text))
-		);
+		return this.getPipeline().then(async (pipe) => {
+			const output = await pipe(text, { pooling: 'mean', normalize: true });
+			return Float32Array.from(output.data);
+		});
 	}
 
-	async embedPassage(text: string): Promise<Float32Array> {
-		const embedding = await this.getEmbedding();
-		const batches = embedding.passageEmbed([text], 1);
-		const batch = await batches.next();
-		return Float32Array.from(batch.value?.[0] ?? []);
+	embedPassage(text: string): Promise<Float32Array> {
+		return this.embedQuery(text);
 	}
 
-	private getEmbedding(): Promise<FlagEmbedding> {
-		if (!this.embeddingPromise) {
-			this.embeddingPromise = FlagEmbedding.init({
-				model: MODEL,
-				showDownloadProgress: false,
-			}).catch((error: unknown) => {
-				this.embeddingPromise = null;
-				throw error;
+	private getPipeline(): Promise<FeatureExtractionPipeline> {
+		if (!this.pipePromise) {
+			this.pipePromise = pipeline('feature-extraction', MODEL).catch((err) => {
+				this.pipePromise = null;
+				throw err;
 			});
 		}
-		return this.embeddingPromise;
+		return this.pipePromise;
 	}
 }
