@@ -94,10 +94,9 @@ Cross-target builds use the `build:macos`, `build:macos-intel`, `build:macos-uni
 
 ## GitHub release
 
-Tagged releases build, sign, and notarize macOS desktop artifacts in
-`.github/workflows/release.yml`. The workflow produces separate Apple Silicon
-and Intel artifacts and attaches them to the GitHub Release after npm
-publishing succeeds.
+Tagged releases build desktop artifacts in `.github/workflows/release.yml`. The workflow
+produces signed and notarized macOS artifacts for Apple Silicon and Intel, plus unsigned
+Linux x64 artifacts, and attaches them to the GitHub Release after npm publishing succeeds.
 
 The release workflow requires these GitHub Actions secrets:
 
