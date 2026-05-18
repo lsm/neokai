@@ -723,7 +723,7 @@ export class TaskAgentManager {
 
 				const memoryQuery = `${task.title}\n${task.description}`;
 				const relevantMemories = this.config.memoryRepo
-					? this.config.memoryRepo.search(space.id, memoryQuery, 5)
+					? await this.config.memoryRepo.search(space.id, memoryQuery, 5)
 					: [];
 				const initialMessage = buildCustomAgentTaskMessage({
 					customAgent: customAgent!,

@@ -14,15 +14,56 @@ class KeywordEmbedder implements AgentMemoryEmbedder {
 	dimensions = 3;
 
 	embed(text: string): Float32Array {
-		const lower = text.toLowerCase();
-		return new Float32Array([
-			lower.includes('delete') || lower.includes('remove') || lower.includes('erase') ? 1 : 0,
-			lower.includes('session') || lower.includes('conversation') || lower.includes('thread')
-				? 1
-				: 0,
-			lower.includes('credential') || lower.includes('secret') || lower.includes('token') ? 1 : 0,
-		]);
+		return keywordVector(text);
 	}
+}
+
+class AsyncKeywordEmbedder implements AgentMemoryEmbedder {
+	model = 'test-keyword';
+	dimensions = 3;
+
+	embed(text: string): Promise<Float32Array> {
+		return Promise.resolve(keywordVector(text));
+	}
+}
+
+class DeferredKeywordEmbedder implements AgentMemoryEmbedder {
+	model = 'test-keyword';
+	dimensions = 3;
+	private resolvers: Array<(vector: Float32Array) => void> = [];
+
+	embed(text: string): Promise<Float32Array> {
+		return new Promise((resolve) => {
+			this.resolvers.push(() => resolve(keywordVector(text)));
+		});
+	}
+
+	resolveNext(): void {
+		this.resolvers.shift()?.(new Float32Array());
+	}
+}
+
+class FailingEmbedder implements AgentMemoryEmbedder {
+	model = 'test-failing';
+	dimensions = 3;
+
+	embed(): Promise<Float32Array> {
+		return Promise.reject(new Error('embedding unavailable'));
+	}
+}
+
+function keywordVector(text: string): Float32Array {
+	const lower = text.toLowerCase();
+	return new Float32Array([
+		lower.includes('delete') || lower.includes('remove') || lower.includes('erase') ? 1 : 0,
+		lower.includes('session') || lower.includes('conversation') || lower.includes('thread') ? 1 : 0,
+		lower.includes('credential') || lower.includes('secret') || lower.includes('token') ? 1 : 0,
+	]);
+}
+
+async function flushPromises(): Promise<void> {
+	await Promise.resolve();
+	await Promise.resolve();
 }
 
 function seedSpace(spaceId: string): void {
@@ -48,7 +89,7 @@ describe('AgentMemoryRepository', () => {
 		db.close();
 	});
 
-	test('writes and reads memory by space/key', () => {
+	test('writes and reads memory by space/key', async () => {
 		const memory = repo.write({
 			spaceId: 'space-a',
 			key: 'conventions.test',
@@ -60,14 +101,14 @@ describe('AgentMemoryRepository', () => {
 		expect(memory.key).toBe('conventions.test');
 		expect(memory.spaceId).toBe('space-a');
 		expect(memory.tags).toEqual(['testing', 'bun']);
-		expect(repo.list('space-a')).toHaveLength(1);
+		expect(await repo.list('space-a')).toHaveLength(1);
 
 		const read = repo.read('space-a', 'conventions.test');
 		expect(read?.content).toBe('Use Bun native tests for daemon code.');
 		expect(read?.createdBySession).toBe('session-1');
 	});
 
-	test('search returns FTS-ranked results', () => {
+	test('search returns FTS-ranked results', async () => {
 		repo.write({
 			spaceId: 'space-a',
 			key: 'alpha',
@@ -80,17 +121,17 @@ describe('AgentMemoryRepository', () => {
 			tags: ['preact', 'signals'],
 		});
 
-		const results = repo.search('space-a', 'preact signals', 5);
+		const results = await repo.search('space-a', 'preact signals', 5);
 		expect(results.length).toBeGreaterThan(0);
 		expect(results[0].memory.key).toBe('preact');
 		expect(results[0].rank).toBeTypeOf('number');
 	});
 
-	test('search is scoped by space', () => {
+	test('search is scoped by space', async () => {
 		repo.write({ spaceId: 'space-a', key: 'shared', content: 'Use tabs for formatting.' });
 		repo.write({ spaceId: 'space-b', key: 'shared', content: 'Use spaces for formatting.' });
 
-		const results = repo.search('space-a', 'formatting', 10);
+		const results = await repo.search('space-a', 'formatting', 10);
 		expect(results.map((result) => result.memory.content)).toEqual(['Use tabs for formatting.']);
 	});
 
@@ -180,18 +221,18 @@ describe('AgentMemoryRepository', () => {
 		expect(updated.createdBySession).toBe('session-original');
 	});
 
-	test('search matches path identifiers', () => {
+	test('search matches path identifiers', async () => {
 		repo.write({
 			spaceId: 'space-a',
 			key: 'modules.entry',
 			content: 'Entry point is src/lib/main.ts.',
 		});
 
-		const results = repo.search('space-a', 'src/lib/main.ts', 5);
+		const results = await repo.search('space-a', 'src/lib/main.ts', 5);
 		expect(results.map((result) => result.memory.key)).toEqual(['modules.entry']);
 	});
 
-	test('filtered list honors limit and offset above search limit', () => {
+	test('filtered list honors limit and offset above search limit', async () => {
 		for (let index = 0; index < 25; index++) {
 			repo.write({
 				spaceId: 'space-a',
@@ -200,8 +241,12 @@ describe('AgentMemoryRepository', () => {
 			});
 		}
 
-		const firstPage = repo.list('space-a', { query: 'pagination topic', limit: 25 });
-		const secondPage = repo.list('space-a', { query: 'pagination topic', limit: 5, offset: 5 });
+		const firstPage = await repo.list('space-a', { query: 'pagination topic', limit: 25 });
+		const secondPage = await repo.list('space-a', {
+			query: 'pagination topic',
+			limit: 5,
+			offset: 5,
+		});
 
 		expect(firstPage).toHaveLength(25);
 		expect(secondPage).toHaveLength(5);
@@ -210,7 +255,7 @@ describe('AgentMemoryRepository', () => {
 		);
 	});
 
-	test('search orders by FTS rank before recency', () => {
+	test('search orders by FTS rank before recency', async () => {
 		repo.write({
 			spaceId: 'space-a',
 			key: 'focused',
@@ -222,34 +267,34 @@ describe('AgentMemoryRepository', () => {
 			content: 'Preact signals mixed with unrelated routing and styling notes.',
 		});
 
-		const results = repo.search('space-a', 'preact signals', 1);
+		const results = await repo.search('space-a', 'preact signals', 1);
 		expect(results.map((result) => result.memory.key)).toEqual(['focused']);
 		expect(results[0].rank).not.toBe(1000);
 	});
 
-	test('search matches hyphenated identifiers', () => {
+	test('search matches hyphenated identifiers', async () => {
 		repo.write({
 			spaceId: 'space-a',
 			key: 'tooling.hooks',
 			content: 'Run pre-commit before pushing.',
 		});
 
-		const results = repo.search('space-a', 'pre-commit', 5);
+		const results = await repo.search('space-a', 'pre-commit', 5);
 		expect(results.map((result) => result.memory.key)).toEqual(['tooling.hooks']);
 	});
 
-	test('search matches memory keys', () => {
+	test('search matches memory keys', async () => {
 		repo.write({
 			spaceId: 'space-a',
 			key: 'conventions.forms',
 			content: 'Use zod schemas.',
 		});
 
-		const results = repo.search('space-a', 'conventions.forms', 5);
+		const results = await repo.search('space-a', 'conventions.forms', 5);
 		expect(results.map((result) => result.memory.key)).toEqual(['conventions.forms']);
 	});
 
-	test('access updates do not rewrite FTS rows', () => {
+	test('access updates do not rewrite FTS rows', async () => {
 		repo.write({
 			spaceId: 'space-a',
 			key: 'access.fts',
@@ -262,7 +307,7 @@ describe('AgentMemoryRepository', () => {
 		};
 
 		repo.read('space-a', 'access.fts');
-		repo.search('space-a', 'telemetry', 5);
+		await repo.search('space-a', 'telemetry', 5);
 
 		const after = db.prepare(`SELECT count(*) AS count FROM space_agent_memory_fts_data`).get() as {
 			count: number;
@@ -270,16 +315,16 @@ describe('AgentMemoryRepository', () => {
 		expect(after.count).toBe(before.count);
 	});
 
-	test('delete removes memory from FTS index', () => {
+	test('delete removes memory from FTS index', async () => {
 		repo.write({ spaceId: 'space-a', key: 'obsolete', content: 'Old Flowbite convention.' });
-		expect(repo.search('space-a', 'Flowbite', 10)).toHaveLength(1);
+		expect(await repo.search('space-a', 'Flowbite', 10)).toHaveLength(1);
 
 		expect(repo.delete('space-a', 'obsolete')).toBe(true);
 		expect(repo.read('space-a', 'obsolete')).toBeNull();
-		expect(repo.search('space-a', 'Flowbite', 10)).toHaveLength(0);
+		expect(await repo.search('space-a', 'Flowbite', 10)).toHaveLength(0);
 	});
 
-	test('semantic paraphrase query finds memory with zero keyword overlap', () => {
+	test('semantic paraphrase query finds memory with zero keyword overlap', async () => {
 		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
 		repo.write({
 			spaceId: 'space-a',
@@ -292,13 +337,13 @@ describe('AgentMemoryRepository', () => {
 			content: 'Store credential material only in secure storage.',
 		});
 
-		const results = repo.search('space-a', 'erase old conversation data', 5);
+		const results = await repo.search('space-a', 'erase old conversation data', 5);
 
 		expect(results.map((result) => result.memory.key)).toContain('cleanup.sessions');
 		expect(results[0].memory.key).toBe('cleanup.sessions');
 	});
 
-	test('pending entries still appear in FTS results while embedding is incomplete', () => {
+	test('pending entries still appear in FTS results while embedding is incomplete', async () => {
 		repo.write({
 			spaceId: 'space-a',
 			key: 'pending.memory',
@@ -309,12 +354,11 @@ describe('AgentMemoryRepository', () => {
 			.prepare(`SELECT embedding_status FROM space_agent_memory WHERE space_id = ? AND key = ?`)
 			.get('space-a', 'pending.memory') as { embedding_status: string };
 		expect(row.embedding_status).toBe('pending');
-		expect(
-			repo.search('space-a', 'lexical fallback', 5).map((result) => result.memory.key)
-		).toEqual(['pending.memory']);
+		const results = await repo.search('space-a', 'lexical fallback', 5);
+		expect(results.map((result) => result.memory.key)).toEqual(['pending.memory']);
 	});
 
-	test('vector search preserves space isolation', () => {
+	test('vector search preserves space isolation', async () => {
 		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
 		repo.write({
 			spaceId: 'space-a',
@@ -327,8 +371,119 @@ describe('AgentMemoryRepository', () => {
 			content: 'Delete stale session records after retention expires.',
 		});
 
-		const results = repo.search('space-a', 'erase old conversation data', 5);
+		const results = await repo.search('space-a', 'erase old conversation data', 5);
 
 		expect(results.map((result) => result.memory.key)).toEqual(['cleanup.local']);
+	});
+
+	test('semantic search awaits async query embeddings', async () => {
+		repo = new AgentMemoryRepository(db, undefined, new AsyncKeywordEmbedder());
+		repo.write({
+			spaceId: 'space-a',
+			key: 'cleanup.async',
+			content: 'Delete stale session records after retention expires.',
+		});
+		await flushPromises();
+
+		const results = await repo.search('space-a', 'erase old conversation data', 5);
+
+		expect(results.map((result) => result.memory.key)).toEqual(['cleanup.async']);
+	});
+
+	test('stale async embeddings do not overwrite newer content', async () => {
+		const embedder = new DeferredKeywordEmbedder();
+		repo = new AgentMemoryRepository(db, undefined, embedder);
+		repo.write({
+			spaceId: 'space-a',
+			key: 'changing.memory',
+			content: 'Delete stale session records after retention expires.',
+		});
+		repo.write({
+			spaceId: 'space-a',
+			key: 'changing.memory',
+			content: 'Store credential material only in secure storage.',
+		});
+
+		embedder.resolveNext();
+		await flushPromises();
+		embedder.resolveNext();
+		await flushPromises();
+		embedder.resolveNext();
+
+		const vectorRow = db
+			.prepare(`SELECT embedding FROM memory_vectors WHERE memory_rowid = 1`)
+			.get() as {
+			embedding: Buffer;
+		};
+		expect(new Float32Array(vectorRow.embedding.buffer, vectorRow.embedding.byteOffset, 3)).toEqual(
+			keywordVector('Store credential material only in secure storage.')
+		);
+	});
+
+	test('embedding failures are persisted', async () => {
+		repo = new AgentMemoryRepository(db, undefined, new FailingEmbedder());
+		repo.write({
+			spaceId: 'space-a',
+			key: 'failing.memory',
+			content: 'Embedding provider failure should be visible.',
+		});
+		await flushPromises();
+
+		const row = db
+			.prepare(
+				`SELECT embedding_status, embedding_error FROM space_agent_memory WHERE space_id = ? AND key = ?`
+			)
+			.get('space-a', 'failing.memory') as {
+			embedding_status: string;
+			embedding_error: string;
+		};
+		expect(row.embedding_status).toBe('failed');
+		expect(row.embedding_error).toContain('embedding unavailable');
+	});
+
+	test('semantic search skips vectors from different embedding models', async () => {
+		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+		repo.write({
+			spaceId: 'space-a',
+			key: 'cleanup.model',
+			content: 'Delete stale session records after retention expires.',
+		});
+		db.prepare(`UPDATE memory_vectors SET model = ? WHERE memory_rowid = 1`).run('old-model');
+
+		const results = await repo.search('space-a', 'erase old conversation data', 5);
+
+		expect(results).toHaveLength(0);
+	});
+
+	test('vector search ranks ready vectors beyond the first 100 rows', async () => {
+		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+		for (let index = 0; index < 120; index++) {
+			repo.write({
+				spaceId: 'space-a',
+				key: `memory.${index.toString().padStart(3, '0')}`,
+				content:
+					index === 119
+						? 'Delete stale session records after retention expires.'
+						: `Unrelated memory ${index}`,
+			});
+		}
+
+		const results = await repo.search('space-a', 'erase old conversation data', 5);
+
+		expect(results.map((result) => result.memory.key)).toContain('memory.119');
+	});
+
+	test('filtered list supports offsets beyond 100 matches', async () => {
+		for (let index = 0; index < 130; index++) {
+			repo.write({
+				spaceId: 'space-a',
+				key: `pagination.${index.toString().padStart(3, '0')}`,
+				content: `Shared pagination topic ${index}`,
+			});
+		}
+
+		const page = await repo.list('space-a', { query: 'pagination topic', limit: 10, offset: 110 });
+
+		expect(page).toHaveLength(10);
 	});
 });
