@@ -9,6 +9,7 @@ const {
 	mockNavigateToSpaceAgent,
 	mockNavigateToSpaceConfigure,
 	mockNavigateToSpaceSessions,
+	mockNavigateToSpaceGoals,
 	mockNavigateToSpaceTasks,
 	mockNavigateToSession,
 	mockNavigateToSessions,
@@ -19,6 +20,7 @@ const {
 	mockNavigateToSpaceAgent: vi.fn(),
 	mockNavigateToSpaceConfigure: vi.fn(),
 	mockNavigateToSpaceSessions: vi.fn(),
+	mockNavigateToSpaceGoals: vi.fn(),
 	mockNavigateToSpaceTasks: vi.fn(),
 	mockNavigateToSession: vi.fn(),
 	mockNavigateToSessions: vi.fn(),
@@ -34,7 +36,9 @@ let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTasksFilterTabSignal!: Signal<
 	'action' | 'active' | 'completed' | 'archived' | 'draft'
 >;
-let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'tasks' | 'sessions' | 'configure'>;
+let mockCurrentSpaceViewModeSignal!: Signal<
+	'overview' | 'goals' | 'tasks' | 'sessions' | 'configure'
+>;
 let mockSettingsSectionSignal!: Signal<
 	'general' | 'providers' | 'app-mcp-servers' | 'skills' | 'models' | 'usage' | 'about'
 >;
@@ -140,6 +144,7 @@ vi.mock('../../lib/router.ts', () => ({
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 	navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
 	navigateToSpaceSessions: mockNavigateToSpaceSessions,
+	navigateToSpaceGoals: mockNavigateToSpaceGoals,
 	navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));
 
@@ -217,6 +222,7 @@ describe('ContextPanel', () => {
 
 	it.each([
 		['overview', mockNavigateToSpace, ['space-2']],
+		['goals', mockNavigateToSpaceGoals, ['space-2']],
 		['tasks', mockNavigateToSpaceTasks, ['space-2', 'active']],
 		['sessions', mockNavigateToSpaceSessions, ['space-2']],
 		['configure', mockNavigateToSpaceConfigure, ['space-2', 'agents']],
