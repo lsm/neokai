@@ -2,6 +2,12 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.27.1] - 2026-05-18
+
+### Fixed
+
+- Removed AppImage from Linux desktop release (unreliable linuxdeploy bundling); deb and rpm remain
+
 ## [0.27.0] - 2026-05-18
 
 A major release adding full-text message search, custom OpenAI-compatible endpoints, persistent agent memory, Space-native goals, and signed desktop release artifacts. 8 commits since v0.26.0.
