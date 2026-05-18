@@ -283,6 +283,9 @@ class SpaceStore {
 	/** Stale-event guard for node execution LiveQuery subscriptions */
 	private activeNodeExecSubscriptionIds = new Set<string>();
 
+	/** Monotonic counter so stale goal list responses cannot overwrite newer filters. */
+	private goalListRequestVersion = 0;
+
 	/** In-flight promise for ensureConfigData to prevent duplicate fetches */
 	private configDataPromise: Promise<void> | null = null;
 
@@ -2120,11 +2123,12 @@ class SpaceStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
+		const requestVersion = ++this.goalListRequestVersion;
 		const { goals } = await hub.request<{ goals: SpaceGoal[] }>('spaceGoal.list', {
 			...options,
 			spaceId,
 		});
-		if (this.spaceId.value === spaceId) {
+		if (this.spaceId.value === spaceId && this.goalListRequestVersion === requestVersion) {
 			this.goals.value = goals ?? [];
 		}
 		return goals ?? [];

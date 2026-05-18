@@ -54,9 +54,13 @@ function parseLabels(value: string): string[] {
 		.filter(Boolean);
 }
 
+function formatMetricValue(value: SpaceGoalMetrics[string]): string {
+	return value === null ? 'null' : String(value ?? '');
+}
+
 function formatMetrics(metrics: SpaceGoalMetrics): string {
 	return Object.entries(metrics)
-		.map(([key, value]) => `${key}: ${value ?? ''}`)
+		.map(([key, value]) => `${key}: ${formatMetricValue(value)}`)
 		.join('\n');
 }
 
@@ -67,7 +71,8 @@ function parseMetrics(value: string): SpaceGoalMetrics {
 		const key = rawKey?.trim();
 		if (!key) continue;
 		const rawValue = rest.join(':').trim();
-		if (rawValue === 'true') metrics[key] = true;
+		if (rawValue === 'null') metrics[key] = null;
+		else if (rawValue === 'true') metrics[key] = true;
 		else if (rawValue === 'false') metrics[key] = false;
 		else if (rawValue !== '' && Number.isFinite(Number(rawValue))) metrics[key] = Number(rawValue);
 		else metrics[key] = rawValue;

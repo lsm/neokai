@@ -235,7 +235,7 @@ describe('SpaceGoals', () => {
 			target: { value: 'beta, launch' },
 		});
 		fireEvent.input(screen.getByPlaceholderText(/build_health: green/), {
-			target: { value: 'open_bugs: 2\nhealthy: true' },
+			target: { value: 'open_bugs: 2\nhealthy: true\nunset: null' },
 		});
 		fireEvent.click(screen.getByRole('button', { name: 'Create Goal' }));
 
@@ -244,7 +244,7 @@ describe('SpaceGoals', () => {
 			expect.objectContaining({
 				title: 'Ship beta',
 				labels: ['beta', 'launch'],
-				metrics: { open_bugs: 2, healthy: true },
+				metrics: { open_bugs: 2, healthy: true, unset: null },
 			})
 		);
 	});

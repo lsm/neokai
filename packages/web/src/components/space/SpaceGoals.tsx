@@ -412,8 +412,8 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 	};
 
 	return (
-		<div class="flex h-full min-h-0 overflow-hidden">
-			<div class="flex w-full flex-col border-r border-dark-700 lg:w-[420px]">
+		<div class="flex h-full min-h-0 flex-col overflow-hidden lg:flex-row">
+			<div class="flex min-h-0 w-full flex-col border-b border-dark-700 lg:w-[420px] lg:border-r lg:border-b-0">
 				<div class="flex items-center justify-between gap-3 border-b border-dark-700 p-4">
 					<div>
 						<h2 class="text-sm font-semibold text-gray-100">Goals</h2>
@@ -460,7 +460,7 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 				</div>
 			</div>
 
-			<div class="hidden min-w-0 flex-1 lg:block">
+			<div class="min-h-[420px] min-w-0 flex-1 border-t border-dark-700 lg:min-h-0 lg:border-t-0">
 				{selectedGoal ? (
 					<GoalDetail
 						goal={selectedGoal}

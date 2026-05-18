@@ -1103,6 +1103,30 @@ describe('SpaceStore — CRUD methods', () => {
 		expect(spaceStore.goals.value).toEqual([goal]);
 	});
 
+	it('listGoals ignores stale responses from older filter requests', async () => {
+		await spaceStore.selectSpace('space-1');
+		const activeGoal = makeGoal({ id: 'active-goal', status: 'active' });
+		const archivedGoal = makeGoal({ id: 'archived-goal', status: 'archived' });
+		let resolveFirst: (value: { goals: SpaceGoal[] }) => void = () => {};
+		mockHub.request.mockImplementationOnce(
+			() =>
+				new Promise<Awaited<ReturnType<typeof mockHub.request>>>((resolve) => {
+					resolveFirst = (value) => resolve(value as Awaited<ReturnType<typeof mockHub.request>>);
+				})
+		);
+		mockHub.request.mockResolvedValueOnce({ goals: [activeGoal, archivedGoal] } as Awaited<
+			ReturnType<typeof mockHub.request>
+		>);
+
+		const first = spaceStore.listGoals({ includeArchived: false });
+		const second = await spaceStore.listGoals({ includeArchived: true });
+		resolveFirst({ goals: [activeGoal] });
+		await first;
+
+		expect(second).toEqual([activeGoal, archivedGoal]);
+		expect(spaceStore.goals.value).toEqual([activeGoal, archivedGoal]);
+	});
+
 	it('createGoal and updateGoal call goal RPCs with current space', async () => {
 		await spaceStore.selectSpace('space-1');
 
