@@ -16,10 +16,15 @@ export class FastembedAgentMemoryEmbedder implements AgentMemoryEmbedder {
 	}
 
 	private getEmbedding(): Promise<FlagEmbedding> {
-		this.embeddingPromise ??= FlagEmbedding.init({
-			model: MODEL,
-			showDownloadProgress: false,
-		});
+		if (!this.embeddingPromise) {
+			this.embeddingPromise = FlagEmbedding.init({
+				model: MODEL,
+				showDownloadProgress: false,
+			}).catch((error: unknown) => {
+				this.embeddingPromise = null;
+				throw error;
+			});
+		}
 		return this.embeddingPromise;
 	}
 }

@@ -9024,7 +9024,7 @@ export function runMigration136(db: BunDatabase): void {
 
 	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_status')) {
 		db.exec(
-			`ALTER TABLE space_agent_memory ADD COLUMN embedding_status TEXT NOT NULL DEFAULT 'pending'`
+			`ALTER TABLE space_agent_memory ADD COLUMN embedding_status TEXT NOT NULL DEFAULT 'pending' CHECK(embedding_status IN ('pending', 'ready', 'failed'))`
 		);
 	}
 	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_model')) {

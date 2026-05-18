@@ -334,11 +334,6 @@ export class AgentMemoryRepository {
 			);
 	}
 
-	private embedTextSync(text: string): Float32Array | null {
-		const embedding = this.embedText(text);
-		return embedding instanceof Promise ? null : embedding;
-	}
-
 	private embedText(text: string): Float32Array | Promise<Float32Array> | null {
 		if (!this.embedder) return null;
 		try {
