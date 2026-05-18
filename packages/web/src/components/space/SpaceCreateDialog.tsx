@@ -13,6 +13,10 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { connectionManager } from '../../lib/connection-manager';
 import { navigateToSpace } from '../../lib/router';
+import {
+	hasNativeFolderPicker,
+	NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+} from '../../lib/runtime-capabilities';
 import type { Space } from '@neokai/shared';
 
 interface SpaceCreateDialogProps {
@@ -36,12 +40,33 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
 	const [nameTouched, setNameTouched] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
 
 	const handlePathInput = (value: string) => {
 		setWorkspacePath(value);
 		if (!nameTouched) {
 			const suggested = basenameFromPath(value);
 			setName(suggested);
+		}
+	};
+
+	const handleBrowse = async () => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			setError('Not connected to server. Please wait...');
+			return;
+		}
+
+		try {
+			const picked = await hub.request<{ path: string | null }>('dialog.pickFolder', undefined, {
+				timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+			});
+			if (picked?.path) {
+				handlePathInput(picked.path);
+				setError(null);
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to browse for folder');
 		}
 	};
 
@@ -109,15 +134,27 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
 					<p class="text-xs text-gray-500 mb-2">
 						Absolute path to the project directory this Space operates on.
 					</p>
-					<input
-						type="text"
-						value={workspacePath}
-						onInput={(e) => handlePathInput((e.target as HTMLInputElement).value)}
-						placeholder="/Users/you/projects/my-app"
-						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-3 text-gray-100
-							placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono text-sm"
-						autoFocus
-					/>
+					<div class="flex gap-2">
+						<input
+							type="text"
+							value={workspacePath}
+							onInput={(e) => handlePathInput((e.target as HTMLInputElement).value)}
+							placeholder="/Users/you/projects/my-app"
+							class="flex-1 min-w-0 bg-dark-800 border border-dark-600 rounded-lg px-4 py-3 text-gray-100
+								placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono text-sm"
+							autoFocus
+						/>
+						{nativeFolderPickerAvailable && (
+							<button
+								type="button"
+								onClick={handleBrowse}
+								title="Browse on this computer"
+								class="px-4 py-3 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-300 hover:text-gray-100 border border-dark-600 transition-colors shrink-0 text-sm font-medium"
+							>
+								Browse
+							</button>
+						)}
+					</div>
 				</div>
 
 				{/* Name */}
