@@ -494,6 +494,7 @@ export type SpaceTaskActivityState =
 	| 'active'
 	| 'queued'
 	| 'idle'
+	| 'cooldown'
 	| 'waiting_for_input'
 	| 'completed'
 	| 'failed'
