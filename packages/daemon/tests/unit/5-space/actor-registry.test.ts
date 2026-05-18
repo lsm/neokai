@@ -108,6 +108,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			name: 'Project',
 		});
 		const member = makeSession('member-1', { context: { spaceId: space.id } });
+		const legacyMember = makeSession('legacy-member');
 		const coordinator = makeSession(`space:chat:${space.id}`, {
 			type: 'space_chat',
 			context: { spaceId: space.id },
@@ -132,11 +133,13 @@ describe('SpaceActorRegistryAdapter', () => {
 			},
 		});
 		sessionRepo.createSession(member);
+		sessionRepo.createSession(legacyMember);
 		sessionRepo.createSession(coordinator);
 		sessionRepo.createSession(taskAgent);
 		sessionRepo.createSession(workerSubSession);
 		sessionRepo.createSession(namedAgentSubSession);
 		spaceRepo.addSessionToSpace(space.id, member.id);
+		spaceRepo.addSessionToSpace(space.id, legacyMember.id);
 		spaceRepo.addSessionToSpace(space.id, coordinator.id);
 		spaceRepo.addSessionToSpace(space.id, taskAgent.id);
 		spaceRepo.addSessionToSpace(space.id, workerSubSession.id);
@@ -206,6 +209,22 @@ describe('SpaceActorRegistryAdapter', () => {
 			kind: 'session',
 			spaceId: space.id,
 			handle: `@session:${member.id}`,
+			roles: ['member-session'],
+			status: 'active',
+		});
+		expect(actors).toContainEqual({
+			actorId: `human:${legacyMember.id}`,
+			kind: 'human',
+			spaceId: space.id,
+			handle: undefined,
+			roles: ['member'],
+			status: 'active',
+		});
+		expect(actors).toContainEqual({
+			actorId: `session:${legacyMember.id}`,
+			kind: 'session',
+			spaceId: space.id,
+			handle: `@session:${legacyMember.id}`,
 			roles: ['member-session'],
 			status: 'active',
 		});

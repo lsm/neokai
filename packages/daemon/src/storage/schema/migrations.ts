@@ -6630,6 +6630,10 @@ export function runMigration92(db: BunDatabase): void {
 			`ON pending_agent_messages(workflow_run_id, status, created_at)`
 	);
 	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_space_status ` +
+			`ON pending_agent_messages(space_id, status, created_at)`
+	);
+	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_target ` +
 			`ON pending_agent_messages(workflow_run_id, target_agent_name, status, created_at)`
 	);

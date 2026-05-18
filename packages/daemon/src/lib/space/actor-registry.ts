@@ -34,7 +34,7 @@ export class SpaceActorRegistryAdapter {
 		const actors = new Map<string, ActorRef>();
 		const sessions = this.repos.sessionRepo.getSessionsByIds(space.sessionIds);
 		for (const session of sessions.values()) {
-			if (!isHumanMemberSession(session, spaceId)) continue;
+			if (!isAdHocMemberSession(session)) continue;
 			this.add(actors, humanActorForSession(session, space));
 			const sessionActor = sessionActorForSession(session, spaceId);
 			if (sessionActor) this.add(actors, sessionActor);
@@ -57,8 +57,8 @@ export class SpaceActorRegistryAdapter {
 			}
 		}
 
-		for (const row of this.repos.pendingMessageRepo?.listAllPending() ?? []) {
-			if (row.spaceId !== spaceId || row.targetKind !== 'node_agent') continue;
+		for (const row of this.repos.pendingMessageRepo?.listPendingForSpace(spaceId) ?? []) {
+			if (row.targetKind !== 'node_agent') continue;
 			const run = this.repos.workflowRunRepo.getRun(row.workflowRunId);
 			const workflow = run
 				? (workflowById.get(run.workflowId) ?? this.repos.workflowRepo.getWorkflow(run.workflowId))
@@ -232,10 +232,6 @@ function encodeWorkerHandleSegment(value: string): string {
 function isSessionInSpace(session: Session, spaceId: string): boolean {
 	if (session.context?.spaceId === spaceId) return true;
 	return session.type === 'space_chat' && session.id === `space:chat:${spaceId}`;
-}
-
-function isHumanMemberSession(session: Session, spaceId: string): boolean {
-	return isSessionInSpace(session, spaceId) && isAdHocMemberSession(session);
 }
 
 function isAdHocMemberSession(session: Session): boolean {
