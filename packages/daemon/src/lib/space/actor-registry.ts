@@ -172,7 +172,7 @@ function agentActor(agent: SpaceAgent, handleCounts: Map<string, number>): Actor
 		kind: 'agent',
 		spaceId: agent.spaceId,
 		handle: `@${handleSlug}`,
-		roles: unique(['space-agent', slug]),
+		roles: unique(['space-agent', routableRole(slug)]),
 		status: 'active',
 	};
 }
@@ -183,7 +183,7 @@ function workerActorFromExecution(spaceId: string, execution: NodeExecution): Ac
 		kind: 'worker',
 		spaceId,
 		handle: workerHandle(execution.workflowRunId, execution.workflowNodeId, execution.agentName),
-		roles: unique([execution.agentName, execution.workflowNodeId]),
+		roles: unique([routableRole(execution.agentName), routableRole(execution.workflowNodeId)]),
 		status: statusFromNodeExecution(execution),
 	};
 }
@@ -204,7 +204,7 @@ function pendingWorkerActors(
 		kind: 'worker',
 		spaceId,
 		handle: workerHandle(workflowRunId, node.id, targetAgentName),
-		roles: unique([targetAgentName, node.id]),
+		roles: unique([routableRole(targetAgentName), routableRole(node.id)]),
 		status: 'inactive',
 	}));
 }
@@ -219,6 +219,20 @@ function workerHandle(workflowRunId: string, nodeId: string, agentName: string):
 
 function reservedHandles(): string[] {
 	return ['coordinator', ...SPACE_SYSTEM_ACTORS.map((actor) => actor.handle.slice(1))];
+}
+
+const RESERVED_ROLES = new Set([
+	'coordinator',
+	'member',
+	'member-session',
+	'runtime',
+	'workflow-runtime',
+	'messaging',
+	'space-agent',
+]);
+
+function routableRole(role: string): string {
+	return RESERVED_ROLES.has(role) ? `custom-${role}` : role;
 }
 
 function encodeActorIdComponent(value: string): string {
@@ -266,7 +280,7 @@ function strongerStatus(left: ActorStatus, right: ActorStatus): ActorStatus {
 	const rank: Record<ActorStatus, number> = {
 		active: 3,
 		inactive: 2,
-		archived: 1,
+		archived: 2,
 		deleted: 0,
 	};
 	return rank[right] > rank[left] ? right : left;

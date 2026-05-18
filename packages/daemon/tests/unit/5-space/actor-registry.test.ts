@@ -167,6 +167,11 @@ describe('SpaceActorRegistryAdapter', () => {
 					name: 'Review/QA',
 					agents: [{ agentId: agent.id, name: 'reviewer:lead' }],
 				},
+				{
+					id: 'coordinator',
+					name: 'Coordinator Worker',
+					agents: [{ agentId: agent.id, name: 'messaging' }],
+				},
 			],
 			transitions: [],
 			startNodeId: 'Coding',
@@ -186,12 +191,27 @@ describe('SpaceActorRegistryAdapter', () => {
 			agentSessionId: workerSubSession.id,
 			status: 'in_progress',
 		});
+		nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'coordinator',
+			agentName: 'messaging',
+			agentId: agent.id,
+			agentSessionId: null,
+			status: 'cancelled',
+		});
 		pendingMessageRepo.enqueue({
 			workflowRunId: run.id,
 			spaceId: space.id,
 			targetKind: 'node_agent',
 			targetAgentName: 'reviewer:lead',
 			message: 'review this',
+		});
+		pendingMessageRepo.enqueue({
+			workflowRunId: run.id,
+			spaceId: space.id,
+			targetKind: 'node_agent',
+			targetAgentName: 'messaging',
+			message: 'message cancelled worker',
 		});
 
 		const actors = registry.listActors(space.id);
@@ -249,7 +269,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			kind: 'agent',
 			spaceId: space.id,
 			handle: `@coordinator-${reservedNameAgent.id.slice(0, 8)}`,
-			roles: ['coordinator', 'space-agent'],
+			roles: ['custom-coordinator', 'space-agent'],
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
@@ -267,6 +287,14 @@ describe('SpaceActorRegistryAdapter', () => {
 			handle: `@worker:${encodeURIComponent(run.id)}/Review%2FQA/reviewer%3Alead`,
 			roles: ['Review/QA', 'reviewer:lead'],
 			status: 'inactive',
+		});
+		expect(actors).toContainEqual({
+			actorId: `worker:${encodeURIComponent(run.id)}:coordinator:messaging`,
+			kind: 'worker',
+			spaceId: space.id,
+			handle: `@worker:${encodeURIComponent(run.id)}/coordinator/messaging`,
+			roles: ['custom-coordinator', 'custom-messaging'],
+			status: 'archived',
 		});
 		expect(actors.some((actor) => actor.actorId === `worker:${run.id}:reviewer:reviewer`)).toBe(
 			false
