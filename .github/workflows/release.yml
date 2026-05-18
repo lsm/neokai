@@ -310,7 +310,11 @@ jobs:
         run: |
           cd packages/desktop
           bun run build:sidecar
-          cargo tauri build --target ${{ matrix.rust-target }}
+          BUNDLES_FLAG=""
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            BUNDLES_FLAG="--bundles deb,rpm"
+          fi
+          cargo tauri build --target ${{ matrix.rust-target }} $BUNDLES_FLAG
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -340,11 +344,6 @@ jobs:
           for rpm in "$BUNDLE_ROOT"/rpm/*.rpm; do
             [ -e "$rpm" ] || continue
             cp "$rpm" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.rpm"
-          done
-
-          for appimage in "$BUNDLE_ROOT"/appimage/*.AppImage; do
-            [ -e "$appimage" ] || continue
-            cp "$appimage" "$ARTIFACT_DIR/Kai_${VERSION}_${{ matrix.arch }}.AppImage"
           done
 
           if [ -d "$BUNDLE_ROOT/macos" ]; then
