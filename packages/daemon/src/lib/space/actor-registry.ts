@@ -1,22 +1,24 @@
 import type { ActorRef, ActorStatus } from '../../../../messaging/src/types';
-import type { NodeExecution, Session, Space, SpaceAgent } from '@neokai/shared';
+import type { NodeExecution, Session, Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import type { SessionRepository } from '../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
+import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 
 export const SPACE_SYSTEM_ACTORS = [
-	{ actorId: 'system:runtime', handle: '@system:runtime', roles: ['runtime'] },
-	{ actorId: 'system:workflow', handle: '@system:workflow', roles: ['workflow-runtime'] },
-	{ actorId: 'system:messaging', handle: '@system:messaging', roles: ['messaging'] },
+	{ actorId: 'system:runtime', handle: '@system-runtime', roles: ['runtime'] },
+	{ actorId: 'system:workflow', handle: '@system-workflow', roles: ['workflow-runtime'] },
+	{ actorId: 'system:messaging', handle: '@system-messaging', roles: ['messaging'] },
 ] as const;
 
 export interface SpaceActorRegistryRepositories {
 	spaceRepo: SpaceRepository;
 	sessionRepo: SessionRepository;
 	spaceAgentRepo: SpaceAgentRepository;
+	workflowRepo: SpaceWorkflowRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	nodeExecutionRepo: NodeExecutionRepository;
 	pendingMessageRepo?: PendingAgentMessageRepository;
@@ -32,7 +34,7 @@ export class SpaceActorRegistryAdapter {
 		const actors = new Map<string, ActorRef>();
 		const sessions = this.repos.sessionRepo.getSessionsByIds(space.sessionIds);
 		for (const session of sessions.values()) {
-			if (!isSessionInSpace(session, spaceId)) continue;
+			if (!isHumanMemberSession(session, spaceId)) continue;
 			this.add(actors, humanActorForSession(session, space));
 			const sessionActor = sessionActorForSession(session, spaceId);
 			if (sessionActor) this.add(actors, sessionActor);
@@ -40,11 +42,16 @@ export class SpaceActorRegistryAdapter {
 
 		this.add(actors, coordinatorActor(space, this.findCoordinatorSession(spaceId)));
 
-		for (const agent of this.repos.spaceAgentRepo.getBySpaceId(spaceId)) {
-			this.add(actors, agentActor(agent));
+		for (const actor of this.agentActors(spaceId)) {
+			this.add(actors, actor);
 		}
 
+		const workflowById = new Map<string, SpaceWorkflow>();
 		for (const run of this.repos.workflowRunRepo.listBySpace(spaceId)) {
+			const workflow =
+				workflowById.get(run.workflowId) ?? this.repos.workflowRepo.getWorkflow(run.workflowId);
+			if (workflow) workflowById.set(workflow.id, workflow);
+
 			for (const execution of this.repos.nodeExecutionRepo.listByWorkflowRun(run.id)) {
 				this.add(actors, workerActorFromExecution(spaceId, execution));
 			}
@@ -52,15 +59,19 @@ export class SpaceActorRegistryAdapter {
 
 		for (const row of this.repos.pendingMessageRepo?.listAllPending() ?? []) {
 			if (row.spaceId !== spaceId || row.targetKind !== 'node_agent') continue;
-			const actorId = workerActorId(row.workflowRunId, row.targetAgentName, row.targetAgentName);
-			this.add(actors, {
-				actorId,
-				kind: 'worker',
+			const run = this.repos.workflowRunRepo.getRun(row.workflowRunId);
+			const workflow = run
+				? (workflowById.get(run.workflowId) ?? this.repos.workflowRepo.getWorkflow(run.workflowId))
+				: null;
+			if (workflow) workflowById.set(workflow.id, workflow);
+			for (const worker of pendingWorkerActors(
 				spaceId,
-				handle: workerHandle(row.workflowRunId, row.targetAgentName, row.targetAgentName),
-				roles: [row.targetAgentName],
-				status: 'inactive',
-			});
+				row.workflowRunId,
+				row.targetAgentName,
+				workflow
+			)) {
+				this.add(actors, worker);
+			}
 		}
 
 		for (const systemActor of SPACE_SYSTEM_ACTORS) {
@@ -79,6 +90,17 @@ export class SpaceActorRegistryAdapter {
 
 	getActor(spaceId: string, actorId: string): ActorRef | undefined {
 		return this.listActors(spaceId).find((actor) => actor.actorId === actorId);
+	}
+
+	private agentActors(spaceId: string): ActorRef[] {
+		const agents = this.repos.spaceAgentRepo.getBySpaceId(spaceId);
+		const slugCounts = new Map<string, number>();
+		for (const agent of agents) {
+			const slug = baseHandleSlug(agent.name, agent.id);
+			slugCounts.set(slug, (slugCounts.get(slug) ?? 0) + 1);
+		}
+
+		return agents.map((agent) => agentActor(agent, slugCounts));
 	}
 
 	private findCoordinatorSession(spaceId: string): Session | null {
@@ -109,7 +131,7 @@ function humanActorForSession(session: Session, space: Space): ActorRef {
 		actorId: `human:${session.id}`,
 		kind: 'human',
 		spaceId: space.id,
-		handle: session.id === `space:chat:${space.id}` ? '@human:coordinator' : `@human:${session.id}`,
+		handle: session.id === `space:chat:${space.id}` ? '@human-coordinator' : undefined,
 		roles: ['member'],
 		status: statusFromSession(session),
 	};
@@ -139,13 +161,15 @@ function sessionActorForSession(session: Session, spaceId: string): ActorRef | n
 	};
 }
 
-function agentActor(agent: SpaceAgent): ActorRef {
+function agentActor(agent: SpaceAgent, slugCounts: Map<string, number>): ActorRef {
+	const slug = baseHandleSlug(agent.name, agent.id);
+	const handleSlug = slugCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
 	return {
 		actorId: `agent:${agent.id}`,
 		kind: 'agent',
 		spaceId: agent.spaceId,
-		handle: `@${handleSlug(agent.name)}`,
-		roles: unique(['space-agent', handleSlug(agent.name)]),
+		handle: `@${handleSlug}`,
+		roles: unique(['space-agent', slug]),
 		status: 'active',
 	};
 }
@@ -161,6 +185,27 @@ function workerActorFromExecution(spaceId: string, execution: NodeExecution): Ac
 	};
 }
 
+function pendingWorkerActors(
+	spaceId: string,
+	workflowRunId: string,
+	targetAgentName: string,
+	workflow: SpaceWorkflow | null
+): ActorRef[] {
+	const nodes =
+		workflow?.nodes.filter((node) => node.agents.some((agent) => agent.name === targetAgentName)) ??
+		[];
+	if (nodes.length === 0) return [];
+
+	return nodes.map((node) => ({
+		actorId: workerActorId(workflowRunId, node.id, targetAgentName),
+		kind: 'worker',
+		spaceId,
+		handle: workerHandle(workflowRunId, node.id, targetAgentName),
+		roles: unique([targetAgentName, node.id]),
+		status: 'inactive',
+	}));
+}
+
 function workerActorId(workflowRunId: string, nodeId: string, agentName: string): string {
 	return `worker:${workflowRunId}:${nodeId}:${agentName}`;
 }
@@ -172,6 +217,10 @@ function workerHandle(workflowRunId: string, nodeId: string, agentName: string):
 function isSessionInSpace(session: Session, spaceId: string): boolean {
 	if (session.context?.spaceId === spaceId) return true;
 	return session.type === 'space_chat' && session.id === `space:chat:${spaceId}`;
+}
+
+function isHumanMemberSession(session: Session, spaceId: string): boolean {
+	return isSessionInSpace(session, spaceId) && isAdHocMemberSession(session);
 }
 
 function isAdHocMemberSession(session: Session): boolean {
@@ -220,10 +269,15 @@ function unique(values: string[]): string[] {
 	return [...new Set(values)].sort();
 }
 
-function handleSlug(value: string): string {
-	return value
+function baseHandleSlug(name: string, id: string): string {
+	const slug = name
 		.trim()
 		.toLowerCase()
 		.replace(/[^a-z0-9_-]+/g, '-')
 		.replace(/^-+|-+$/g, '');
+	return slug || `agent-${shortId(id)}`;
+}
+
+function shortId(id: string): string {
+	return id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8) || 'unknown';
 }

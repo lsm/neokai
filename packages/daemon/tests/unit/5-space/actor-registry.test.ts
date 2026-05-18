@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { parseAddress } from '../../../../messaging/src/address';
 import { SpaceActorRegistryAdapter } from '../../../src/lib/space/actor-registry';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
@@ -89,6 +90,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			spaceRepo,
 			sessionRepo,
 			spaceAgentRepo,
+			workflowRepo,
 			workflowRunRepo,
 			nodeExecutionRepo,
 			pendingMessageRepo,
@@ -133,7 +135,18 @@ describe('SpaceActorRegistryAdapter', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: space.id,
 			name: 'Coding Workflow',
-			nodes: [],
+			nodes: [
+				{
+					id: 'Coding',
+					name: 'Coding',
+					agents: [{ agentId: agent.id, name: 'coder' }],
+				},
+				{
+					id: 'Review',
+					name: 'Review',
+					agents: [{ agentId: agent.id, name: 'reviewer' }],
+				},
+			],
 			transitions: [],
 			startNodeId: 'Coding',
 			rules: [],
@@ -166,7 +179,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			actorId: `human:${member.id}`,
 			kind: 'human',
 			spaceId: space.id,
-			handle: `@human:${member.id}`,
+			handle: undefined,
 			roles: ['member'],
 			status: 'active',
 		});
@@ -203,24 +216,58 @@ describe('SpaceActorRegistryAdapter', () => {
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
-			actorId: `worker:${run.id}:reviewer:reviewer`,
+			actorId: `worker:${run.id}:Review:reviewer`,
 			kind: 'worker',
 			spaceId: space.id,
-			handle: `@worker:${run.id}/reviewer/reviewer`,
-			roles: ['reviewer'],
+			handle: `@worker:${run.id}/Review/reviewer`,
+			roles: ['Review', 'reviewer'],
 			status: 'inactive',
 		});
+		expect(actors.some((actor) => actor.actorId === `worker:${run.id}:reviewer:reviewer`)).toBe(
+			false
+		);
 		expect(actors).toContainEqual({
 			actorId: 'system:runtime',
 			kind: 'system',
 			spaceId: space.id,
-			handle: '@system:runtime',
+			handle: '@system-runtime',
 			roles: ['runtime'],
 			status: 'active',
 		});
 		expect(actors.some((actor) => actor.actorId === `session:${coordinator.id}`)).toBe(false);
 		expect(actors.some((actor) => actor.actorId === `session:${taskAgent.id}`)).toBe(false);
 		expect(actors.some((actor) => actor.actorId === `session:${workerSubSession.id}`)).toBe(false);
+		expect(actors.some((actor) => actor.actorId === `human:${taskAgent.id}`)).toBe(false);
+		expect(actors.some((actor) => actor.actorId === `human:${workerSubSession.id}`)).toBe(false);
+		for (const actor of actors) {
+			if (actor.handle) expect(() => parseAddress(actor.handle!)).not.toThrow();
+		}
+	});
+
+	it('uses fallback and collision-safe handles for slug-derived agent handles', () => {
+		const space = spaceRepo.createSpace({
+			workspacePath: '/workspace/project',
+			slug: 'project',
+			name: 'Project',
+		});
+		const first = spaceAgentRepo.create({ spaceId: space.id, name: 'A-B' });
+		const second = spaceAgentRepo.create({ spaceId: space.id, name: 'A B' });
+		const cjk = spaceAgentRepo.create({ spaceId: space.id, name: '助手' });
+
+		const actors = registry.listActors(space.id);
+
+		expect(registry.getActor(space.id, `agent:${first.id}`)?.handle).toBe(
+			`@a-b-${first.id.slice(0, 8)}`
+		);
+		expect(registry.getActor(space.id, `agent:${second.id}`)?.handle).toBe(
+			`@a-b-${second.id.slice(0, 8)}`
+		);
+		expect(registry.getActor(space.id, `agent:${cjk.id}`)?.handle).toBe(
+			`@agent-${cjk.id.slice(0, 8)}`
+		);
+		for (const actor of actors) {
+			if (actor.handle) expect(() => parseAddress(actor.handle!)).not.toThrow();
+		}
 	});
 
 	it('returns inactive coordinator when no space chat session exists', () => {
