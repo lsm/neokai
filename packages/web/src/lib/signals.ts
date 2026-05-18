@@ -87,8 +87,10 @@ export const spaceOverlayPendingAgentNameSignal = signal<string | null>(null);
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
-// Command palette visibility (Cmd+K / Ctrl+K)
+// Global palette visibility. Cmd+K opens command mode; Cmd+P opens quick-open mode.
+export type CommandPaletteMode = 'commands' | 'quick-open';
 export const commandPaletteOpenSignal = signal<boolean>(false);
+export const commandPaletteModeSignal = signal<CommandPaletteMode>('commands');
 
 // Global right-side panel. Starts with Git session status, but the shell is
 // intentionally target-based so Space can attach task/agent panels later.

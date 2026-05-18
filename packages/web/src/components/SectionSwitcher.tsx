@@ -1,4 +1,8 @@
-import { navSectionSignal } from '../lib/signals.ts';
+import {
+	commandPaletteModeSignal,
+	commandPaletteOpenSignal,
+	navSectionSignal,
+} from '../lib/signals.ts';
 import { navigateToSessions, navigateToSpaces } from '../lib/router.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
@@ -16,18 +20,26 @@ const SECTIONS = [
 export function SectionSwitcher({ onClose, variant = 'default' }: SectionSwitcherProps) {
 	const navSection = navSectionSignal.value;
 	const isTitlebar = variant === 'titlebar';
+	const openQuickOpen = () => {
+		commandPaletteModeSignal.value = 'quick-open';
+		commandPaletteOpenSignal.value = true;
+		onClose?.();
+	};
 
 	return (
 		<div
 			class={cn(
 				'flex items-center gap-2',
-				isTitlebar ? 'w-[136px] flex-none' : `px-2 py-2 border-b ${borderColors.ui.default}`
+				isTitlebar
+					? 'min-w-0 flex-1'
+					: `h-[52px] px-3 border-b ${borderColors.ui.default} md:h-[52px]`
 			)}
+			data-tauri-drag-region={isTitlebar ? true : undefined}
 		>
 			<div
 				class={cn(
-					'grid grid-cols-2 flex-1 rounded-full bg-dark-900/70 p-0.5',
-					isTitlebar && 'h-6 bg-dark-950/70'
+					'grid w-[136px] grid-cols-2 flex-none rounded-full bg-dark-900/70 p-0.5',
+					isTitlebar ? 'h-6 bg-dark-950/70' : 'h-7'
 				)}
 				role="tablist"
 			>
@@ -45,7 +57,7 @@ export function SectionSwitcher({ onClose, variant = 'default' }: SectionSwitche
 							}}
 							class={cn(
 								'rounded-full font-medium transition-colors',
-								isTitlebar ? 'px-2 text-[12px] leading-5' : 'px-3 py-1.5 text-sm',
+								'px-2 text-[12px] leading-5',
 								isActive
 									? 'bg-white/10 text-gray-100'
 									: 'text-gray-500 hover:bg-white/5 hover:text-gray-200'
@@ -56,6 +68,24 @@ export function SectionSwitcher({ onClose, variant = 'default' }: SectionSwitche
 					);
 				})}
 			</div>
+			<button
+				type="button"
+				onClick={openQuickOpen}
+				class={cn(
+					'ml-auto flex h-8 w-8 flex-none items-center justify-center rounded-full text-gray-400 transition-colors',
+					'hover:bg-white/5 hover:text-gray-100'
+				)}
+				title="Quick Open"
+				aria-label="Quick Open"
+			>
+				<svg class="h-[18px] w-[18px]" viewBox="0 0 20 20" fill="none" stroke="currentColor">
+					<path
+						d="M8.75 3.75a5 5 0 1 0 0 10 5 5 0 0 0 0-10ZM12.5 12.5l3.75 3.75"
+						stroke-width="1.6"
+						stroke-linecap="round"
+					/>
+				</svg>
+			</button>
 			{onClose && (
 				<button
 					type="button"

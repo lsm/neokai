@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/preact';
 import { useGlobalShortcuts } from '../useGlobalShortcuts.ts';
 import { commandRegistry } from '../../lib/command-registry.ts';
-import { commandPaletteOpenSignal } from '../../lib/signals.ts';
+import { commandPaletteModeSignal, commandPaletteOpenSignal } from '../../lib/signals.ts';
 
 function fireKey(opts: KeyboardEventInit & { target?: HTMLElement }) {
 	const { target, ...init } = opts;
@@ -25,11 +25,13 @@ describe('useGlobalShortcuts', () => {
 		originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');
 		commandRegistry.clear();
 		commandPaletteOpenSignal.value = false;
+		commandPaletteModeSignal.value = 'commands';
 	});
 
 	afterEach(() => {
 		commandRegistry.clear();
 		commandPaletteOpenSignal.value = false;
+		commandPaletteModeSignal.value = 'commands';
 		if (originalPlatform) {
 			Object.defineProperty(navigator, 'platform', originalPlatform);
 		}
@@ -41,8 +43,17 @@ describe('useGlobalShortcuts', () => {
 		renderHook(() => useGlobalShortcuts());
 		fireKey({ code: 'KeyK', metaKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(true);
+		expect(commandPaletteModeSignal.value).toBe('commands');
 		fireKey({ code: 'KeyK', metaKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(false);
+	});
+
+	it('opens quick open on Cmd+P on mac', () => {
+		setPlatform('MacIntel');
+		renderHook(() => useGlobalShortcuts());
+		fireKey({ code: 'KeyP', metaKey: true });
+		expect(commandPaletteOpenSignal.value).toBe(true);
+		expect(commandPaletteModeSignal.value).toBe('quick-open');
 	});
 
 	it('does not toggle on Ctrl+K on mac (native editing shortcut)', () => {
@@ -57,6 +68,7 @@ describe('useGlobalShortcuts', () => {
 		renderHook(() => useGlobalShortcuts());
 		fireKey({ code: 'KeyK', ctrlKey: true });
 		expect(commandPaletteOpenSignal.value).toBe(true);
+		expect(commandPaletteModeSignal.value).toBe('commands');
 	});
 
 	it('does not toggle on Cmd+K on non-mac', () => {

@@ -7,6 +7,7 @@
 
 import { commandRegistry, type CommandDescriptor } from './command-registry.ts';
 import {
+	commandPaletteModeSignal,
 	commandPaletteOpenSignal,
 	currentSpaceIdSignal,
 	navSectionSignal,
@@ -28,6 +29,11 @@ import { ConnectionNotReadyError } from './errors.ts';
 
 function closePalette() {
 	commandPaletteOpenSignal.value = false;
+}
+
+function openPalette(mode: 'commands' | 'quick-open') {
+	commandPaletteModeSignal.value = mode;
+	commandPaletteOpenSignal.value = true;
 }
 
 async function runCreateSession() {
@@ -74,7 +80,18 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 		keywords: ['cmd', 'search', 'palette'],
 		shortcut: { code: 'KeyK', mod: true },
 		run: () => {
-			commandPaletteOpenSignal.value = true;
+			openPalette('commands');
+		},
+	},
+	{
+		id: 'quickOpen.open',
+		label: 'Open quick open',
+		category: 'navigation',
+		description: 'Jump to chats, messages, tasks, and spaces',
+		keywords: ['spotlight', 'search', 'jump', 'go'],
+		shortcut: { code: 'KeyP', mod: true },
+		run: () => {
+			openPalette('quick-open');
 		},
 	},
 	{

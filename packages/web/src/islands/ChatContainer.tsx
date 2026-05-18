@@ -42,7 +42,6 @@ import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
-import { MessageSearchOverlay } from '../components/MessageSearchOverlay.tsx';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -327,7 +326,6 @@ export default function ChatContainer({
 	const toolsModal = useModal();
 	const infoModal = useModal();
 	const errorDialog = useModal();
-	const searchModal = useModal();
 	const rewindConfirmModal = useModal();
 	const selectiveRewindModal = useModal();
 
@@ -1324,7 +1322,6 @@ export default function ChatContainer({
 				onResetClick={sessionActions.handleResetAgent}
 				onArchiveClick={sessionActions.handleArchiveClick}
 				onDeleteClick={deleteModal.open}
-				onSearchClick={searchModal.open}
 				archiving={sessionActions.archiving}
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
@@ -1539,13 +1536,6 @@ export default function ChatContainer({
 				onOpenTools={toolsModal.open}
 				onEnterRewindMode={handleEnterRewindMode}
 				onExitRewindMode={handleExitRewindMode}
-			/>
-
-			<MessageSearchOverlay
-				isOpen={searchModal.isOpen}
-				onClose={searchModal.close}
-				currentSessionId={sessionId}
-				onSelectMessage={selectSearchMessage}
 			/>
 
 			{/* Delete Modal */}
