@@ -39,6 +39,11 @@ vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
+vi.mock('../../../lib/runtime-capabilities', () => ({
+	hasNativeFolderPicker: vi.fn(() => false),
+	NATIVE_FOLDER_PICKER_TIMEOUT_MS: 605000,
+}));
+
 vi.mock('../../ui/Modal', () => ({
 	Modal: ({
 		isOpen,
@@ -83,6 +88,10 @@ vi.mock('../../ui/Button', () => ({
 	),
 }));
 
+import {
+	hasNativeFolderPicker,
+	NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+} from '../../../lib/runtime-capabilities';
 import { SpaceCreateDialog } from '../SpaceCreateDialog';
 
 const SPACE_MOCK = {
@@ -106,6 +115,7 @@ describe('SpaceCreateDialog', () => {
 		mockRequest.mockReset();
 		mockGetHubIfConnected.mockReset();
 		mockNavigateToSpace.mockReset();
+		vi.mocked(hasNativeFolderPicker).mockReturnValue(false);
 	});
 
 	afterEach(() => {
@@ -129,6 +139,33 @@ describe('SpaceCreateDialog', () => {
 		expect(getByPlaceholderText('/Users/you/projects/my-app')).toBeTruthy();
 		expect(getByText('Workspace Path')).toBeTruthy();
 		expect(getByText('*')).toBeTruthy();
+	});
+
+	it('hides browse button when native folder picker is unavailable', () => {
+		const { queryByText } = render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+		expect(queryByText('Browse')).toBeNull();
+	});
+
+	it('populates workspace path from browse selection', async () => {
+		vi.mocked(hasNativeFolderPicker).mockReturnValue(true);
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockResolvedValue({ path: '/projects/picked-app' });
+
+		const { getByPlaceholderText, getByText } = render(
+			<SpaceCreateDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.click(getByText('Browse'));
+
+		const pathInput = getByPlaceholderText('/Users/you/projects/my-app') as HTMLInputElement;
+		const nameInput = getByPlaceholderText('e.g., My App') as HTMLInputElement;
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('dialog.pickFolder', undefined, {
+				timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+			});
+			expect(pathInput.value).toBe('/projects/picked-app');
+			expect(nameInput.value).toBe('picked-app');
+		});
 	});
 
 	it('auto-suggests name from workspace path', () => {

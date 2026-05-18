@@ -10,31 +10,31 @@
  * Space navigation is handled by the Context Panel sidebar.
  */
 
-import { useCallback, useEffect, useState } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
+import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
+import { SpacePageHeader } from '../components/space/SpacePageHeader';
+import { createSession } from '../lib/api-helpers';
+import {
+	closeOverlayHistory,
+	navigateToSpace,
+	navigateToSpaceSession,
+	navigateToSpaceTask,
+	pushOverlayHistory,
+} from '../lib/router';
 import type { SpaceViewMode } from '../lib/signals';
 import {
-	spaceOverlaySessionIdSignal,
+	currentSpaceIdSignal,
+	currentSpaceViewModeSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
-	spaceOverlayTaskContextSignal,
-	spaceOverlayPendingTaskIdSignal,
 	spaceOverlayPendingAgentNameSignal,
-	currentSpaceViewModeSignal,
-	currentSpaceIdSignal,
+	spaceOverlayPendingTaskIdSignal,
+	spaceOverlaySessionIdSignal,
+	spaceOverlayTaskContextSignal,
 } from '../lib/signals';
-import { SpacePageHeader } from '../components/space/SpacePageHeader';
-import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
-import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
-import {
-	navigateToSpace,
-	navigateToSpaceTask,
-	navigateToSpaceSession,
-	pushOverlayHistory,
-	closeOverlayHistory,
-} from '../lib/router';
-import { createSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
 import ChatContainer from './ChatContainer';
 
@@ -46,6 +46,9 @@ const SpaceSessionsPage = lazy(() =>
 );
 const SpaceTasks = lazy(() =>
 	import('../components/space/SpaceTasks').then((m) => ({ default: m.SpaceTasks }))
+);
+const SpaceGoals = lazy(() =>
+	import('../components/space/SpaceGoals').then((m) => ({ default: m.SpaceGoals }))
 );
 const SpaceOverview = lazy(() =>
 	import('../components/space/SpaceOverview').then((m) => ({ default: m.SpaceOverview }))
@@ -268,12 +271,19 @@ export default function SpaceIsland({
 						pageTitle="Tasks"
 						actions={
 							<button
+								type="button"
 								onClick={() => setCreateTaskOpen(true)}
 								class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100"
 								aria-label="Create task"
 								title="Create task"
 							>
-								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<svg
+									class="w-4 h-4"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+									aria-hidden="true"
+								>
 									<path
 										stroke-linecap="round"
 										stroke-linejoin="round"
@@ -312,6 +322,25 @@ export default function SpaceIsland({
 		);
 	}
 
+	if (viewMode === 'goals' && space) {
+		return (
+			<>
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-app-content"
+					data-testid="space-goals-view"
+				>
+					<SpacePageHeader pageTitle="Goals" />
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<Suspense fallback={lazyFallback}>
+							<SpaceGoals spaceId={spaceId} />
+						</Suspense>
+					</div>
+				</div>
+				{overlay}
+			</>
+		);
+	}
+
 	if (viewMode === 'sessions' && space) {
 		return (
 			<>
@@ -323,13 +352,20 @@ export default function SpaceIsland({
 						pageTitle="Sessions"
 						actions={
 							<button
+								type="button"
 								onClick={handleCreateSession}
 								disabled={creatingSession}
 								class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
 								aria-label="Create session"
 								title="Create session"
 							>
-								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<svg
+									class="w-4 h-4"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+									aria-hidden="true"
+								>
 									<path
 										stroke-linecap="round"
 										stroke-linejoin="round"
