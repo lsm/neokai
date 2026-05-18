@@ -91,6 +91,12 @@ class QueryFailingEmbedder extends KeywordEmbedder {
 	}
 }
 
+class SyncThrowingEmbedder extends KeywordEmbedder {
+	override embedPassage(): Float32Array {
+		throw new Error('sync embedding unavailable');
+	}
+}
+
 function keywordVector(text: string): Float32Array {
 	const lower = text.toLowerCase();
 	return new Float32Array([
@@ -410,6 +416,27 @@ describe('AgentMemoryRepository', () => {
 		expect(results.map((result) => result.memory.key)).toEqual(['fallback.memory']);
 	});
 
+	test('sync passage embedding failures do not abort writes', () => {
+		repo = new AgentMemoryRepository(db, undefined, new SyncThrowingEmbedder());
+		const memory = repo.write({
+			spaceId: 'space-a',
+			key: 'sync.failure',
+			content: 'Synchronous embedding failures should keep lexical memory.',
+		});
+
+		expect(memory.key).toBe('sync.failure');
+		const row = db
+			.prepare(
+				`SELECT embedding_status, embedding_error FROM space_agent_memory WHERE space_id = ? AND key = ?`
+			)
+			.get('space-a', 'sync.failure') as {
+			embedding_status: string;
+			embedding_error: string;
+		};
+		expect(row.embedding_status).toBe('failed');
+		expect(row.embedding_error).toContain('sync embedding unavailable');
+	});
+
 	test('uses passage embeddings for memories and query embeddings for searches', async () => {
 		const embedder = new TrackingEmbedder();
 		repo = new AgentMemoryRepository(db, undefined, embedder);
@@ -425,6 +452,20 @@ describe('AgentMemoryRepository', () => {
 			'embedding.kind\nDelete stale session records after retention expires.',
 		]);
 		expect(embedder.queryTexts).toEqual(['erase old conversation data']);
+	});
+
+	test('backfills pending legacy memories', async () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'legacy.memory',
+			content: 'Delete stale session records after retention expires.',
+		});
+		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+
+		repo.backfillPendingEmbeddings();
+
+		const results = await repo.search('space-a', 'erase old conversation data', 5);
+		expect(results.map((result) => result.memory.key)).toEqual(['legacy.memory']);
 	});
 
 	test('vector search preserves space isolation', async () => {
@@ -462,16 +503,18 @@ describe('AgentMemoryRepository', () => {
 	test('stale async embeddings do not overwrite newer content', async () => {
 		const embedder = new DeferredKeywordEmbedder();
 		repo = new AgentMemoryRepository(db, undefined, embedder);
-		repo.write({
-			spaceId: 'space-a',
-			key: 'changing.memory',
-			content: 'Delete stale session records after retention expires.',
-		});
-		repo.write({
-			spaceId: 'space-a',
-			key: 'changing.memory',
-			content: 'Store credential material only in secure storage.',
-		});
+		db.transaction(() => {
+			repo.write({
+				spaceId: 'space-a',
+				key: 'changing.memory',
+				content: 'Delete stale session records after retention expires.',
+			});
+			repo.write({
+				spaceId: 'space-a',
+				key: 'changing.memory',
+				content: 'Store credential material only in secure storage.',
+			});
+		})();
 
 		embedder.resolveNext();
 		await flushPromises();
@@ -487,6 +530,10 @@ describe('AgentMemoryRepository', () => {
 		expect(new Float32Array(vectorRow.embedding.buffer, vectorRow.embedding.byteOffset, 3)).toEqual(
 			keywordVector('Store credential material only in secure storage.')
 		);
+		const row = db
+			.prepare(`SELECT embedding_revision FROM space_agent_memory WHERE space_id = ? AND key = ?`)
+			.get('space-a', 'changing.memory') as { embedding_revision: number };
+		expect(row.embedding_revision).toBe(2);
 	});
 
 	test('embedding failures are persisted', async () => {

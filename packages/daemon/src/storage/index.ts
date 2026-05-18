@@ -126,6 +126,7 @@ export class Database {
 			reactiveDb,
 			new FastembedAgentMemoryEmbedder()
 		);
+		this.agentMemoryRepo.backfillPendingEmbeddings();
 	}
 
 	// ============================================================================

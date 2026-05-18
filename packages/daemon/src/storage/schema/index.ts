@@ -713,6 +713,7 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			embedding_model TEXT,
 			embedding_updated_at INTEGER,
 			embedding_error TEXT,
+			embedding_revision INTEGER NOT NULL DEFAULT 0,
 			UNIQUE(space_id, key),
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)

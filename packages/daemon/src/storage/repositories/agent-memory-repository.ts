@@ -40,6 +40,7 @@ interface AgentMemoryRow {
 	embedding_model: string | null;
 	embedding_updated_at: number | null;
 	embedding_error: string | null;
+	embedding_revision: number;
 }
 
 interface AgentMemorySearchRow extends AgentMemoryRow {
@@ -90,8 +91,8 @@ export class AgentMemoryRepository {
 		const row = this.db
 			.prepare(
 				`INSERT INTO space_agent_memory
-					(key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL)
+					(key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL, 1)
 				 ON CONFLICT(space_id, key) DO UPDATE SET
 					content = excluded.content,
 					tags = CASE WHEN ? = 1 THEN excluded.tags ELSE space_agent_memory.tags END,
@@ -99,7 +100,8 @@ export class AgentMemoryRepository {
 					embedding_status = 'pending',
 					embedding_model = NULL,
 					embedding_updated_at = NULL,
-					embedding_error = NULL
+					embedding_error = NULL,
+					embedding_revision = space_agent_memory.embedding_revision + 1
 				 RETURNING *`
 			)
 			.get(
@@ -269,26 +271,42 @@ export class AgentMemoryRepository {
 			.slice(0, limit);
 	}
 
-	private updateEmbedding(row: AgentMemoryRow): void {
-		const sourceUpdatedAt = row.updated_at;
-		const embedding = this.embedText(memoryEmbeddingText(row), 'passage');
-		if (!embedding) return;
-		if (embedding instanceof Promise) {
-			embedding
-				.then((vector) => this.storeEmbedding(row.rowid, sourceUpdatedAt, vector))
-				.catch((error: unknown) => this.markEmbeddingFailed(row.rowid, sourceUpdatedAt, error));
-			return;
-		}
-		this.storeEmbedding(row.rowid, sourceUpdatedAt, embedding);
+	backfillPendingEmbeddings(): void {
+		if (!this.embedder) return;
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM space_agent_memory
+				 WHERE embedding_status = 'pending'
+				 ORDER BY updated_at ASC, key ASC`
+			)
+			.all() as AgentMemoryRow[];
+		for (const row of rows) this.updateEmbedding(row);
 	}
 
-	private storeEmbedding(rowid: number, sourceUpdatedAt: number, embedding: Float32Array): void {
+	private updateEmbedding(row: AgentMemoryRow): void {
+		const sourceRevision = row.embedding_revision;
+		try {
+			const embedding = this.embedText(memoryEmbeddingText(row), 'passage');
+			if (!embedding) return;
+			if (embedding instanceof Promise) {
+				embedding
+					.then((vector) => this.storeEmbedding(row.rowid, sourceRevision, vector))
+					.catch((error: unknown) => this.markEmbeddingFailed(row.rowid, sourceRevision, error));
+				return;
+			}
+			this.storeEmbedding(row.rowid, sourceRevision, embedding);
+		} catch (error) {
+			this.markEmbeddingFailed(row.rowid, sourceRevision, error);
+		}
+	}
+
+	private storeEmbedding(rowid: number, sourceRevision: number, embedding: Float32Array): void {
 		const now = Date.now();
 		const store = this.db.transaction(() => {
 			const current = this.db
-				.prepare(`SELECT updated_at FROM space_agent_memory WHERE rowid = ?`)
-				.get(rowid) as { updated_at: number } | undefined;
-			if (!current || current.updated_at !== sourceUpdatedAt) return;
+				.prepare(`SELECT embedding_revision FROM space_agent_memory WHERE rowid = ?`)
+				.get(rowid) as { embedding_revision: number } | undefined;
+			if (!current || current.embedding_revision !== sourceRevision) return;
 
 			this.db
 				.prepare(
@@ -318,20 +336,20 @@ export class AgentMemoryRepository {
 		store();
 	}
 
-	private markEmbeddingFailed(rowid: number, sourceUpdatedAt: number, error: unknown): void {
+	private markEmbeddingFailed(rowid: number, sourceRevision: number, error: unknown): void {
 		const now = Date.now();
 		this.db
 			.prepare(
 				`UPDATE space_agent_memory
 				 SET embedding_status = 'failed', embedding_model = ?, embedding_updated_at = ?, embedding_error = ?
-				 WHERE rowid = ? AND updated_at = ?`
+				 WHERE rowid = ? AND embedding_revision = ?`
 			)
 			.run(
 				this.embedder?.model ?? 'unknown',
 				now,
 				embeddingErrorMessage(error),
 				rowid,
-				sourceUpdatedAt
+				sourceRevision
 			);
 	}
 

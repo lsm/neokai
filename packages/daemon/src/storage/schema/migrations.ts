@@ -9036,6 +9036,11 @@ export function runMigration136(db: BunDatabase): void {
 	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_error')) {
 		db.exec(`ALTER TABLE space_agent_memory ADD COLUMN embedding_error TEXT`);
 	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_revision')) {
+		db.exec(
+			`ALTER TABLE space_agent_memory ADD COLUMN embedding_revision INTEGER NOT NULL DEFAULT 0`
+		);
+	}
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS memory_vectors (
