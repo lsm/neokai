@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for CustomEndpointsSettings + presets.
  *
@@ -28,8 +27,8 @@ const {
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
 	listCustomEndpoints: () => mockListCustomEndpoints(),
-	addCustomEndpoint: (e) => mockAddCustomEndpoint(e),
-	updateCustomEndpoint: (e) => mockUpdateCustomEndpoint(e),
+	addCustomEndpoint: (e: unknown) => mockAddCustomEndpoint(e),
+	updateCustomEndpoint: (e: unknown) => mockUpdateCustomEndpoint(e),
 	removeCustomEndpoint: (id: string) => mockRemoveCustomEndpoint(id),
 }));
 
@@ -98,7 +97,7 @@ describe('CustomEndpointsSettings — helpers', () => {
 	it('validateEditor requires at least one model and rejects duplicates', () => {
 		const base = __test__.presetToEditor(findPreset('lmstudio')!);
 		expect(__test__.validateEditor({ ...base, models: [] })).toMatch(/at least one/i);
-		const m1 = { id: 'a', resolved: __test__.resolveCapabilities('openai-chat') } as never;
+		const m1 = __test__.makeModelDraft('openai-chat', { id: 'a' });
 		expect(__test__.validateEditor({ ...base, models: [m1, m1] })).toMatch(/duplicate/i);
 	});
 
@@ -107,15 +106,12 @@ describe('CustomEndpointsSettings — helpers', () => {
 		editor.id = 'lm-test';
 		editor.name = 'LM Test';
 		editor.baseUrl = 'http://localhost:1234/v1';
-		editor.models = [
-			{
-				id: 'qwen2',
-				resolved: { ...__test__.resolveCapabilities('openai-chat'), thinking: true },
-			} as never,
-		];
+		const m = __test__.makeModelDraft('openai-chat', { id: 'qwen2' });
+		m.resolved = { ...m.resolved, thinking: true };
+		editor.models = [m];
 		const cfg = __test__.editorToConfig(editor);
 		// Only `thinking` should be persisted as a delta since the rest match defaults.
-		expect(cfg.models[0].capabilities).toEqual({ thinking: true });
+		expect(cfg.models[0]?.capabilities).toEqual({ thinking: true });
 	});
 
 	it('editorToConfig persists baseUrl + apiKey + headers when set', () => {
@@ -125,13 +121,48 @@ describe('CustomEndpointsSettings — helpers', () => {
 		editor.baseUrl = 'https://openrouter.ai/api/v1';
 		editor.apiKey = 'sk-xx';
 		editor.headersText = 'X-Title: NeoKai';
-		editor.models = [
-			{ id: 'mistral', resolved: __test__.resolveCapabilities('openai-chat') } as never,
-		];
+		editor.models = [__test__.makeModelDraft('openai-chat', { id: 'mistral' })];
 		const cfg = __test__.editorToConfig(editor);
 		expect(cfg.apiKey).toBe('sk-xx');
 		expect(cfg.headers).toEqual({ 'X-Title': 'NeoKai' });
 		expect(cfg.baseUrl).toBe('https://openrouter.ai/api/v1');
+	});
+
+	it('capability edits survive an endpoint type switch', () => {
+		// Simulate the editor flow: user enables `thinking` on an openai-chat
+		// model, then switches the endpoint type to ollama-native. The override
+		// must remain visible (resolved=true) instead of resetting to the
+		// type-default (false).
+		const base = __test__.presetToEditor(findPreset('blank')!);
+		base.id = 'x';
+		base.name = 'X';
+		base.baseUrl = 'http://localhost:9999';
+
+		// Initial model with no overrides
+		const initial = __test__.makeModelDraft('openai-chat', { id: 'm1' });
+		expect(initial.resolved.thinking).toBe(false);
+
+		// User toggles `thinking` on — simulate ModelEditor.updateCap behaviour:
+		// both `capabilities` and `resolved` must be patched.
+		const edited = {
+			...initial,
+			capabilities: { ...initial.capabilities, thinking: true as const },
+			resolved: { ...initial.resolved, thinking: true },
+		};
+
+		// Parent flips endpoint type to ollama-native — recomputes resolved from
+		// capabilities. The override must survive.
+		const afterTypeChange = {
+			...edited,
+			resolved: __test__.resolveCapabilities('ollama-native', edited.capabilities),
+		};
+		expect(afterTypeChange.resolved.thinking).toBe(true);
+
+		// Verify it persists through editorToConfig as well.
+		base.type = 'ollama-native';
+		base.models = [afterTypeChange];
+		const cfg = __test__.editorToConfig(base);
+		expect(cfg.models[0]?.capabilities?.thinking).toBe(true);
 	});
 });
 

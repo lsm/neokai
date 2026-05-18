@@ -105,7 +105,7 @@ function SectionIcon({ type }: { type: string }) {
 						stroke-linecap="round"
 						stroke-linejoin="round"
 						stroke-width={2}
-						d="M7 7V3m10 4V3M7 17v4m10-4v4M5 7h14a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2z"
+						d="M13 10V3L4 14h7v7l9-11h-7z"
 					/>
 				</svg>
 			);

@@ -248,12 +248,10 @@ function CapabilityBadge({ label, active }: { label: string; active: boolean }) 
 
 function ModelEditor({
 	model,
-	type,
 	onChange,
 	onRemove,
 }: {
 	model: ModelDraft;
-	type: CustomEndpointType;
 	onChange: (next: ModelDraft) => void;
 	onRemove: () => void;
 }) {
@@ -262,14 +260,16 @@ function ModelEditor({
 		key: K,
 		value: CustomEndpointModelCapabilities[K]
 	) => {
-		onChange({ ...model, resolved: { ...model.resolved, [key]: value } });
+		// Persist the override in `capabilities` so it survives subsequent type
+		// changes (which re-resolve `resolved` from `capabilities`). Without this
+		// write, toggling a checkbox and then switching the endpoint type would
+		// silently discard the edit.
+		onChange({
+			...model,
+			capabilities: { ...model.capabilities, [key]: value },
+			resolved: { ...model.resolved, [key]: value },
+		});
 	};
-
-	useEffect(() => {
-		// When type changes, re-resolve defaults preserving user overrides.
-		onChange({ ...model, resolved: resolveCapabilities(type, model.capabilities) });
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [type]);
 
 	return (
 		<div class="rounded-lg border border-white/[0.08] bg-dark-900/60 px-3 py-2.5 space-y-2">
@@ -542,7 +542,6 @@ function EditorModal({
 									<ModelEditor
 										key={i}
 										model={m}
-										type={state.type}
 										onChange={(next) => updateModel(i, next)}
 										onRemove={() => removeModel(i)}
 									/>
@@ -900,4 +899,5 @@ export const __test__ = {
 	presetToEditor,
 	existingToEditor,
 	findPreset,
+	makeModelDraft,
 };
