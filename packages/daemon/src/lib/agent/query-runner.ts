@@ -366,7 +366,6 @@ export class QueryRunner {
 			);
 
 			queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions);
-			queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions);
 			// P2-6 / P1-5: Self-heal — detect a missing required MCP server for
 			// workflow sub-sessions and recover via the registered callback.
 			// Required server:
@@ -464,6 +463,8 @@ export class QueryRunner {
 					);
 				}
 			}
+
+			queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions);
 
 			// Apply provider env vars
 			{
@@ -1101,17 +1102,20 @@ export class QueryRunner {
 	 *   - space_chat sessions (handled by ensureSpaceChatMcpInvariant)
 	 *   - space_task_agent sessions (legacy, intentionally not provisioned by
 	 *     attachSpaceToolsToMemberSession)
-	 *   - workflow sub-sessions (handled by node-agent self-heal)
 	 *   - sessions without context.spaceId
+	 *
+	 * Workflow sub-sessions are included because they are also Space members;
+	 * TaskAgentManager provides the specialised self-heal callback for them.
 	 */
 	private async ensureMemberSpaceMcpInvariant(queryOptions: Options): Promise<Options> {
 		const { session, logger } = this.ctx;
 		// Only applies to member sessions that belong to a Space but are not the
-		// Space chat session itself, a legacy task-agent session, or a workflow sub-session.
+		// Space chat session itself or a legacy task-agent session. Workflow
+		// sub-sessions are still Space members, but TaskAgentManager wires their
+		// specialised space-agent-tools server and callback.
 		if (!session.context?.spaceId) return queryOptions;
 		if (session.type === 'space_chat') return queryOptions;
 		if (session.type === 'space_task_agent') return queryOptions;
-		if (session.id.includes(':task:') && session.id.includes(':exec:')) return queryOptions;
 
 		const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
 		const missingServers = REQUIRED_MEMBER_SPACE_MCP_SERVERS.filter(

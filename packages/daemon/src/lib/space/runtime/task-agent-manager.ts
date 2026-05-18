@@ -892,9 +892,8 @@ export class TaskAgentManager {
 						// Re-merging with a fresh node-agent and restarting the query ensures the
 						// session's tool surface reflects the new node activation context.
 						//
-						// Re-inject node-agent and enforce the required-server invariant on
-						// the reused session. Node agents intentionally do not receive
-						// space-agent-tools; task creation is mirrored onto node-agent instead.
+						// Re-inject node-agent, attach specialised space-agent-tools, and enforce
+						// the required-server invariant on the reused session.
 						if (memberInfo.nodeId) {
 							const reuseWorkspacePath = this.taskWorktreePaths.get(taskId) ?? init.workspacePath;
 							const reuseCtx = {
@@ -908,6 +907,7 @@ export class TaskAgentManager {
 							};
 							// Unconditionally rebuild node-agent (fresh node context).
 							await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
+							await this.attachSpaceToolsToWorkflowSubSession(existing, reuseCtx, 'reuse');
 							await this.ensureRequiredMcpServersAttached(existing, {
 								...reuseCtx,
 								phase: 'spawn',
@@ -997,6 +997,25 @@ export class TaskAgentManager {
 			// replace-all setRuntimeMcpServers because it won't clobber servers injected
 			// by a concurrent subsystem before this path runs.
 			subSession.mergeRuntimeMcpServers(mergedSubSessionMcpServers);
+		}
+		const subSessionContext = subSession.session.context;
+		if (memberInfo?.nodeId && memberInfo.agentName && subSessionContext?.spaceId) {
+			const parentTask = this.config.taskRepo.getTask(taskId);
+			if (parentTask?.workflowRunId) {
+				await this.attachSpaceToolsToWorkflowSubSession(
+					subSession,
+					{
+						taskId,
+						subSessionId: sessionId,
+						agentName: memberInfo.agentName,
+						spaceId: subSessionContext.spaceId,
+						workflowRunId: parentTask.workflowRunId,
+						workspacePath: init.workspacePath,
+						workflowNodeId: memberInfo.nodeId,
+					},
+					'new'
+				);
+			}
 		}
 
 		// Determine node ID from session convention or task context.
@@ -2639,8 +2658,7 @@ export class TaskAgentManager {
 		// is safer than the deprecated replace-all setRuntimeMcpServers.
 		agentSession.mergeRuntimeMcpServers(mergedMcpServers);
 
-		// Defensive guarantee — see ensureNodeAgentAttached docs.
-		await this.ensureNodeAgentAttached(agentSession, {
+		const rehydrateCtx = {
 			taskId,
 			subSessionId,
 			agentName: execution.agentName,
@@ -2648,6 +2666,13 @@ export class TaskAgentManager {
 			workflowRunId,
 			workspacePath,
 			workflowNodeId: execution.workflowNodeId,
+		};
+
+		await this.attachSpaceToolsToWorkflowSubSession(agentSession, rehydrateCtx, 'rehydrate');
+
+		// Defensive guarantee — see ensureNodeAgentAttached docs.
+		await this.ensureNodeAgentAttached(agentSession, {
+			...rehydrateCtx,
 			phase: 'rehydrate',
 		});
 
@@ -3103,8 +3128,12 @@ export class TaskAgentManager {
 	 */
 	requiredWorkflowSubSessionMcpServers(): string[] {
 		return this.config.memoryRepo
-			? [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS, 'agent-memory']
-			: [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS];
+			? [
+					...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS,
+					'space-agent-tools',
+					'agent-memory',
+				]
+			: [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS, 'space-agent-tools'];
 	}
 
 	async ensureNodeAgentAttached(
@@ -3148,6 +3177,8 @@ export class TaskAgentManager {
 		for (const name of missing) {
 			if (name === 'node-agent') {
 				await this.reinjectNodeAgentMcpServer(session, ctx);
+			} else if (name === 'space-agent-tools') {
+				await this.attachSpaceToolsToWorkflowSubSession(session, ctx, ctx.phase);
 			} else if (name === 'agent-memory') {
 				await this.reinjectAgentMemoryMcpServer(session, ctx);
 			}
@@ -3368,6 +3399,35 @@ export class TaskAgentManager {
 		});
 
 		await session.restartQuery();
+	}
+
+	private async attachSpaceToolsToWorkflowSubSession(
+		session: AgentSession,
+		ctx: {
+			taskId: string;
+			subSessionId: string;
+			agentName: string;
+			spaceId: string;
+			workflowRunId: string;
+			workspacePath: string;
+			workflowNodeId: string;
+		},
+		phase: 'new' | 'reuse' | 'rehydrate' | 'spawn'
+	): Promise<void> {
+		try {
+			await this.reinjectSpaceAgentToolsMcpServer(session, ctx);
+			session.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
+				log.warn(
+					`Workflow sub-session ${ctx.subSessionId} missing Space MCP servers [${missing.join(', ')}]; re-attaching before query start`
+				);
+				await this.attachSpaceToolsToWorkflowSubSession(session, ctx, 'rehydrate');
+			};
+		} catch (err) {
+			log.error(
+				`Failed to attach space tools to ${phase} sub-session ${ctx.subSessionId} (space ${ctx.spaceId}):`,
+				err
+			);
+		}
 	}
 
 	/**

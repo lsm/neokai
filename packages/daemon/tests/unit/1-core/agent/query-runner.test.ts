@@ -581,28 +581,54 @@ describe('QueryRunner', () => {
 			});
 		});
 
-		it('skips member Space MCP invariant for workflow sub-sessions', async () => {
+		it('self-heals missing member Space MCP for workflow sub-sessions', async () => {
 			await withAnthropicApiKey(async () => {
 				mockSession.id = 'space:s1:task:t1:exec:e1';
 				mockSession.workspacePath = tmpdir();
 				mockSession.type = 'worker';
 				mockSession.context = { spaceId: 's1', taskId: 't1' };
-				mockSession.config.mcpServers = {};
-				buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
-				// Force early exit: make message generator throw so the query fails fast.
-				mockMessageQueue.messageGenerator = mock(async function* () {
-					throw new Error('generator abort for test');
-				});
+				const nodeAgentServer = {
+					type: 'sdk',
+					name: 'node-agent',
+					instance: {},
+				};
+				mockSession.config.mcpServers = {
+					'node-agent': nodeAgentServer,
+				} as unknown as Session['config']['mcpServers'];
 
-				const onMissingMemberSpaceMcpServers = mock(async () => {});
+				const repairedServers = {
+					'node-agent': nodeAgentServer,
+					'space-agent-tools': {
+						type: 'sdk',
+						name: 'space-agent-tools',
+						instance: {},
+					},
+				};
+				buildSpy
+					.mockResolvedValueOnce({
+						model: 'claude-sonnet-4-20250514',
+						mcpServers: { 'node-agent': nodeAgentServer },
+					})
+					.mockResolvedValueOnce({
+						model: 'claude-sonnet-4-20250514',
+						mcpServers: repairedServers,
+					});
+				stopAfterRebuiltOptions();
+
+				const onMissingMemberSpaceMcpServers = mock(async () => {
+					mockSession.config.mcpServers =
+						repairedServers as unknown as Session['config']['mcpServers'];
+				});
 				const ctx = createContext({ onMissingMemberSpaceMcpServers });
 				runner = new QueryRunner(ctx);
 				runner.start();
 				await ctx.queryPromise?.catch(() => {});
 
-				expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
-				expect(buildSpy).toHaveBeenCalledTimes(1);
-				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+				expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('space:s1:task:t1:exec:e1', [
+					'space-agent-tools',
+				]);
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
 			});
 		});
 	});
