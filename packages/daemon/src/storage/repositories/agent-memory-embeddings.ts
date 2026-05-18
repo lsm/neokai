@@ -1,7 +1,7 @@
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import type { AgentMemoryEmbedder } from './agent-memory-repository';
 
-const MODEL = 'BAAI/bge-small-en-v1.5';
+const MODEL = 'Xenova/bge-small-en-v1.5';
 const DIMENSIONS = 384;
 
 export class FastembedAgentMemoryEmbedder implements AgentMemoryEmbedder {
