@@ -173,9 +173,9 @@ function workspaceLabel(path: string | null): string {
 	return path.split('/').filter(Boolean).at(-1) ?? path;
 }
 
-function sessionItems(query: string, limit: number): PaletteItem[] {
+function sessionItems(allSessions: Session[], query: string, limit: number): PaletteItem[] {
 	const trimmed = query.trim();
-	const ranked = sessions.value
+	const ranked = allSessions
 		.filter((session) => session.status !== 'archived')
 		.map((session) => {
 			const score = trimmed
@@ -206,9 +206,9 @@ function sessionItems(query: string, limit: number): PaletteItem[] {
 	}));
 }
 
-function spaceItems(query: string, limit: number): PaletteItem[] {
+function spaceItems(spaces: SpaceWithTasks[], query: string, limit: number): PaletteItem[] {
 	const trimmed = query.trim();
-	const ranked = spaceStore.spacesWithTasks.value
+	const ranked = spaces
 		.map((space) => {
 			const score = trimmed
 				? Math.max(
@@ -358,14 +358,17 @@ export function CommandPalette() {
 		return () => clearTimeout(timeout);
 	}, [open, query]);
 
+	const allSessions = sessions.value;
+	const spacesWithTasks = spaceStore.spacesWithTasks.value;
+
 	const items = useMemo(() => {
 		const forcedCommand = query.trimStart().startsWith('>');
 		const commandQuery = forcedCommand ? query.trimStart().slice(1).trimStart() : query;
 		const commands = commandItems(commandRegistry.search(commandQuery));
 		const quickItems = [
-			...sessionItems(query, query.trim() ? 8 : 5),
-			...spaceItems(query, query.trim() ? 5 : 3),
-			...taskItemsFromSpaces(spaceStore.spacesWithTasks.value, query, query.trim() ? 5 : 3),
+			...sessionItems(allSessions, query, query.trim() ? 8 : 5),
+			...spaceItems(spacesWithTasks, query, query.trim() ? 5 : 3),
+			...taskItemsFromSpaces(spacesWithTasks, query, query.trim() ? 5 : 3),
 			...messageItems(messageResults),
 		];
 
@@ -374,7 +377,7 @@ export function CommandPalette() {
 			return query.trim() ? [...commands.slice(0, 8), ...quickItems.slice(0, 8)] : commands;
 		}
 		return query.trim() ? [...quickItems, ...commands.slice(0, 5)] : quickItems;
-	}, [query, mode, messageResults, open, registryVersion]);
+	}, [query, mode, messageResults, allSessions, spacesWithTasks, registryVersion]);
 
 	const groupedItems = useMemo(() => {
 		const groups: Array<{ key: PaletteItem['group']; items: PaletteItem[] }> = [];

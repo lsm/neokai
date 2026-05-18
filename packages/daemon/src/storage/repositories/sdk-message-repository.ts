@@ -1125,7 +1125,7 @@ export class SDKMessageRepository {
 			values.push(params.to);
 		}
 
-		sql += ` ORDER BY rank ASC, timestamp DESC LIMIT ? OFFSET ?`;
+		sql += ` ORDER BY rank ASC, timestamp DESC, source_id ASC LIMIT ? OFFSET ?`;
 		values.push(limit, offset);
 
 		const rows = this.db.prepare(sql).all(...values) as Array<{

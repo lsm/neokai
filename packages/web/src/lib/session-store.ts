@@ -769,8 +769,9 @@ class SessionStore {
 			const messages = result?.sdkMessages ?? [];
 			const hasMore = result?.hasMore ?? false;
 
-			// Update hasMore signal from server response
-			this._hasMoreMessages.value = hasMore;
+			if (!sessionIdOverride || sessionId === this.activeSessionId.value) {
+				this._hasMoreMessages.value = hasMore;
+			}
 
 			return {
 				messages,
