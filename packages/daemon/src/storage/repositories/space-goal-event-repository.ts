@@ -57,12 +57,22 @@ export class SpaceGoalEventRepository {
 
 	listByGoal(goalId: string, params: SpaceGoalEventListParams = {}): SpaceGoalEvent[] {
 		const limit = normalizeLimit(params.limit);
+		const cursorId = normalizeCursorId(params.beforeId);
 		const rows = params.before
-			? (this.db
-					.prepare(
-						`SELECT * FROM space_goal_events WHERE goal_id = ? AND created_at < ? ORDER BY created_at DESC, id DESC LIMIT ?`
-					)
-					.all(goalId, params.before, limit) as Record<string, unknown>[])
+			? cursorId
+				? (this.db
+						.prepare(
+							`SELECT * FROM space_goal_events WHERE goal_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT ?`
+						)
+						.all(goalId, params.before, params.before, cursorId, limit) as Record<
+						string,
+						unknown
+					>[])
+				: (this.db
+						.prepare(
+							`SELECT * FROM space_goal_events WHERE goal_id = ? AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ?`
+						)
+						.all(goalId, params.before, limit) as Record<string, unknown>[])
 			: (this.db
 					.prepare(
 						`SELECT * FROM space_goal_events WHERE goal_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`
@@ -73,12 +83,22 @@ export class SpaceGoalEventRepository {
 
 	listBySpace(spaceId: string, params: SpaceGoalEventListParams = {}): SpaceGoalEvent[] {
 		const limit = normalizeLimit(params.limit);
+		const cursorId = normalizeCursorId(params.beforeId);
 		const rows = params.before
-			? (this.db
-					.prepare(
-						`SELECT * FROM space_goal_events WHERE space_id = ? AND created_at < ? ORDER BY created_at DESC, id DESC LIMIT ?`
-					)
-					.all(spaceId, params.before, limit) as Record<string, unknown>[])
+			? cursorId
+				? (this.db
+						.prepare(
+							`SELECT * FROM space_goal_events WHERE space_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT ?`
+						)
+						.all(spaceId, params.before, params.before, cursorId, limit) as Record<
+						string,
+						unknown
+					>[])
+				: (this.db
+						.prepare(
+							`SELECT * FROM space_goal_events WHERE space_id = ? AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ?`
+						)
+						.all(spaceId, params.before, limit) as Record<string, unknown>[])
 			: (this.db
 					.prepare(
 						`SELECT * FROM space_goal_events WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`
@@ -121,4 +141,8 @@ function parseJson<T>(value: unknown, fallback: T | null): T | null {
 function normalizeLimit(limit: number | undefined): number {
 	if (!Number.isFinite(limit)) return DEFAULT_LIMIT;
 	return Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit as number)));
+}
+
+function normalizeCursorId(id: string | undefined): string | null {
+	return typeof id === 'string' && id.length > 0 ? id : null;
 }

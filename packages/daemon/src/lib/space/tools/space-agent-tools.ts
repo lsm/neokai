@@ -1598,12 +1598,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			goal_id: string;
 			limit?: number;
 			before?: number;
+			before_id?: string;
 		}): Promise<ToolResult> {
 			try {
 				requireGoalInSpace(args.goal_id);
 				const events = requireGoalService().listGoalEvents(args.goal_id, {
 					limit: args.limit,
 					before: args.before,
+					beforeId: args.before_id,
 				});
 				return jsonResult({ success: true, total: events.length, events });
 			} catch (err) {
@@ -2208,6 +2210,10 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					goal_id: z.string().describe('Goal ID'),
 					limit: z.number().int().min(1).max(100).optional().describe('Max events to return'),
 					before: z.number().int().optional().describe('Return events before this timestamp'),
+					before_id: z
+						.string()
+						.optional()
+						.describe('Cursor event ID for same-timestamp pagination'),
 				},
 				(args) => handlers.list_goal_events(args)
 			)

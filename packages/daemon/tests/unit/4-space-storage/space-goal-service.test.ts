@@ -113,6 +113,45 @@ describe('SpaceGoalService', () => {
 		expect(schedule?.labels).toEqual(['goal', `goal:${goal.id}`, 'product']);
 	});
 
+	it('paginates same-timestamp goal events with id cursor', () => {
+		const goal = service.createGoal({ spaceId, title: 'Cursor goal' });
+		const timestamp = Date.now() + 1000;
+		const first = goalEventRepo.create({
+			spaceId,
+			goalId: goal.id,
+			eventType: 'updated',
+			source: 'system',
+			createdAt: timestamp,
+			note: 'first',
+		});
+		const second = goalEventRepo.create({
+			spaceId,
+			goalId: goal.id,
+			eventType: 'updated',
+			source: 'system',
+			createdAt: timestamp,
+			note: 'second',
+		});
+		const third = goalEventRepo.create({
+			spaceId,
+			goalId: goal.id,
+			eventType: 'updated',
+			source: 'system',
+			createdAt: timestamp,
+			note: 'third',
+		});
+		const ordered = [first, second, third].sort((a, b) => b.id.localeCompare(a.id));
+
+		const page1 = goalEventRepo.listByGoal(goal.id, { limit: 1, before: timestamp, beforeId: '~' });
+		expect(page1.map((event) => event.id)).toEqual([ordered[0]!.id]);
+		const page2 = goalEventRepo.listByGoal(goal.id, {
+			limit: 2,
+			before: page1[0]!.createdAt,
+			beforeId: page1[0]!.id,
+		});
+		expect(page2.map((event) => event.id)).toEqual([ordered[1]!.id, ordered[2]!.id]);
+	});
+
 	it('records goal update, status, task, and schedule events', () => {
 		const goal = service.createGoal({ spaceId, title: 'Audit me', autoTriggerNext: true });
 		const createdEvents = goalEventRepo.listByGoal(goal.id);
@@ -151,6 +190,33 @@ describe('SpaceGoalService', () => {
 		expect(updateEvent?.diff?.progress).toEqual({ previous: 0, current: 50 });
 		const terminalEvent = events.find((event) => event.eventType === 'task_terminal');
 		expect(terminalEvent?.sourceTaskId).toBe(first.task?.id);
+	});
+
+	it('publishes triggerImmediately task-created events after create transaction commits', () => {
+		const visibleDuringPublish: boolean[] = [];
+		service = new SpaceGoalService({
+			goalRepo,
+			goalEventRepo,
+			taskRepo,
+			spaceRepo,
+			scheduleService: new ScheduleService({
+				db: db as never,
+				scheduleRepo,
+				jobQueue: new JobQueueRepository(db as never),
+				spaceRepo,
+			}),
+			db: db as never,
+			eventHub: {
+				publish: async (_event, data) => {
+					visibleDuringPublish.push(Boolean(taskRepo.getTask((data as { taskId: string }).taskId)));
+				},
+			},
+		});
+
+		const goal = service.createGoal({ spaceId, title: 'Trigger now', triggerImmediately: true });
+
+		expect(goal.activeTaskId).toBeString();
+		expect(visibleDuringPublish).toEqual([true]);
 	});
 
 	it('creates an immediate goal task and queues concurrent triggers', () => {

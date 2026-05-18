@@ -352,6 +352,7 @@ export interface CreateSpaceGoalEventParams {
 export interface SpaceGoalEventListParams {
 	limit?: number;
 	before?: number;
+	beforeId?: string;
 }
 
 export interface SpaceGoal {
@@ -671,7 +672,14 @@ export interface SpaceTaskActivityMember {
 	/** Derived user-facing activity state */
 	state: SpaceTaskActivityState;
 	/** Raw session processing status when the session is live in memory */
-	processingStatus?: 'idle' | 'queued' | 'processing' | 'waiting_for_input' | 'interrupted' | null;
+	processingStatus?:
+		| 'idle'
+		| 'queued'
+		| 'processing'
+		| 'waiting_for_input'
+		| 'rate_limit_cooldown'
+		| 'interrupted'
+		| null;
 	/** Raw processing phase when the session is actively processing */
 	processingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
 	/** Number of persisted SDK messages seen in the backing session */

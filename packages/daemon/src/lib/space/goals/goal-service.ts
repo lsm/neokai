@@ -64,7 +64,7 @@ export class SpaceGoalService {
 			throw new Error(`Cannot create goal in a non-active space (current: ${space.status})`);
 		}
 
-		return this.runAtomic(() => {
+		const result = this.runAtomic(() => {
 			const goal = this.deps.goalRepo.create(params);
 			this.recordGoalEvent(goal, 'created', null, goal, context);
 			if (params.checkInCronExpression) {
@@ -85,9 +85,15 @@ export class SpaceGoalService {
 				this.deps.goalRepo.update(goal.id, { nextCheckInAt: schedule.nextRunAt });
 			}
 
-			if (params.triggerImmediately) return this.createImmediateTask(goal.id).goal;
-			return this.getGoal(goal.id) as SpaceGoal;
+			if (!params.triggerImmediately)
+				return { goal: this.getGoal(goal.id) as SpaceGoal, task: null };
+			const created = this.createImmediateTaskInternal(goal.id, undefined, {
+				emitTaskCreated: false,
+			});
+			return { goal: created.goal, task: created.task };
 		});
+		if (result.task) this.emitTaskCreated(result.task);
+		return result.goal;
 	}
 
 	listGoals(params: SpaceGoalListParams): SpaceGoal[] {
@@ -173,6 +179,18 @@ export class SpaceGoalService {
 		task: SpaceTask | null;
 		queued: boolean;
 	} {
+		return this.createImmediateTaskInternal(goalId, context);
+	}
+
+	private createImmediateTaskInternal(
+		goalId: string,
+		context?: SpaceGoalMutationContext,
+		options: { emitTaskCreated?: boolean } = {}
+	): {
+		goal: SpaceGoal;
+		task: SpaceTask | null;
+		queued: boolean;
+	} {
 		const goal = this.requireGoal(goalId);
 		if (goal.status !== 'active') {
 			throw new Error(`Cannot trigger goal in '${goal.status}' status`);
@@ -222,7 +240,7 @@ export class SpaceGoalService {
 			...context,
 			sourceTaskId: context?.sourceTaskId ?? task.id,
 		});
-		this.emitTaskCreated(task);
+		if (options.emitTaskCreated !== false) this.emitTaskCreated(task);
 		return { goal: updatedGoal, task, queued: false };
 	}
 

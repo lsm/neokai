@@ -93,7 +93,13 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
 	});
 
 	messageHub.onRequest('spaceGoal.listEvents', async (data) => {
-		const params = data as { spaceId: string; goalId: string; limit?: number; before?: number };
+		const params = data as {
+			spaceId: string;
+			goalId: string;
+			limit?: number;
+			before?: number;
+			beforeId?: string;
+		};
 		await requireSpace(params.spaceId);
 		requireGoalInSpace(params.goalId, params.spaceId);
 		return { events: goalService.listGoalEvents(params.goalId, params) };
