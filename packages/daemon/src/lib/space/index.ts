@@ -37,6 +37,8 @@ export type { SpaceAgentNotificationServiceConfig } from './runtime/space-agent-
 export type { SessionFactory } from './runtime/types';
 export { TaskAgentManager } from './runtime/task-agent-manager';
 export type { TaskAgentManagerConfig } from './runtime/task-agent-manager';
+export { SpaceActorRegistryAdapter, SPACE_SYSTEM_ACTORS } from './actor-registry';
+export type { SpaceActorRegistryRepositories } from './actor-registry';
 
 export { selectWorkflow } from './runtime/workflow-selector';
 export type { WorkflowSelectionContext } from './runtime/workflow-selector';
