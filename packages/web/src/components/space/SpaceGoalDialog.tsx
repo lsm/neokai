@@ -60,6 +60,15 @@ function formatMetricValue(value: SpaceGoalMetrics[string]): string {
 	return String(value ?? '');
 }
 
+function isMetricScalar(value: unknown): value is SpaceGoalMetrics[string] {
+	return (
+		value === null ||
+		typeof value === 'string' ||
+		typeof value === 'number' ||
+		typeof value === 'boolean'
+	);
+}
+
 function parseMetrics(value: string): SpaceGoalMetrics {
 	const metrics: SpaceGoalMetrics = {};
 	for (const line of parseLines(value)) {
@@ -68,7 +77,8 @@ function parseMetrics(value: string): SpaceGoalMetrics {
 		if (!key) continue;
 		const rawValue = rest.join(':').trim();
 		try {
-			metrics[key] = JSON.parse(rawValue) as SpaceGoalMetrics[string];
+			const parsed = JSON.parse(rawValue) as unknown;
+			metrics[key] = isMetricScalar(parsed) ? parsed : rawValue;
 		} catch {
 			metrics[key] = rawValue;
 		}
