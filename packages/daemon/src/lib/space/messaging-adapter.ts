@@ -16,7 +16,7 @@ import type {
 import type { PendingAgentMessageRecord } from '../../storage/repositories/pending-agent-message-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import type { WorkflowNode } from '@neokai/shared';
+import type { WorkflowChannel, WorkflowNode } from '@neokai/shared';
 import { ChannelResolver } from './runtime/channel-resolver';
 import type { SpaceActorRegistryAdapter } from './actor-registry';
 
@@ -133,8 +133,14 @@ export class SpaceMessageResolver implements ActorResolver {
 			};
 		}
 
-		const nodeId = decodeURIComponent(address.nodeId);
-		const agentName = address.agentName ? decodeURIComponent(address.agentName) : undefined;
+		const workflow = this.workflowForRun(workflowRunId);
+		const nodeId = decodeAddressComponent(address.nodeId, targetRef);
+		if (!nodeId.ok) return { actors: [], reason: nodeId.reason };
+		const targetNodeId = workflowNodeId(workflow?.nodes ?? [], nodeId.value) ?? nodeId.value;
+		const agentName = address.agentName
+			? decodeAddressComponent(address.agentName, targetRef)
+			: undefined;
+		if (agentName && !agentName.ok) return { actors: [], reason: agentName.reason };
 		const workerActors = actors.filter(
 			(actor) =>
 				actor.kind === 'worker' &&
@@ -143,8 +149,8 @@ export class SpaceMessageResolver implements ActorResolver {
 		const matches = workerActors.filter((actor) => {
 			const parsed = parseWorkerActorId(actor.actorId);
 			if (!parsed) return false;
-			if (parsed.nodeId !== nodeId) return false;
-			return agentName ? parsed.agentName === agentName : true;
+			if (parsed.nodeId !== targetNodeId) return false;
+			return agentName ? parsed.agentName === agentName.value : true;
 		});
 		let routable = matches.filter(isRoutable);
 		if (!agentName && this.context.agentName) {
@@ -188,7 +194,17 @@ export class SpaceMessageResolver implements ActorResolver {
 		const targetNodeName = workflowNodeName(workflow.nodes, parsed.nodeId);
 		if (!fromNodeName || !targetNodeName) return false;
 		if (!workflow.channels || workflow.channels.length === 0) return false;
-		return new ChannelResolver(workflow.channels).canSend(fromNodeName, targetNodeName);
+		return canSendToWorkerTarget(
+			workflow.channels,
+			[fromNodeName, this.context.agentName],
+			[targetNodeName, parsed.agentName]
+		);
+	}
+
+	private workflowForRun(workflowRunId: string) {
+		const run = this.config.workflowRunRepo.getRun(workflowRunId);
+		if (!run || run.spaceId !== this.context.spaceId) return null;
+		return this.config.workflowRepo.getWorkflow(run.workflowId) ?? null;
 	}
 }
 
@@ -369,10 +385,47 @@ function actorRole(role: string): string {
 	return `actor-role:${encodeURIComponent(role)}`;
 }
 
+function workflowNodeId(nodes: WorkflowNode[], nodeRef: string): string | null {
+	const node = nodes.find((candidate) => candidate.id === nodeRef || candidate.name === nodeRef);
+	return node?.id ?? null;
+}
+
 function workflowNodeName(nodes: WorkflowNode[], nodeId: string | undefined): string | null {
 	if (!nodeId) return null;
 	const node = nodes.find((candidate) => candidate.id === nodeId || candidate.name === nodeId);
 	return node?.name ?? null;
+}
+
+function canSendToWorkerTarget(
+	channels: WorkflowChannel[],
+	fromRefs: Array<string | undefined>,
+	toRefs: Array<string | undefined>
+): boolean {
+	const resolver = new ChannelResolver(channels);
+	for (const from of uniqueStrings(fromRefs)) {
+		for (const to of uniqueStrings(toRefs)) {
+			if (resolver.canSend(from, to)) return true;
+		}
+	}
+	return false;
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+	return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function decodeAddressComponent(
+	component: string,
+	targetRef: string
+): { ok: true; value: string } | { ok: false; reason: string } {
+	try {
+		return { ok: true, value: decodeURIComponent(component) };
+	} catch (error) {
+		if (error instanceof URIError) {
+			return { ok: false, reason: `Invalid worker target escape in ${targetRef}` };
+		}
+		throw error;
+	}
 }
 
 function parseWorkerActorId(

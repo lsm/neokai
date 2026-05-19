@@ -226,14 +226,14 @@ describe('Space messaging adapter', () => {
 		);
 	});
 
-	it('filters shorthand worker target by context agent and permits explicit run targets from space context', async () => {
+	it('resolves worker node names, context agent shorthand, and explicit run targets', async () => {
 		const shorthandResolver = new SpaceMessageResolver(
 			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
 			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'reviewer' }
 		);
 		const shorthand = await shorthandResolver.resolveTargets({
 			...message,
-			targets: ['@worker:node-review'],
+			targets: ['@worker:Review'],
 		});
 		expect(shorthand.unresolved).toEqual([]);
 		expect(shorthand.resolved.map((target) => target.actor.actorId)).toEqual([
@@ -247,12 +247,54 @@ describe('Space messaging adapter', () => {
 		const explicit = await explicitResolver.resolveTargets({
 			...message,
 			workflowRunId: undefined,
-			targets: [`@worker:${runId}/node-review/reviewer`],
+			targets: [`@worker:${runId}/Review/reviewer`],
 		});
 		expect(explicit.unresolved).toEqual([]);
 		expect(explicit.resolved.map((target) => target.actor.actorId)).toEqual([
 			`worker:${encodeURIComponent(runId)}:node-review:reviewer`,
 		]);
+	});
+
+	it('permits worker routes declared with agent-name channel endpoints', async () => {
+		workflowRepo.updateWorkflow(workflowRunRepo.getRun(runId)!.workflowId, {
+			channels: [{ from: 'coder', to: 'reviewer' }],
+		});
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@worker:Review/reviewer'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor.actorId)).toEqual([
+			`worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+		]);
+	});
+
+	it('returns unresolved deliveries for malformed worker escapes', async () => {
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const facade = new SpaceDeliveryFacade({ resolver });
+		const result = await facade.routeMessage({
+			...message,
+			targets: ['@worker:%/reviewer', '@worker:Review/reviewer'],
+		});
+
+		expect(result.deliveries).toHaveLength(2);
+		expect(result.deliveries[0]).toMatchObject({
+			targetRef: '@worker:Review/reviewer',
+			state: 'queued',
+		});
+		expect(result.deliveries[1]).toMatchObject({
+			targetRef: '@worker:%/reviewer',
+			state: 'failed',
+			lastError: 'Invalid worker target escape in @worker:%/reviewer',
+		});
 	});
 
 	it('maps pending_agent_messages rows into message and delivery facade records', () => {
