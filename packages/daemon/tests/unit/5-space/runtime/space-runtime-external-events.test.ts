@@ -635,6 +635,32 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(event.id)?.state).toBe('failed');
 	});
 
+	test('evicts expired queued deliveries from memory during retry reschedule', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const staleEvents = Array.from({ length: 50 }, (_, index) =>
+			makeEvent({
+				id: `evt-stale-queued-${index}`,
+				dedupeKey: `dedupe-stale-queued-${index}`,
+			})
+		);
+		for (const event of staleEvents) {
+			await eventService.publish(event);
+		}
+		await runtime.stop();
+		const originalNow = Date.now;
+		Date.now = () => originalNow() + 300_001;
+		try {
+			runtime.start();
+		} finally {
+			Date.now = originalNow;
+		}
+		const queued = runtime as unknown as {
+			pendingExternalEventQueue: Map<string, Array<{ deliveryKey: string }>>;
+		};
+		expect([...queued.pendingExternalEventQueue.values()].flat()).toHaveLength(0);
+		expect(eventStore.listDeliveries(staleEvents[0]!.id)[0]!.failureReason).toBe('ttl_expired');
+	});
+
 	test('drops rehydrated pending deliveries using original event created time', async () => {
 		const { workflow, run, task } = await startRunWithSubscription();
 		const event = makeEvent({
@@ -896,6 +922,90 @@ describe('SpaceRuntime external event subscriptions', () => {
 		}
 	});
 
+	test('preserves original queue age when replaying queued digest backlog', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-digest-backlog-age',
+			startedAt: Date.now(),
+		});
+		await runtime.stop();
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async () => ({
+			ok: false,
+			error: 'temporary digest backlog failure',
+		}));
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+		const originalNow = Date.now;
+		const originalCreatedAt = originalNow() - 299_999;
+		Date.now = () => originalCreatedAt;
+		const events = Array.from({ length: 11 }, (_, index) =>
+			makeEvent({
+				id: `evt-digest-backlog-age-${index}`,
+				dedupeKey: `dedupe-digest-backlog-age-${index}`,
+			})
+		);
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		Date.now = () => originalCreatedAt + 300_000;
+		try {
+			runtime.flushPendingNodeQueue({
+				workflowRunId: run.id,
+				taskId: task.id,
+				nodeId: 'code',
+				agentName: 'coder',
+				sessionId: 'session-digest-backlog-age',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		} finally {
+			Date.now = originalNow;
+		}
+
+		const queuedAfterFailure = runtime as unknown as {
+			pendingExternalEventQueue: Map<string, Array<{ createdAt: number }>>;
+		};
+		expect(
+			[...queuedAfterFailure.pendingExternalEventQueue.values()]
+				.flat()
+				.some((item) => item.createdAt === originalCreatedAt)
+		).toBe(true);
+		const digestDelivery = eventStore.listDeliveries(events[10]!.id)[0]!;
+		expect(digestDelivery.state).toBe('pending');
+		expect(digestDelivery.failureReason).toBe(
+			'deliveryMode:defer; digest; temporary digest backlog failure'
+		);
+		Date.now = () => originalCreatedAt + 300_001;
+		try {
+			runtime.flushPendingNodeQueue({
+				workflowRunId: run.id,
+				taskId: task.id,
+				nodeId: 'code',
+				agentName: 'coder',
+				sessionId: 'session-digest-backlog-age',
+			});
+		} finally {
+			Date.now = originalNow;
+		}
+		const expiredDelivery = eventStore.listDeliveries(events[10]!.id)[0]!;
+		expect(expiredDelivery.state).toBe('failed');
+		expect(expiredDelivery.failureReason).toBe('ttl_expired');
+	});
+
 	test('preserves original queue age across transient retry requeues', async () => {
 		const { workflow, run, task } = await startRunWithSubscription();
 		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -947,6 +1057,66 @@ describe('SpaceRuntime external event subscriptions', () => {
 			Date.now = originalNow;
 		}
 
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('ttl_expired');
+	});
+
+	test('drops delivery that expires before scheduled retry dispatch', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-retry-dispatch-ttl',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-retry-dispatch-ttl');
+		await runtime.stop();
+		let attempt = 0;
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			attempt += 1;
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return attempt === 1
+				? { ok: false, error: 'temporary retry dispatch failure' }
+				: { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+		const event = makeEvent({
+			id: 'evt-retry-dispatch-ttl',
+			dedupeKey: 'dedupe-retry-dispatch-ttl',
+		});
+		await eventService.publish(event);
+		const queued = runtime as unknown as {
+			pendingExternalEventQueue: Map<string, Array<{ createdAt: number }>>;
+		};
+		const originalCreatedAt = [...queued.pendingExternalEventQueue.values()][0]![0]!.createdAt;
+		const originalNow = Date.now;
+		Date.now = () => originalCreatedAt + 300_001;
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 1100));
+		} finally {
+			Date.now = originalNow;
+		}
+
+		expect(injected).toHaveLength(1);
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
 		expect(delivery.state).toBe('failed');
 		expect(delivery.failureReason).toBe('ttl_expired');

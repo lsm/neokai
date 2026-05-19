@@ -874,7 +874,8 @@ export class SpaceRuntime {
 				targetWithExecution,
 				item.event,
 				item.deliveryKey,
-				item.deliveryMode
+				item.deliveryMode,
+				item.createdAt
 			);
 		}
 	}
@@ -951,7 +952,8 @@ export class SpaceRuntime {
 		target: SubscriptionTarget,
 		event: ExternalEventPublishedPayload,
 		deliveryKey: string,
-		deliveryMode: 'immediate' | 'defer'
+		deliveryMode: 'immediate' | 'defer',
+		createdAt = Date.now()
 	): Promise<void> {
 		const now = Date.now();
 		const rateLimitKey = this.buildRateLimitKey(target);
@@ -966,7 +968,7 @@ export class SpaceRuntime {
 			return;
 		}
 
-		state.pendingDigest.push({ target, event, deliveryKey, deliveryMode, createdAt: now });
+		state.pendingDigest.push({ target, event, deliveryKey, deliveryMode, createdAt });
 		if (!state.digestTimer) {
 			state.digestTimer = setTimeout(() => {
 				state.digestTimer = null;
@@ -1168,7 +1170,9 @@ export class SpaceRuntime {
 			return;
 		}
 		this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
-		this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason);
+		this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
+			createdAt,
+		});
 	}
 
 	private scheduleExternalEventRetry(
@@ -1177,7 +1181,7 @@ export class SpaceRuntime {
 		deliveryKey: string,
 		deliveryMode: 'immediate' | 'defer',
 		failureReason: string,
-		options: { preserveAttemptCount?: boolean } = {}
+		options: { preserveAttemptCount?: boolean; createdAt?: number } = {}
 	): void {
 		if (!target.sessionId || this.externalEventRetryTimers.has(deliveryKey)) return;
 		const currentAttempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
@@ -1203,7 +1207,19 @@ export class SpaceRuntime {
 			if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
 				this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
 					preserveAttemptCount: true,
+					createdAt: options.createdAt,
 				});
+				return;
+			}
+			const queued = this.getQueuedDelivery(target, deliveryKey);
+			const queuedItem = queued ?? {
+				event,
+				deliveryKey,
+				deliveryMode,
+				createdAt: options.createdAt ?? Date.now(),
+			};
+			if (this.isQueuedExternalEventExpired(queuedItem)) {
+				this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
 				return;
 			}
 			// Re-check run deliverability before dispatching — the run may have
@@ -1242,7 +1258,7 @@ export class SpaceRuntime {
 					item.deliveryKey,
 					item.deliveryMode,
 					`deliveryMode:${item.deliveryMode}; retry rescheduled after runtime restart`,
-					{ preserveAttemptCount: true }
+					{ preserveAttemptCount: true, createdAt: item.createdAt }
 				);
 			}
 		}
@@ -1265,7 +1281,10 @@ export class SpaceRuntime {
 	}
 
 	private clearQueuedDelivery(target: SubscriptionTarget, deliveryKey: string): void {
-		const key = this.buildQueueKey(target);
+		this.clearQueuedDeliveryByKey(this.buildQueueKey(target), deliveryKey);
+	}
+
+	private clearQueuedDeliveryByKey(key: string, deliveryKey: string): void {
 		const queue = this.pendingExternalEventQueue.get(key);
 		if (!queue) return;
 		const remaining = queue.filter((item) => item.deliveryKey !== deliveryKey);
@@ -1334,6 +1353,7 @@ export class SpaceRuntime {
 		});
 		this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
 		this.clearExternalEventRetry(item.deliveryKey);
+		this.clearQueuedDeliveryByKey(queueKey, item.deliveryKey);
 		log.warn(
 			`SpaceRuntime: dropped expired external event ${item.event.eventId} from pending queue ${queueKey}`
 		);
