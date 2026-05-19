@@ -32,6 +32,7 @@ import type {
 	TaskScheduleStatus,
 	TaskScheduleTriggerType,
 } from '@neokai/shared';
+import { parseAddress } from '../../../../../messaging/src/address';
 import { z } from 'zod';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
@@ -42,6 +43,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { formatAgentMessage } from '../agent-message-envelope';
+import { translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
@@ -118,6 +120,32 @@ function resolveNodeExecution(executions: NodeExecution[], selector: string): No
 		(exec) => normalizeAgentNameToken(exec.agentName) === targetName
 	);
 	return byName.at(-1) ?? null;
+}
+
+function resolveWorkerTargetExecution(
+	executions: NodeExecution[],
+	workflowRunId: string,
+	workflowNodeNameById: Map<string, string>,
+	target: string
+): NodeExecution | null {
+	const address = parseAddress(target);
+	if (address.kind !== 'worker' || !address.agentName) return null;
+	if (address.workflowRunId && address.workflowRunId !== workflowRunId) return null;
+	let nodeName: string;
+	let agentName: string;
+	try {
+		nodeName = decodeURIComponent(address.nodeId);
+		agentName = decodeURIComponent(address.agentName);
+	} catch {
+		return null;
+	}
+	const matches = executions.filter(
+		(exec) =>
+			normalizeAgentNameToken(exec.agentName) === normalizeAgentNameToken(agentName) &&
+			(workflowNodeNameById.get(exec.workflowNodeId) === nodeName ||
+				exec.workflowNodeId === nodeName)
+	);
+	return matches.at(-1) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -960,7 +988,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			task_id?: string;
 			task_number?: number;
 			message: string;
-			node_id: string;
+			node_id?: string;
+			target?: string;
 		}): Promise<ToolResult> {
 			if (!taskAgentManager) {
 				return jsonResult({
@@ -1002,29 +1031,81 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
-			// --- Path A: no node_id — target is required ---
-			if (!args.node_id) {
+			if (args.target === 'task-agent' || args.node_id === 'task-agent') {
 				return jsonResult({
 					success: false,
-					error: 'Target agent is required. Use node_id to specify a target agent.',
+					error: 'Target "task-agent" is no longer supported. Use a worker target or node_id.',
 				});
 			}
 
-			// --- Path B: node_id provided — target a specific workflow node ---
+			if (!args.node_id && !args.target) {
+				return jsonResult({
+					success: false,
+					error: 'Target agent is required. Use node_id or target to specify a recipient.',
+				});
+			}
 			if (!task.workflowRunId) {
 				return jsonResult({
 					success: false,
-					error: `Task ${task.id} has no workflow run — cannot target node_id.`,
+					error: `Task ${task.id} has no workflow run — cannot target workflow workers.`,
 				});
 			}
 			const allExecutions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-			const resolved = resolveNodeExecution(allExecutions, args.node_id);
+			const run = workflowRunRepo.getRun(task.workflowRunId);
+			const workflow = run ? (workflowManager.getWorkflow(run.workflowId) ?? null) : null;
+			const workflowNodeNameById = new Map(
+				(workflow?.nodes ?? []).map((node) => [node.id, node.name] as const)
+			);
+			let resolved: NodeExecution | null = null;
+			let routedTarget = args.node_id ?? null;
+
+			if (args.target) {
+				let genericTarget: string;
+				try {
+					genericTarget = translateTaskMessageTarget(
+						{ target: args.target, nodeId: args.node_id },
+						{ workflowRunId: task.workflowRunId, nodeExecutions: allExecutions, workflow }
+					);
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+				routedTarget = genericTarget;
+				const address = parseAddress(genericTarget);
+				if (address.kind === 'worker') {
+					resolved = resolveWorkerTargetExecution(
+						allExecutions,
+						task.workflowRunId,
+						workflowNodeNameById,
+						genericTarget
+					);
+				} else if (address.kind === 'session') {
+					resolved =
+						allExecutions.find((exec) => exec.agentSessionId === address.sessionId) ?? null;
+				} else {
+					return jsonResult({
+						success: false,
+						error: `Generic target ${genericTarget} is not routable from this tool. Use @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`,
+					});
+				}
+			} else if (args.node_id) {
+				resolved = resolveNodeExecution(allExecutions, args.node_id);
+			}
+
+			if (!routedTarget) {
+				return jsonResult({
+					success: false,
+					error: 'Target agent is required. Use node_id or target to specify a recipient.',
+				});
+			}
 			if (!resolved) {
 				return jsonResult({
 					success: false,
 					error:
-						`Node not found for task ${task.id}: "${args.node_id}". ` +
-						`Expected an execution UUID or an agent name present in this workflow run.`,
+						`Node not found for task ${task.id}: "${routedTarget}". ` +
+						`Expected an execution UUID, agent name, @worker target, or task agent @session target.`,
 				});
 			}
 
@@ -2039,8 +2120,15 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 				message: z.string().describe('Message to send to the target node agent'),
 				node_id: z
 					.string()
+					.optional()
 					.describe(
-						'Required workflow node selector. Accepts a node_execution UUID or an agent name (e.g. "coder", "reviewer"). The message is routed to that node\'s sub-session; the node is activated automatically if it has no live session.'
+						'Workflow node selector. Accepts a node_execution UUID or an agent name (e.g. "coder", "reviewer"). The message is routed to that node\'s sub-session; the node is activated automatically if it has no live session.'
+					),
+				target: z
+					.string()
+					.optional()
+					.describe(
+						'Explicit generic target such as @coordinator, @role:task-manager, @session:<id>, or @worker:<node>/<agent>. Takes precedence over node_id when supported.'
 					),
 			},
 			(args) => handlers.send_message_to_task(args)

@@ -287,6 +287,153 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			).rejects.toThrow('Task not found: task-1');
 		});
 
+		describe('generic targets', () => {
+			const mockTaskWithWorkflowRun: SpaceTask = {
+				...mockTaskWithSession,
+				workflowRunId: 'run-abc-123',
+			};
+
+			function setupGenericTarget(
+				nodeExecAgents: Array<{
+					id?: string;
+					workflowNodeId?: string;
+					agentName: string;
+					agentSessionId: string | null;
+					status?: string;
+				}>
+			) {
+				const mh = createMockMessageHub();
+				hub = mh.hub;
+				handlers = mh.handlers;
+				const injectSubSession = mock(async () => {});
+				taskAgentManager = {
+					...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+					injectSubSessionMessage: injectSubSession,
+				};
+				db = createMockDatabase(mockTaskWithWorkflowRun);
+				internalEventBus = {
+					publish: mock(async () => ({ delivered: 0, failures: [] })),
+					publishAsync: mock(() => {}),
+				} as unknown as InternalEventBus<DaemonInternalEventMap>;
+				setupSpaceTaskMessageHandlers(
+					hub,
+					taskAgentManager,
+					db,
+					internalEventBus,
+					makeNodeExecutionRepo(nodeExecAgents)
+				);
+				return { injectSubSession };
+			}
+
+			it('routes @session targets by live session id', async () => {
+				const { injectSubSession } = setupGenericTarget([
+					{
+						id: 'exec-reviewer',
+						workflowNodeId: 'node-review',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-1',
+					},
+				]);
+
+				await call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: 'direct to session',
+					target: { kind: 'generic', target: '@session:session-reviewer-1' },
+				});
+
+				expect(injectSubSession).toHaveBeenCalledWith(
+					'session-reviewer-1',
+					'direct to session',
+					false,
+					undefined
+				);
+			});
+
+			it('routes @worker targets by exact node id only', async () => {
+				const { injectSubSession } = setupGenericTarget([
+					{
+						id: 'exec-reviewer-a',
+						workflowNodeId: 'node-review-a',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-a',
+					},
+					{
+						id: 'exec-reviewer-b',
+						workflowNodeId: 'node-review-b',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-b',
+					},
+				]);
+
+				await call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: 'direct to worker',
+					target: { kind: 'generic', target: '@worker:run-abc-123/node-review-a/Reviewer' },
+				});
+
+				expect(injectSubSession).toHaveBeenCalledWith(
+					'session-reviewer-a',
+					'direct to worker',
+					false,
+					undefined
+				);
+				expect(injectSubSession).not.toHaveBeenCalledWith(
+					'session-reviewer-b',
+					'direct to worker',
+					false,
+					undefined
+				);
+			});
+
+			it('rejects partial node-name matches for @worker targets', async () => {
+				setupGenericTarget([
+					{
+						id: 'exec-reviewer-a',
+						workflowNodeId: 'node-review-a',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-a',
+					},
+					{
+						id: 'exec-reviewer-b',
+						workflowNodeId: 'node-review-b',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-b',
+					},
+				]);
+
+				await expect(
+					call('space.task.sendMessage', {
+						spaceId: 'space-1',
+						taskId: 'task-1',
+						message: 'ambiguous worker',
+						target: { kind: 'generic', target: '@worker:run-abc-123/review/Reviewer' },
+					})
+				).rejects.toThrow('Workflow worker not found');
+			});
+
+			it('rejects cross-run @worker targets', async () => {
+				setupGenericTarget([
+					{
+						id: 'exec-reviewer',
+						workflowNodeId: 'node-review',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-1',
+					},
+				]);
+
+				await expect(
+					call('space.task.sendMessage', {
+						spaceId: 'space-1',
+						taskId: 'task-1',
+						message: 'wrong run',
+						target: { kind: 'generic', target: '@worker:other-run/node-review/Reviewer' },
+					})
+				).rejects.toThrow('other-run');
+			});
+		});
+
 		// ─── Image attachment routing ─────────────────────────────────────────────
 		// Regression coverage for the bug where the space thread / slide-out chat
 		// silently dropped image uploads. The RPC handler must forward `images`

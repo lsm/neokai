@@ -92,6 +92,8 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
+import { parseAddress } from '../../../../../messaging/src/address';
+import { translateLegacyNodeTargets } from '../messaging-adapter';
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -240,6 +242,8 @@ export interface NodeAgentToolsConfig {
 	 * archive tasks without the broader space-agent-tools namespace.
 	 */
 	onArchiveTask?: (args: ArchiveTaskInput) => Promise<ToolResult>;
+	/** Optional lookup callback for symmetric reply routing to Space sessions. */
+	replyRoutingLookup?: (agentName?: string | null) => string | null;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * When provided, agent gate writes via send_message are blocked when
@@ -323,6 +327,18 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		}
 	}
 	const resolveNodeName = (slotOrNode: string) => slotToNode.get(slotOrNode) ?? slotOrNode;
+	const genericWorkerTargetNodes = (targetRef: string): string[] => {
+		if (!targetRef.startsWith('@worker:')) return [];
+		try {
+			const address = parseAddress(targetRef);
+			if (address.kind !== 'worker') return [];
+			const nodeRef = decodeURIComponent(address.nodeId);
+			return [nodeRef, resolveNodeName(nodeRef)];
+		} catch {
+			return [];
+		}
+	};
+	const uniqueTargetRefs = (values: string[]): string[] => [...new Set(values)];
 
 	const agentNameAliases = new Set(
 		[myAgentName, myNodeName, ...(myAgentNameAliases ?? [])]
@@ -620,6 +636,30 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 */
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message, data } = args;
+			let translatedTargets: string[] = [];
+			if (workflow) {
+				try {
+					translatedTargets = translateLegacyNodeTargets(target, {
+						spaceId,
+						workflowRunId,
+						workflowNodeId,
+						agentName: myAgentName,
+						workflow,
+						actors: nodeExecutionRepo.listByWorkflowRun(workflowRunId).map((execution) => ({
+							actorId: `worker:${[workflowRunId, execution.workflowNodeId, execution.agentName].map(encodeURIComponent).join(':')}`,
+							kind: 'worker' as const,
+							spaceId,
+							status: execution.agentSessionId ? ('active' as const) : ('inactive' as const),
+						})),
+						replyRoutingLookup: config.replyRoutingLookup,
+					});
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			}
 
 			// Auto gate-write: if data is provided and the outbound channel to this
 			// target is gated, merge the data into the gate before delivery.
@@ -627,6 +667,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			let gateWriteResult: { gateId: string; gateOpen: boolean } | null = null;
 			if (data && workflow) {
 				const targetName = Array.isArray(target) ? null : target;
+				const routedTargetNames = uniqueTargetRefs([
+					...(targetName ? [targetName] : []),
+					...translatedTargets,
+					...(targetName ? genericWorkerTargetNodes(targetName) : []),
+				]);
 				if (
 					targetName &&
 					targetName !== '*' &&
@@ -641,13 +686,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						if (!ch.gateId) return false;
 						if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
 						const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-						const resolvedTarget = resolveNodeName(targetName);
+						const candidateTargets = uniqueTargetRefs([
+							...routedTargetNames,
+							...routedTargetNames.map(resolveNodeName),
+						]);
 						return tos.some(
-							(to) =>
-								to === resolvedTarget ||
-								to === targetName ||
-								to === myNodeName ||
-								to === myAgentName
+							(to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
 						);
 					});
 
@@ -805,10 +849,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				});
 			}
 
+			const routedTarget =
+				translatedTargets.length > 0
+					? translatedTargets.length === 1
+						? translatedTargets[0]
+						: translatedTargets
+					: target;
 			const result = await agentMessageRouter.deliverMessage({
 				fromAgentName: myAgentName,
 				fromSessionId: mySessionId,
-				target,
+				target: routedTarget,
 				message,
 				data,
 			});

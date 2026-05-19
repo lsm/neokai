@@ -5,6 +5,8 @@ import {
 	SpaceMessageResolver,
 	pendingMessageToDeliveryRecords,
 	pendingMessageToMessageRecord,
+	translateLegacyNodeTargets,
+	translateTaskMessageTarget,
 } from '../../../src/lib/space/messaging-adapter';
 import { SpaceActorRegistryAdapter } from '../../../src/lib/space/actor-registry';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
@@ -340,6 +342,76 @@ describe('Space messaging adapter', () => {
 		});
 		expect(result.deliveries[0].deliveredAt).toBeUndefined();
 		expect(result.deliveries[0].deliveredSessionId).toBeUndefined();
+	});
+
+	it('translates legacy node-agent targets to generic worker targets', () => {
+		const targets = translateLegacyNodeTargets(['Review', 'reviewer', 'space-agent', '*'], {
+			spaceId,
+			workflowRunId: runId,
+			workflowNodeId: 'node-coding',
+			agentName: 'coder',
+			workflow: workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId),
+		});
+
+		expect(targets).toEqual([
+			`@worker:${encodeURIComponent(runId)}/Review/reviewer`,
+			`@worker:${encodeURIComponent(runId)}/Review/observer`,
+			`@worker:${encodeURIComponent(runId)}/QA/reviewer`,
+			'@coordinator',
+			`@worker:${encodeURIComponent(runId)}/Deploy/deployer`,
+		]);
+		expect(() =>
+			translateLegacyNodeTargets('task-agent', {
+				spaceId,
+				workflowRunId: runId,
+				workflowNodeId: 'node-coding',
+				agentName: 'coder',
+				workflow: workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId),
+			})
+		).toThrow('task-agent');
+		expect(() =>
+			translateLegacyNodeTargets(['reviewer', 'ghost'], {
+				spaceId,
+				workflowRunId: runId,
+				workflowNodeId: 'node-coding',
+				agentName: 'coder',
+				workflow: workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId),
+			})
+		).toThrow('Unknown target "ghost"');
+	});
+
+	it('translates task message node_id selectors to generic worker targets', () => {
+		const workflow = workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId);
+		const executions = nodeExecutionRepo.listByWorkflowRun(runId);
+		const reviewExecution = executions.find(
+			(execution) =>
+				execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+		)!;
+
+		expect(
+			translateTaskMessageTarget(
+				{ nodeId: reviewExecution.id },
+				{ workflowRunId: runId, nodeExecutions: executions, workflow }
+			)
+		).toBe(`@worker:${encodeURIComponent(runId)}/Review/reviewer`);
+		expect(
+			translateTaskMessageTarget(
+				{ nodeId: 'observer' },
+				{ workflowRunId: runId, nodeExecutions: executions, workflow }
+			)
+		).toBe(`@worker:${encodeURIComponent(runId)}/Review/observer`);
+		expect(
+			translateTaskMessageTarget(
+				{ target: '@session:abc', nodeId: reviewExecution.id },
+				{ workflowRunId: runId, nodeExecutions: executions, workflow }
+			)
+		).toBe('@session:abc');
+		expect(() =>
+			translateTaskMessageTarget(
+				{ target: 'task-agent' },
+				{ workflowRunId: runId, nodeExecutions: executions, workflow }
+			)
+		).toThrow('task-agent');
 	});
 
 	it('resolves worker node names, context agent shorthand, and explicit run targets', async () => {

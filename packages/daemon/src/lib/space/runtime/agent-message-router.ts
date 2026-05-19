@@ -16,6 +16,7 @@
  * is used by node-agent-tools to deliver messages between live sessions at runtime.
  */
 
+import { parseAddress } from '../../../../../messaging/src/address';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { WorkflowChannel } from '@neokai/shared';
@@ -78,6 +79,8 @@ export interface AgentMessageRouterConfig {
 	activateTargetSession?: (
 		agentName: string
 	) => Promise<Array<{ agentName: string; sessionId: string }>>;
+	/** Optional workflow-node id → node-name map for generic @worker target isolation. */
+	workflowNodeNameById?: Record<string, string>;
 	/**
 	 * Optional callback fired after a message is persisted to `pendingMessageRepo`
 	 * for a declared-but-inactive target. This is now only a diagnostic/backstop
@@ -152,6 +155,310 @@ const log = new Logger('agent-message-router');
 export class AgentMessageRouter {
 	constructor(private readonly config: AgentMessageRouterConfig) {}
 
+	private async deliverGenericMessage(params: {
+		fromAgentName: string;
+		fromSessionId: string;
+		targets: string[];
+		message: string;
+		data?: Record<string, unknown>;
+		slotToNode: Map<string, string>;
+	}): Promise<AgentMessageResult> {
+		const { fromAgentName, fromSessionId, targets, message, data, slotToNode } = params;
+		const {
+			nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels,
+			messageInjector,
+			channelRouter,
+			spaceAgentInjector,
+			pendingMessageRepo,
+			spaceId,
+			taskId,
+			taskNumber,
+			activateTargetSession,
+			onMessageQueued,
+			replyRoutingLookup,
+			workflowNodeNameById,
+		} = this.config;
+		const resolver = new ChannelResolver(workflowChannels);
+		const fromNodeName = slotToNode.get(fromAgentName) ?? fromAgentName;
+		const selfExecution = nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.find((e) => e.agentName === fromAgentName && e.agentSessionId === fromSessionId);
+		const singleNodeByAgentName = new Map<string, string>();
+		for (const [nodeName, slots] of this.config.nodeGroups
+			? Object.entries(this.config.nodeGroups)
+			: []) {
+			for (const slot of slots) {
+				if (singleNodeByAgentName.has(slot)) {
+					singleNodeByAgentName.delete(slot);
+				} else {
+					singleNodeByAgentName.set(slot, nodeName);
+				}
+			}
+		}
+		const hasNodeNameMap = workflowNodeNameById && Object.keys(workflowNodeNameById).length > 0;
+		const scopedAgentName = (nodeName: string, agentName: string) => `${nodeName}/${agentName}`;
+		const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+		let peers: Array<{
+			sessionId: string;
+			agentName: string;
+			workflowNodeId?: string;
+			nodeName?: string;
+		}> = allExecutions
+			.filter((e) => e.agentSessionId && e.agentSessionId !== fromSessionId)
+			.map((e) => ({
+				sessionId: e.agentSessionId!,
+				agentName: e.agentName,
+				workflowNodeId: e.workflowNodeId,
+				nodeName:
+					workflowNodeNameById?.[e.workflowNodeId] ??
+					(e.workflowNodeId === selfExecution?.workflowNodeId ? fromNodeName : undefined) ??
+					singleNodeByAgentName.get(e.agentName) ??
+					e.workflowNodeId,
+			}));
+		const delivered: Array<{ agentName: string; sessionId: string }> = [];
+		const queued: Array<{ agentName: string; messageId: string }> = [];
+		const notFound: string[] = [];
+		const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
+		const dataAppendix =
+			data && Object.keys(data).length > 0
+				? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
+				: '';
+
+		for (const target of targets) {
+			const address = parseAddress(target);
+			if (address.kind === 'handle' && address.handle === 'coordinator') {
+				if (!spaceAgentInjector || !spaceId) {
+					notFound.push(target);
+					continue;
+				}
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'space-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
+				try {
+					await spaceAgentInjector(spaceId, envelopedMessage, null);
+					delivered.push({ agentName: 'space-agent', sessionId: `space:chat:${spaceId}` });
+				} catch (err) {
+					failed.push({
+						agentName: 'space-agent',
+						sessionId: `space:chat:${spaceId}`,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+				continue;
+			}
+			if (address.kind === 'session') {
+				if (!spaceAgentInjector || !spaceId) {
+					notFound.push(target);
+					continue;
+				}
+				const replyTo = replyRoutingLookup?.(fromAgentName);
+				if (!replyTo || address.sessionId !== replyTo) {
+					return {
+						success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+						delivered,
+						failed,
+						reason: `Session target ${target} is not an authorized reply route for '${fromAgentName}'.`,
+						unauthorizedAgentNames: [target],
+						queued: queued.length > 0 ? queued : undefined,
+						notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+					};
+				}
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'space-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
+				try {
+					await spaceAgentInjector(spaceId, envelopedMessage, address.sessionId);
+					delivered.push({ agentName: 'space-agent', sessionId: address.sessionId });
+				} catch (err) {
+					failed.push({
+						agentName: 'space-agent',
+						sessionId: address.sessionId,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+				continue;
+			}
+			if (address.kind !== 'worker') {
+				return {
+					success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+					delivered,
+					failed,
+					reason: `Generic target ${target} is not supported by node-agent send_message. Use @coordinator, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
+					queued: queued.length > 0 ? queued : undefined,
+					notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+				};
+			}
+			const runId = address.workflowRunId ?? workflowRunId;
+			if (runId !== workflowRunId) {
+				notFound.push(target);
+				continue;
+			}
+			let nodeName: string;
+			let agentName: string | null;
+			try {
+				nodeName = decodeURIComponent(address.nodeId);
+				agentName = address.agentName ? decodeURIComponent(address.agentName) : null;
+			} catch (err) {
+				return {
+					success: false,
+					delivered: [],
+					failed: [],
+					reason: `Invalid worker target ${target}: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+			if (!agentName) {
+				notFound.push(target);
+				continue;
+			}
+			const permittedChannelTarget = resolver.canSend(fromNodeName, nodeName)
+				? nodeName
+				: resolver.canSend(fromNodeName, agentName)
+					? agentName
+					: null;
+			if (!permittedChannelTarget) {
+				return {
+					success: false,
+					delivered: [],
+					failed: [],
+					reason: `Channel topology does not permit '${fromAgentName}' to send to: ${target}.`,
+					unauthorizedAgentNames: [target],
+					permittedTargets: resolver.getPermittedTargets(fromNodeName),
+				};
+			}
+			try {
+				await channelRouter?.deliverMessage(
+					workflowRunId,
+					fromAgentName,
+					permittedChannelTarget,
+					message
+				);
+			} catch (err) {
+				return {
+					success: false,
+					delivered: [],
+					failed: [],
+					reason: err instanceof Error ? err.message : String(err),
+				};
+			}
+			const matchesTargetNode = (peer: { agentName: string; nodeName?: string }) =>
+				peer.agentName === agentName && (!hasNodeNameMap || peer.nodeName === nodeName);
+			if (!peers.some(matchesTargetNode) && activateTargetSession) {
+				try {
+					const activated = await activateTargetSession(agentName);
+					const refreshed = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+					const hydrated = activated.map((session) => {
+						const execution = refreshed.find(
+							(e) => e.agentName === session.agentName && e.agentSessionId === session.sessionId
+						);
+						return {
+							...session,
+							workflowNodeId: execution?.workflowNodeId,
+							nodeName: execution
+								? (workflowNodeNameById?.[execution.workflowNodeId] ??
+									singleNodeByAgentName.get(execution.agentName) ??
+									execution.workflowNodeId)
+								: (singleNodeByAgentName.get(session.agentName) ??
+									slotToNode.get(session.agentName)),
+						};
+					});
+					peers = [...peers, ...hydrated].filter((peer) => peer.sessionId !== fromSessionId);
+				} catch (err) {
+					log.warn(
+						`[AgentMessageRouter] failed to activate generic target "${agentName}": ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+			}
+			const sessions = peers.filter(matchesTargetNode);
+			if (sessions.length === 0) {
+				if (pendingMessageRepo && spaceId) {
+					const rawMessage = formatAgentMessage({
+						fromLevel: 'node-agent',
+						fromAgentName,
+						toLevel: 'node-agent',
+						body: `${message}${dataAppendix}`,
+						taskId,
+						taskNumber,
+						nodeId: fromAgentName,
+					});
+					const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
+					const { record, deduped } = pendingMessageRepo.enqueue({
+						workflowRunId,
+						spaceId,
+						taskId: taskId ?? null,
+						sourceAgentName: fromAgentName,
+						targetKind: 'node_agent',
+						targetAgentName: queueTargetName,
+						message: rawMessage,
+						idempotencyKey: JSON.stringify([fromSessionId, target, rawMessage]),
+						ttlMs: 60_000,
+						maxAttempts: 3,
+					});
+					queued.push({ agentName: queueTargetName, messageId: record.id });
+					if (!deduped) onMessageQueued?.(queueTargetName);
+				}
+				notFound.push(agentName);
+				continue;
+			}
+			for (const session of sessions) {
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'node-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
+				try {
+					await messageInjector(session.sessionId, envelopedMessage);
+					delivered.push(session);
+				} catch (err) {
+					failed.push({ ...session, error: err instanceof Error ? err.message : String(err) });
+				}
+			}
+		}
+
+		if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
+			return {
+				success: false,
+				delivered: [],
+				failed: [],
+				reason: `Could not deliver message to target agent(s): ${notFound.join(', ')}. The target is declared but no live session received the message.`,
+				queued: queued.length > 0 ? queued : undefined,
+				notFoundAgentNames: notFound,
+			};
+		}
+		if (delivered.length === 0 && queued.length === 0 && failed.length > 0) {
+			return {
+				success: false,
+				delivered,
+				failed,
+				notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+			};
+		}
+		return {
+			success: failed.length > 0 ? 'partial' : true,
+			delivered,
+			failed,
+			queued: queued.length > 0 ? queued : undefined,
+			notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+		};
+	}
+
 	/**
 	 * Deliver a message to the specified target.
 	 *
@@ -200,6 +507,16 @@ export class AgentMessageRouter {
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
 		const wantsSpaceAgent = target !== '*' && requestedTargets.includes('space-agent');
+		if (requestedTargets.length > 0 && requestedTargets.every(isGenericAddress)) {
+			return this.deliverGenericMessage({
+				fromAgentName,
+				fromSessionId,
+				targets: requestedTargets,
+				message,
+				data,
+				slotToNode,
+			});
+		}
 
 		// Channel topology required except for built-in inter-level targets.
 		if (resolver.isEmpty() && !(wantsSpaceAgent && spaceAgentInjector && spaceId)) {
@@ -611,5 +928,14 @@ export class AgentMessageRouter {
 			queued: queued.length > 0 ? queued : undefined,
 			notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 		};
+	}
+}
+
+function isGenericAddress(target: string): boolean {
+	try {
+		parseAddress(target);
+		return true;
+	} catch {
+		return false;
 	}
 }

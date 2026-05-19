@@ -1123,9 +1123,18 @@ export class TaskAgentManager {
 		// Expire stale rows first so we don't deliver messages that have exceeded their TTL.
 		repo.expireStale(workflowRunId);
 
-		const pending = repo
-			.listPendingForTarget(workflowRunId, targetAgentName)
-			.filter((row) => row.targetKind === 'node_agent');
+		const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+		const workflowNodeName = execution
+			? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
+			: null;
+		const queueTargetNames = [
+			targetAgentName,
+			...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
+		];
+		const pending = queueTargetNames
+			.flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName))
+			.filter((row) => row.targetKind === 'node_agent')
+			.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 		if (pending.length === 0) return;
 
 		log.info(
@@ -2348,6 +2357,13 @@ export class TaskAgentManager {
 			.replace(/^-+|-+$/g, '');
 		if (kebab) variants.add(kebab);
 		return [...variants];
+	}
+
+	private workflowNodeNameForRun(workflowRunId: string, workflowNodeId: string): string | null {
+		const run = this.config.workflowRunRepo.getRun(workflowRunId);
+		if (!run?.workflowId) return null;
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		return workflow?.nodes.find((node) => node.id === workflowNodeId)?.name ?? null;
 	}
 
 	private buildAgentNameAliasesForExecution(
@@ -3613,6 +3629,9 @@ export class TaskAgentManager {
 			// Wire up the pending-message queue so node agents can queue messages for
 			// peers that haven't spawned yet (declared but inactive). The queue is
 			// drained by flushPendingMessagesForTarget() when the target session activates.
+			workflowNodeNameById: Object.fromEntries(
+				(workflow?.nodes ?? []).map((node) => [node.id, node.name])
+			),
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceId,
 			taskId,
@@ -3854,6 +3873,10 @@ export class TaskAgentManager {
 				return s?.autonomyLevel ?? 1;
 			},
 			onRestoreNodeAgent,
+			replyRoutingLookup: (fromAgentName) => {
+				const registry = this.config.replyRoutingRegistry;
+				return registry ? registry.get(taskId, fromAgentName) : null;
+			},
 		});
 	}
 
