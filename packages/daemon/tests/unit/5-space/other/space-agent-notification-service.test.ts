@@ -232,7 +232,7 @@ describe('SpaceAgentNotificationService', () => {
 	});
 
 	describe('space.workflowRun.completed event', () => {
-		it('formats a completed run', async () => {
+		it('does not inject routine workflow completion into space agent chat', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.workflowRun.completed', {
 				sessionId: 'global',
@@ -243,50 +243,7 @@ describe('SpaceAgentNotificationService', () => {
 				timestamp: TIMESTAMP,
 			});
 
-			const { message } = factory.calls[0];
-			expect(message).toContain('[TASK_EVENT] workflow_run_completed');
-			expect(message).toContain('completed successfully');
-			expect(message).toContain('PR #42 merged.');
-
-			const json = extractJson(message);
-			expect(json.status).toBe('done');
-			expect(json.summary).toBe('All steps finished. PR #42 merged.');
-			expect(json.autonomyLevel).toBe(1);
-		});
-
-		it('formats a cancelled run', async () => {
-			const { factory, bus } = makeService();
-			await bus.publish('space.workflowRun.completed', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				runId: 'run-2',
-				status: 'cancelled',
-				timestamp: TIMESTAMP,
-			});
-
-			const { message } = factory.calls[0];
-			expect(message).toContain('was cancelled');
-
-			const json = extractJson(message);
-			expect(json.status).toBe('cancelled');
-			expect(json.summary).toBeUndefined();
-		});
-
-		it('formats a blocked run', async () => {
-			const { factory, bus } = makeService();
-			await bus.publish('space.workflowRun.completed', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				runId: 'run-3',
-				status: 'blocked',
-				timestamp: TIMESTAMP,
-			});
-
-			const { message } = factory.calls[0];
-			expect(message).toContain('blocked');
-
-			const json = extractJson(message);
-			expect(json.status).toBe('blocked');
+			expect(factory.calls).toHaveLength(0);
 		});
 	});
 
