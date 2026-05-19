@@ -119,7 +119,8 @@ export class SpaceMessageResolver implements ActorResolver {
 					),
 					...this.declaredRoleActors(
 						message.workflowRunId ?? this.context.workflowRunId,
-						address.role
+						address.role,
+						actors
 					),
 				]);
 				const active = holders.filter((actor) => actor.status === 'active');
@@ -183,12 +184,19 @@ export class SpaceMessageResolver implements ActorResolver {
 			return agentName ? parsed.agentName === agentName.value : true;
 		});
 		const declaredAgentName = this.declaredAgentName(workflow, targetNodeId, agentName?.value);
+		const declaredAgentNames = this.declaredAgentNames(workflow, targetNodeId);
 		if (declaredAgentName) {
 			const declared = this.declaredWorkerActor(workflowRunId, targetNodeId, declaredAgentName);
 			const hasDeclared = matches.some((actor) => actor.actorId === declared?.actorId);
 			if (declared && !hasDeclared) matches.push(declared);
 		}
 		let routable = matches.filter(isRoutable);
+		if (!agentName && !this.context.agentName && declaredAgentNames.length > 1) {
+			return {
+				actors: [],
+				reason: `Worker target ${targetRef} is ambiguous; specify @worker:<node>/<agent>`,
+			};
+		}
 		if (!agentName && this.context.agentName) {
 			const contextMatches = routable.filter(
 				(actor) => parseWorkerActorId(actor.actorId)?.agentName === this.context.agentName
@@ -254,14 +262,22 @@ export class SpaceMessageResolver implements ActorResolver {
 		);
 	}
 
-	private declaredRoleActors(workflowRunId: string | undefined, role: string): ActorRef[] {
+	private declaredRoleActors(
+		workflowRunId: string | undefined,
+		role: string,
+		actors: ActorRef[]
+	): ActorRef[] {
 		if (!workflowRunId) return [];
 		const workflow = this.workflowForRun(workflowRunId);
 		if (!workflow) return [];
 		return workflow.nodes.flatMap((node) =>
 			node.agents
 				.filter((agent) => agent.name === role)
-				.map((agent) => this.declaredWorkerActor(workflowRunId, node.id, agent.name))
+				.map((agent) => {
+					const actorId = workerActorId(workflowRunId, node.id, agent.name);
+					if (actors.some((actor) => actor.actorId === actorId)) return null;
+					return this.declaredWorkerActor(workflowRunId, node.id, agent.name);
+				})
 				.filter((actor): actor is ActorRef => Boolean(actor))
 		);
 	}
@@ -290,20 +306,19 @@ export class SpaceMessageResolver implements ActorResolver {
 		nodeId: string,
 		explicitAgentName: string | undefined
 	): string | undefined {
-		const node = workflow?.nodes.find((candidate) => candidate.id === nodeId);
-		if (!node) return explicitAgentName;
-		if (explicitAgentName) {
-			return node.agents.some((agent) => agent.name === explicitAgentName)
-				? explicitAgentName
-				: undefined;
-		}
-		if (
-			this.context.agentName &&
-			node.agents.some((agent) => agent.name === this.context.agentName)
-		) {
+		const agentNames = this.declaredAgentNames(workflow, nodeId);
+		if (agentNames.length === 0) return explicitAgentName;
+		if (explicitAgentName)
+			return agentNames.includes(explicitAgentName) ? explicitAgentName : undefined;
+		if (this.context.agentName && agentNames.includes(this.context.agentName)) {
 			return this.context.agentName;
 		}
-		return node.agents.length === 1 ? node.agents[0].name : undefined;
+		return agentNames.length === 1 ? agentNames[0] : undefined;
+	}
+
+	private declaredAgentNames(workflow: SpaceWorkflow | null, nodeId: string): string[] {
+		const node = workflow?.nodes.find((candidate) => candidate.id === nodeId);
+		return node?.agents.map((agent) => agent.name) ?? [];
 	}
 
 	private workflowForRun(workflowRunId: string) {
@@ -376,11 +391,12 @@ export function pendingMessageToMessageRecord(
 
 export function pendingMessageToDeliveryRecords(
 	row: PendingAgentMessageRecord,
-	actors: ActorRef[]
+	actors: ActorRef[],
+	workflow?: SpaceWorkflow | null
 ): DeliveryRecord[] {
 	const messageId = `msg_legacy_${row.id}`;
 	const state = pendingStatusToDeliveryState(row.status);
-	const targetActors = legacyTargetActors(row, actors);
+	const targetActors = legacyTargetActors(row, actors, workflow);
 	if (targetActors.length === 0) {
 		return [createLegacyDelivery(row, messageId, state)];
 	}
@@ -448,7 +464,11 @@ function createLegacyDelivery(
 	};
 }
 
-function legacyTargetActors(row: PendingAgentMessageRecord, actors: ActorRef[]): ActorRef[] {
+function legacyTargetActors(
+	row: PendingAgentMessageRecord,
+	actors: ActorRef[],
+	workflow?: SpaceWorkflow | null
+): ActorRef[] {
 	if (row.targetKind === 'space_agent') {
 		return actors.filter(
 			(actor) =>
@@ -461,10 +481,37 @@ function legacyTargetActors(row: PendingAgentMessageRecord, actors: ActorRef[]):
 		const parsed = parseWorkerActorId(actor.actorId);
 		return parsed?.workflowRunId === row.workflowRunId && parsed.agentName === row.targetAgentName;
 	});
+	if (row.status === 'pending') {
+		return stableActors([...matches, ...declaredLegacyTargetActors(row, actors, workflow)]);
+	}
 	const sorted = stableActors(matches);
-	if (row.status === 'pending') return sorted;
 	if (sorted.length === 1) return sorted;
 	return [];
+}
+
+function declaredLegacyTargetActors(
+	row: PendingAgentMessageRecord,
+	actors: ActorRef[],
+	workflow?: SpaceWorkflow | null
+): ActorRef[] {
+	if (!workflow) return [];
+	return workflow.nodes.flatMap((node) =>
+		node.agents.flatMap((agent): ActorRef[] => {
+			if (agent.name !== row.targetAgentName) return [];
+			const actorId = workerActorId(row.workflowRunId, node.id, agent.name);
+			if (actors.some((actor) => actor.actorId === actorId)) return [];
+			return [
+				{
+					actorId,
+					kind: 'worker',
+					spaceId: row.spaceId,
+					handle: workerHandle(row.workflowRunId, node.id, agent.name),
+					roles: uniqueStrings([actorRole(agent.name), actorRole(node.id)]),
+					status: 'inactive',
+				},
+			];
+		})
+	);
 }
 
 function pendingStatusToDeliveryState(status: PendingAgentMessageRecord['status']): DeliveryState {

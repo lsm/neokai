@@ -476,6 +476,56 @@ describe('Space messaging adapter', () => {
 		]);
 	});
 
+	it('rejects ambiguous worker node shorthand based on declared slots', async () => {
+		nodeExecutionRepo.delete(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id
+		);
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			workflowRunId: undefined,
+			targets: ['@worker:Review'],
+		});
+
+		expect(result.resolved).toEqual([]);
+		expect(result.unresolved.map((target) => target.reason)).toEqual([
+			'Worker target @worker:Review is ambiguous; specify @worker:<node>/<agent>',
+		]);
+	});
+
+	it('does not synthesize declared role workers over archived executions', async () => {
+		nodeExecutionRepo.updateStatus(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id,
+			'cancelled'
+		);
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@role:reviewer'],
+		});
+
+		expect(result.resolved).toEqual([]);
+		expect(result.unresolved.map((target) => target.reason)).toEqual([
+			'No routable actor found for role reviewer',
+		]);
+	});
+
 	it('returns unresolved deliveries for malformed worker escapes', async () => {
 		const resolver = new SpaceMessageResolver(
 			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
@@ -532,6 +582,36 @@ describe('Space messaging adapter', () => {
 			taskId: 'task-1',
 			idempotencyKey: 'idem-1',
 		});
+		expect(deliveries.map((delivery) => delivery.targetActorId)).toEqual([
+			`worker:${encodeURIComponent(runId)}:node-qa:reviewer`,
+			`worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+		]);
+		expect(deliveries.every((delivery) => delivery.state === 'queued')).toBe(true);
+	});
+
+	it('includes unspawned declared slots in pending legacy fan-out', () => {
+		nodeExecutionRepo.delete(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id
+		);
+		const pending = pendingMessageRepo.enqueue({
+			workflowRunId: runId,
+			spaceId,
+			taskId: 'task-1',
+			sourceAgentName: 'coder',
+			targetKind: 'node_agent',
+			targetAgentName: 'reviewer',
+			message: 'queued review',
+		}).record;
+
+		const actors = registry.listActors(spaceId);
+		const workflow = workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId)!;
+		const deliveries = pendingMessageToDeliveryRecords(pending, actors, workflow);
+
 		expect(deliveries.map((delivery) => delivery.targetActorId)).toEqual([
 			`worker:${encodeURIComponent(runId)}:node-qa:reviewer`,
 			`worker:${encodeURIComponent(runId)}:node-review:reviewer`,
