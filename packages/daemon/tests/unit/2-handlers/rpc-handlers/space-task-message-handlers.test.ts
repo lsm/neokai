@@ -350,6 +350,69 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				);
 			});
 
+			it('routes @worker targets by exact node id only', async () => {
+				const { injectSubSession } = setupGenericTarget([
+					{
+						id: 'exec-reviewer-a',
+						workflowNodeId: 'node-review-a',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-a',
+					},
+					{
+						id: 'exec-reviewer-b',
+						workflowNodeId: 'node-review-b',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-b',
+					},
+				]);
+
+				await call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: 'direct to worker',
+					target: { kind: 'generic', target: '@worker:run-abc-123/node-review-a/Reviewer' },
+				});
+
+				expect(injectSubSession).toHaveBeenCalledWith(
+					'session-reviewer-a',
+					'direct to worker',
+					false,
+					undefined
+				);
+				expect(injectSubSession).not.toHaveBeenCalledWith(
+					'session-reviewer-b',
+					'direct to worker',
+					false,
+					undefined
+				);
+			});
+
+			it('rejects partial node-name matches for @worker targets', async () => {
+				setupGenericTarget([
+					{
+						id: 'exec-reviewer-a',
+						workflowNodeId: 'node-review-a',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-a',
+					},
+					{
+						id: 'exec-reviewer-b',
+						workflowNodeId: 'node-review-b',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-b',
+					},
+				]);
+
+				await expect(
+					call('space.task.sendMessage', {
+						spaceId: 'space-1',
+						taskId: 'task-1',
+						message: 'ambiguous worker',
+						target: { kind: 'generic', target: '@worker:run-abc-123/review/Reviewer' },
+					})
+				).rejects.toThrow('Workflow worker not found');
+			});
+
 			it('rejects cross-run @worker targets', async () => {
 				setupGenericTarget([
 					{

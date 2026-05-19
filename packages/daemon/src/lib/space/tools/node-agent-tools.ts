@@ -92,6 +92,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
+import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
 
 /**
@@ -326,6 +327,18 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		}
 	}
 	const resolveNodeName = (slotOrNode: string) => slotToNode.get(slotOrNode) ?? slotOrNode;
+	const genericWorkerTargetNodes = (targetRef: string): string[] => {
+		if (!targetRef.startsWith('@worker:')) return [];
+		try {
+			const address = parseAddress(targetRef);
+			if (address.kind !== 'worker') return [];
+			const nodeRef = decodeURIComponent(address.nodeId);
+			return [nodeRef, resolveNodeName(nodeRef)];
+		} catch {
+			return [];
+		}
+	};
+	const uniqueTargetRefs = (values: string[]): string[] => [...new Set(values)];
 
 	const agentNameAliases = new Set(
 		[myAgentName, myNodeName, ...(myAgentNameAliases ?? [])]
@@ -654,6 +667,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			let gateWriteResult: { gateId: string; gateOpen: boolean } | null = null;
 			if (data && workflow) {
 				const targetName = Array.isArray(target) ? null : target;
+				const routedTargetNames = uniqueTargetRefs([
+					...(targetName ? [targetName] : []),
+					...translatedTargets,
+					...(targetName ? genericWorkerTargetNodes(targetName) : []),
+				]);
 				if (
 					targetName &&
 					targetName !== '*' &&
@@ -668,13 +686,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						if (!ch.gateId) return false;
 						if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
 						const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-						const resolvedTarget = resolveNodeName(targetName);
+						const candidateTargets = uniqueTargetRefs([
+							...routedTargetNames,
+							...routedTargetNames.map(resolveNodeName),
+						]);
 						return tos.some(
-							(to) =>
-								to === resolvedTarget ||
-								to === targetName ||
-								to === myNodeName ||
-								to === myAgentName
+							(to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
 						);
 					});
 

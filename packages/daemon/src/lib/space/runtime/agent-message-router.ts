@@ -262,11 +262,13 @@ export class AgentMessageRouter {
 				const replyTo = replyRoutingLookup?.(fromAgentName);
 				if (!replyTo || address.sessionId !== replyTo) {
 					return {
-						success: false,
-						delivered: [],
-						failed: [],
+						success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+						delivered,
+						failed,
 						reason: `Session target ${target} is not an authorized reply route for '${fromAgentName}'.`,
 						unauthorizedAgentNames: [target],
+						queued: queued.length > 0 ? queued : undefined,
+						notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 					};
 				}
 				const envelopedMessage = formatAgentMessage({
@@ -292,10 +294,12 @@ export class AgentMessageRouter {
 			}
 			if (address.kind !== 'worker') {
 				return {
-					success: false,
-					delivered: [],
-					failed: [],
+					success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+					delivered,
+					failed,
 					reason: `Generic target ${target} is not supported by node-agent send_message. Use @coordinator, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
+					queued: queued.length > 0 ? queued : undefined,
+					notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 				};
 			}
 			const runId = address.workflowRunId ?? workflowRunId;

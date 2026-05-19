@@ -1557,6 +1557,34 @@ describe('AgentMessageRouter: generic address targets', () => {
 		).toHaveLength(1);
 	});
 
+	test('preserves earlier generic deliveries when a later @session target is unauthorized', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		const injected: Array<string | null> = [];
+		const router = makeRouter(ctx, workflowRunId, [], [], {
+			spaceId: ctx.spaceId,
+			spaceAgentInjector: async (_spaceId, _message, replyToSessionId) => {
+				injected.push(replyToSessionId);
+			},
+			replyRoutingLookup: () => 'session-origin',
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: ['@coordinator', '@session:other-session'],
+			message: 'partial route',
+		});
+
+		expect(result.success).toBe('partial');
+		expect(result.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
+		]);
+		expect(result.reason).toContain('not an authorized reply route');
+		expect(result.unauthorizedAgentNames).toEqual(['@session:other-session']);
+		expect(injected).toEqual([null]);
+	});
+
 	test('rejects unauthorized @session targets and permits reply-route sessions', async () => {
 		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);

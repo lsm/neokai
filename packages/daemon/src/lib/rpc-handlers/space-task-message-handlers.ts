@@ -231,11 +231,7 @@ export function setupSpaceTaskMessageHandlers(
 		const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
 		const nodeNameMatches = (workflowNodeId?: string) => {
 			if (!workflowNodeId) return false;
-			return (
-				workflowNodeId === nodeName ||
-				workflowNodeId.toLowerCase() === nodeName.toLowerCase() ||
-				workflowNodeId.split(/[-_]/).some((part) => part.toLowerCase() === nodeName.toLowerCase())
-			);
+			return workflowNodeId === nodeName || workflowNodeId.toLowerCase() === nodeName.toLowerCase();
 		};
 		const matches = executions.filter(
 			(exec) =>

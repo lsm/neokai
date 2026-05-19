@@ -1133,7 +1133,8 @@ export class TaskAgentManager {
 		];
 		const pending = queueTargetNames
 			.flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName))
-			.filter((row) => row.targetKind === 'node_agent');
+			.filter((row) => row.targetKind === 'node_agent')
+			.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 		if (pending.length === 0) return;
 
 		log.info(

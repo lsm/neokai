@@ -2803,6 +2803,116 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		]);
 	});
 
+	test('generic @worker target resolves by workflow node name and injects live session', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF Generic Worker'
+		);
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(
+			ctx.spaceId,
+			wf.id,
+			'Generic worker target'
+		);
+		const task = tasks[0];
+		const exec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'reviewer',
+			agentSessionId: 'reviewer-generic-session',
+			status: 'in_progress',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, { activateNode: async () => {} });
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			target: `@worker:${encodeURIComponent(run.id)}/Work/reviewer`,
+			message: 'review generic worker',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.node_execution_id).toBe(exec.id);
+		expect(parsed.agent_name).toBe('reviewer');
+		expect(tam.subSessionInjects).toEqual([
+			{
+				sessionId: 'reviewer-generic-session',
+				message: spaceAgentToNodeEnvelope(task, 'review generic worker', 'reviewer'),
+				isSyntheticMessage: true,
+			},
+		]);
+	});
+
+	test('generic @session target resolves by task agent session id', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF Generic Session'
+		);
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(
+			ctx.spaceId,
+			wf.id,
+			'Generic session target'
+		);
+		const task = tasks[0];
+		const exec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'coder',
+			agentSessionId: 'coder-generic-session',
+			status: 'in_progress',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, { activateNode: async () => {} });
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			target: '@session:coder-generic-session',
+			message: 'session direct',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.node_execution_id).toBe(exec.id);
+		expect(tam.subSessionInjects).toEqual([
+			{
+				sessionId: 'coder-generic-session',
+				message: spaceAgentToNodeEnvelope(task, 'session direct', 'coder'),
+				isSyntheticMessage: true,
+			},
+		]);
+	});
+
+	test('generic unsupported target kind returns an error', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF Unsupported Generic'
+		);
+		const { tasks } = await ctx.runtime.startWorkflowRun(
+			ctx.spaceId,
+			wf.id,
+			'Unsupported generic target'
+		);
+		const task = tasks[0];
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({
+			task_id: task.id,
+			target: '@role:reviewer',
+			message: 'bad target',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('not routable from this tool');
+		expect(tam.subSessionInjects).toHaveLength(0);
+	});
+
 	test('returns an error when node_id does not match any execution', async () => {
 		const wf = buildSingleStepWorkflow(
 			ctx.spaceId,
