@@ -39,6 +39,17 @@ export { TaskAgentManager } from './runtime/task-agent-manager';
 export type { TaskAgentManagerConfig } from './runtime/task-agent-manager';
 export { SpaceActorRegistryAdapter, SPACE_SYSTEM_ACTORS } from './actor-registry';
 export type { SpaceActorRegistryRepositories } from './actor-registry';
+export {
+	SpaceMessageResolver,
+	SpaceDeliveryFacade,
+	pendingMessageToMessageRecord,
+	pendingMessageToDeliveryRecords,
+} from './messaging-adapter';
+export type {
+	SpaceMessageResolverConfig,
+	SpaceMessageResolverContext,
+	SpaceDeliveryFacadeConfig,
+} from './messaging-adapter';
 
 export { selectWorkflow } from './runtime/workflow-selector';
 export type { WorkflowSelectionContext } from './runtime/workflow-selector';
