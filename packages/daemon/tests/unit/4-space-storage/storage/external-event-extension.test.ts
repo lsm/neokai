@@ -195,7 +195,7 @@ describe('external event extension startup primitives', () => {
 		};
 		expect(stored).toEqual({
 			source: 'github',
-			topic: 'github/acme/widgets/pull_request/42.comment_created',
+			topic: 'github/acme/widgets/pull_request.comment_created',
 			state: 'published',
 		});
 		expect(db.prepare(`SELECT COUNT(*) AS count FROM space_github_events`).get()).toEqual({
