@@ -577,6 +577,38 @@ describe('AgentMemoryRepository', () => {
 		expect(results).toHaveLength(0);
 	});
 
+	test('backfills ready memories from older embedding models', async () => {
+		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+		repo.write({
+			spaceId: 'space-a',
+			key: 'cleanup.old-model',
+			content: 'Delete stale session records after retention expires.',
+		});
+		db.prepare(`UPDATE memory_vectors SET model = ? WHERE memory_id = 1`).run('old-model');
+		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+
+		repo.backfillPendingEmbeddings();
+
+		const results = await repo.search('space-a', 'erase old conversation data', 5);
+		expect(results.map((result) => result.memory.key)).toEqual(['cleanup.old-model']);
+	});
+
+	test('backfills failed memories after embedding provider recovers', async () => {
+		repo = new AgentMemoryRepository(db, undefined, new FailingEmbedder());
+		repo.write({
+			spaceId: 'space-a',
+			key: 'cleanup.failed',
+			content: 'Delete stale session records after retention expires.',
+		});
+		await flushPromises();
+		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+
+		repo.backfillPendingEmbeddings();
+
+		const results = await repo.search('space-a', 'erase old conversation data', 5);
+		expect(results.map((result) => result.memory.key)).toEqual(['cleanup.failed']);
+	});
+
 	test('vector search ranks ready vectors beyond the first 100 rows', async () => {
 		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
 		for (let index = 0; index < 120; index++) {

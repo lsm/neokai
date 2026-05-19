@@ -275,11 +275,16 @@ export class AgentMemoryRepository {
 		if (!this.embedder) return;
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM space_agent_memory
-				 WHERE embedding_status = 'pending'
-				 ORDER BY updated_at ASC, key ASC`
+				`SELECT m.*
+				 FROM space_agent_memory m
+				 LEFT JOIN memory_vectors v ON v.memory_id = m.id
+				 WHERE m.embedding_status IN ('pending', 'failed')
+					OR v.memory_id IS NULL
+					OR v.model != ?
+					OR v.dimensions != ?
+				 ORDER BY m.updated_at ASC, m.key ASC`
 			)
-			.all() as AgentMemoryRow[];
+			.all(this.embedder.model, this.embedder.dimensions) as AgentMemoryRow[];
 		for (const row of rows) this.updateEmbedding(row);
 	}
 

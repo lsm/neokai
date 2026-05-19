@@ -27,7 +27,7 @@ export class FastembedAgentMemoryEmbedder implements AgentMemoryEmbedder {
 
 	embedQuery(text: string): Promise<Float32Array> {
 		return this.getInit().then(async ({ model, tokenizer }) => {
-			const inputs = await tokenizer(text, { padding: true });
+			const inputs = await tokenizer(text, { padding: true, truncation: true });
 			const { sentence_embedding: sentenceEmbedding } = await model(inputs);
 			return Float32Array.from(sentenceEmbedding.normalize().data);
 		});
