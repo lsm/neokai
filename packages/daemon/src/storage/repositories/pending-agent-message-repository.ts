@@ -217,6 +217,18 @@ export class PendingAgentMessageRepository {
 		return rows.map(rowToRecord);
 	}
 
+	/** List pending rows for a space, oldest first. Used by space-scoped actor registry lookups. */
+	listPendingForSpace(spaceId: string): PendingAgentMessageRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM pending_agent_messages
+				 WHERE space_id = ? AND status = 'pending'
+				 ORDER BY created_at ASC, rowid ASC`
+			)
+			.all(spaceId) as PendingMessageRow[];
+		return rows.map(rowToRecord);
+	}
+
 	/** List all pending rows across every run, oldest first. Used by the global sweeper. */
 	listAllPending(): PendingAgentMessageRecord[] {
 		const rows = this.db

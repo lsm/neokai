@@ -635,6 +635,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 134: Add FTS5-backed message and Space task search.
 	runMigration134(db);
+
+	// Migration 135: Add space-scoped pending message lookup index for actor registry.
+	runMigration135(db);
 }
 
 /**
@@ -9327,6 +9330,18 @@ function createAgentMemoryTables(db: BunDatabase): void {
 	if (shouldRebuildFts) {
 		db.exec(`INSERT INTO space_agent_memory_fts(space_agent_memory_fts) VALUES ('rebuild')`);
 	}
+}
+
+/**
+ * Migration 135: Add space-scoped pending message lookup index for actor registry.
+ */
+export function runMigration135(db: BunDatabase): void {
+	if (!tableExists(db, 'pending_agent_messages')) return;
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_space_status ` +
+			`ON pending_agent_messages(space_id, status, created_at)`
+	);
 }
 
 function migrateNeoMessageOrigins(db: BunDatabase): void {
