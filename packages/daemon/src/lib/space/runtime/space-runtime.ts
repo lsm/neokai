@@ -283,7 +283,6 @@ interface ExternalEventRateLimitState {
 	timestamps: number[];
 	pendingDigest: ExternalEventDigestItem[];
 	digestTimer: Timer | null;
-	sawTransientFailure: boolean;
 }
 
 interface AgentStuckRecoveryState {
@@ -868,7 +867,12 @@ export class SpaceRuntime {
 				continue;
 			}
 			this.clearExternalEventRetry(item.deliveryKey);
-			void this.deliverToSession(target, item.event, item.deliveryKey, item.deliveryMode);
+			void this.enqueueDeliverableExternalEvent(
+				target,
+				item.event,
+				item.deliveryKey,
+				item.deliveryMode
+			);
 		}
 	}
 
@@ -957,10 +961,6 @@ export class SpaceRuntime {
 			return;
 		}
 
-		if (state.sawTransientFailure) {
-			await this.deliverToSession(target, event, deliveryKey, deliveryMode);
-			return;
-		}
 		state.pendingDigest.push({ target, event, deliveryKey, deliveryMode });
 		if (!state.digestTimer) {
 			state.digestTimer = setTimeout(() => {
@@ -980,11 +980,7 @@ export class SpaceRuntime {
 			clearTimeout(state.digestTimer);
 			state.digestTimer = null;
 		}
-		if (
-			state.pendingDigest.length === 0 &&
-			state.timestamps.length === 0 &&
-			!state.sawTransientFailure
-		) {
+		if (state.pendingDigest.length === 0 && state.timestamps.length === 0) {
 			this.externalEventRateLimits.delete(key);
 		}
 		await this.deliverDigestToSession(target, digestItems);
@@ -1128,8 +1124,6 @@ export class SpaceRuntime {
 				this.clearQueuedDelivery(target, deliveryKey);
 				return;
 			}
-			const rateLimitState = this.externalEventRateLimits.get(this.buildRateLimitKey(target));
-			if (rateLimitState) rateLimitState.sawTransientFailure = true;
 			this.queueForRetry(target, event, deliveryKey, deliveryMode, failureReason);
 		} finally {
 			this.externalEventDeliveriesInFlight.delete(deliveryKey);
@@ -1397,7 +1391,6 @@ export class SpaceRuntime {
 			timestamps: [],
 			pendingDigest: [],
 			digestTimer: null,
-			sawTransientFailure: false,
 		};
 		this.externalEventRateLimits.set(key, created);
 		return created;

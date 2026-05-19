@@ -390,6 +390,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 			startedAt: Date.now(),
 		});
 		tam.alive.add('session-rate-limit');
+		const rateLimitState = runtime as unknown as {
+			externalEventRateLimits: Map<string, unknown>;
+		};
 
 		const events = Array.from({ length: 15 }, (_, index) =>
 			makeEvent({
@@ -419,6 +422,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			expect(eventStore.getById(event.id)?.state).toBe('delivered');
 			expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
 		}
+		expect(rateLimitState.externalEventRateLimits.size).toBe(0);
 	});
 
 	test('delivers events within rate limit normally', async () => {
@@ -497,8 +501,14 @@ describe('SpaceRuntime external event subscriptions', () => {
 		});
 
 		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect(injected).toHaveLength(50);
-		expect(injected.some((item) => JSON.parse(item.message).eventId === events[0]!.id)).toBe(false);
+		expect(injected).toHaveLength(11);
+		expect(injected.slice(0, 10).map((item) => JSON.parse(item.message).eventId)).toEqual(
+			events.slice(1, 11).map((event) => event.id)
+		);
+		expect(injected[10]!.message).toContain(
+			'40 events received for topics: github/lsm/neokai/pull_request.review_submitted'
+		);
+		expect(injected.some((item) => item.message.includes(events[0]!.id))).toBe(false);
 	});
 
 	test('marks delivery failed when target execution is not active', async () => {
@@ -1634,14 +1644,22 @@ describe('SpaceRuntime external event subscriptions', () => {
 			DEFAULT_TOPIC
 		);
 
+		const originalNow = Date.now;
+		let fakeNow = originalNow();
+		Date.now = () => fakeNow;
 		const events = Array.from({ length: 51 }, (_, index) =>
 			makeEvent({
 				id: `evt-overflow-retry-${index}`,
 				dedupeKey: `dedupe-overflow-retry-${index}`,
 			})
 		);
-		for (const event of events) {
-			await eventService.publish(event);
+		try {
+			for (const event of events) {
+				await eventService.publish(event);
+				fakeNow += 61_000;
+			}
+		} finally {
+			Date.now = originalNow;
 		}
 
 		const droppedDelivery = eventStore.listDeliveries(events[0]!.id)[0]!;
