@@ -413,7 +413,12 @@ export function translateTaskMessageTarget(
 				'Target "task-agent" is no longer supported. Use @coordinator or a worker target.'
 			);
 		}
-		parseAddress(explicitTarget);
+		const address = parseAddress(explicitTarget);
+		if (address.kind !== 'worker' && address.kind !== 'session') {
+			throw new Error(
+				`Generic target ${explicitTarget} is not routable from this tool. Use @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`
+			);
+		}
 		return explicitTarget;
 	}
 

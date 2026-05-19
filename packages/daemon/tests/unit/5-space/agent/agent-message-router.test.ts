@@ -1440,6 +1440,41 @@ describe('AgentMessageRouter: generic address targets', () => {
 		expect(injected.map((call) => call.sessionId)).toEqual(['session-review-a']);
 	});
 
+	test('passes agent name to channel checks for agent-name topologies', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
+		seedPeerTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			'node-review-a',
+			'reviewer',
+			'session-review-a'
+		);
+		const checkedTargets: string[] = [];
+		const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'reviewer')], {
+			nodeGroups: { Coding: ['coder'], 'Review A': ['reviewer'] },
+			workflowNodeNameById: { 'node-coding': 'Coding', 'node-review-a': 'Review A' },
+			channelRouter: {
+				deliverMessage: async (_runId, _from, target) => {
+					checkedTargets.push(target);
+					return {} as never;
+				},
+			} as AgentMessageRouterConfig['channelRouter'],
+		});
+
+		await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: `@worker:${encodeURIComponent(workflowRunId)}/${encodeURIComponent('Review A')}/reviewer`,
+			message: 'review A only',
+		});
+
+		expect(checkedTargets).toEqual(['reviewer']);
+	});
+
 	test('passes the requested worker node to channel checks', async () => {
 		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeChannel('Coding', 'Review A'),

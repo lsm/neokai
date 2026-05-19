@@ -2913,6 +2913,41 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(tam.subSessionInjects).toHaveLength(0);
 	});
 
+	test('generic unsupported target kind is rejected before node_id fallback', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF Unsupported With Node'
+		);
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(
+			ctx.spaceId,
+			wf.id,
+			'Unsupported generic target with node id'
+		);
+		const task = tasks[0];
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'coder',
+			agentSessionId: 'coder-valid-session',
+			status: 'in_progress',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({
+			task_id: task.id,
+			node_id: 'coder',
+			target: '@role:reviewer',
+			message: 'bad target wins',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('not routable from this tool');
+		expect(tam.subSessionInjects).toHaveLength(0);
+	});
+
 	test('returns an error when node_id does not match any execution', async () => {
 		const wf = buildSingleStepWorkflow(
 			ctx.spaceId,

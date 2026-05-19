@@ -324,7 +324,12 @@ export class AgentMessageRouter {
 				notFound.push(target);
 				continue;
 			}
-			if (!resolver.canSend(fromNodeName, nodeName) && !resolver.canSend(fromNodeName, agentName)) {
+			const permittedChannelTarget = resolver.canSend(fromNodeName, nodeName)
+				? nodeName
+				: resolver.canSend(fromNodeName, agentName)
+					? agentName
+					: null;
+			if (!permittedChannelTarget) {
 				return {
 					success: false,
 					delivered: [],
@@ -335,7 +340,12 @@ export class AgentMessageRouter {
 				};
 			}
 			try {
-				await channelRouter?.deliverMessage(workflowRunId, fromAgentName, nodeName, message);
+				await channelRouter?.deliverMessage(
+					workflowRunId,
+					fromAgentName,
+					permittedChannelTarget,
+					message
+				);
 			} catch (err) {
 				return {
 					success: false,
