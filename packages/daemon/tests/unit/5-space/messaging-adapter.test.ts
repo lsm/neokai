@@ -103,7 +103,7 @@ describe('Space messaging adapter', () => {
 				},
 				{ id: 'node-qa', name: 'QA', agents: [{ agentId: agent.id, name: 'reviewer' }] },
 			],
-			channels: [{ from: 'Coding', to: ['Review', 'QA'] }],
+			channels: [{ from: 'Coding', to: ['Review'] }],
 			transitions: [],
 			startNodeId: 'Coding',
 			rules: [],
@@ -111,6 +111,19 @@ describe('Space messaging adapter', () => {
 		});
 		const run = workflowRunRepo.createRun({ spaceId, workflowId: workflow.id, title: 'Run' });
 		runId = run.id;
+		const otherRun = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Run 2',
+		});
+		nodeExecutionRepo.create({
+			workflowRunId: otherRun.id,
+			workflowNodeId: 'node-review',
+			agentName: 'reviewer',
+			agentId: agent.id,
+			agentSessionId: 'other-review-session',
+			status: 'in_progress',
+		});
 		nodeExecutionRepo.create({
 			workflowRunId: runId,
 			workflowNodeId: 'node-coding',
@@ -177,6 +190,30 @@ describe('Space messaging adapter', () => {
 		]);
 	});
 
+	it('filters role-resolved worker actors through channel topology', async () => {
+		nodeExecutionRepo.create({
+			workflowRunId: runId,
+			workflowNodeId: 'node-qa',
+			agentName: 'reviewer',
+			agentId: spaceAgentRepo.getBySpaceId(spaceId)[0].id,
+			agentSessionId: 'qa-session',
+			status: 'in_progress',
+		});
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@role:reviewer'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor.actorId)).toEqual([
+			`worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+		]);
+	});
+
 	it('errors instead of falling back for stale handles and forbidden worker topology', async () => {
 		const resolver = new SpaceMessageResolver(
 			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
@@ -194,6 +231,32 @@ describe('Space messaging adapter', () => {
 		]);
 	});
 
+	it('rejects message space and implicit workflow run mismatches', async () => {
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const spaceMismatch = await resolver.resolveTargets({
+			...message,
+			spaceId: 'other-space',
+			targets: ['@coordinator'],
+		});
+		expect(spaceMismatch.resolved).toEqual([]);
+		expect(spaceMismatch.unresolved.map((target) => target.reason)).toEqual([
+			`Message space other-space does not match resolver space ${spaceId}`,
+		]);
+
+		const runMismatch = await resolver.resolveTargets({
+			...message,
+			workflowRunId: 'other-run',
+			targets: ['@worker:Review/reviewer'],
+		});
+		expect(runMismatch.resolved).toEqual([]);
+		expect(runMismatch.unresolved.map((target) => target.reason)).toEqual([
+			`Message workflowRunId other-run does not match resolver workflowRunId ${runId}`,
+		]);
+	});
+
 	it('writes queued deliveries for inactive actors and failed rows for unresolved targets', async () => {
 		const resolver = new SpaceMessageResolver(
 			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
@@ -202,21 +265,16 @@ describe('Space messaging adapter', () => {
 		const facade = new SpaceDeliveryFacade({ resolver });
 		const result = await facade.routeMessage({
 			...message,
-			targets: ['@worker:node-review/reviewer', '@worker:node-qa/reviewer', '@missing'],
+			targets: ['@worker:node-review/reviewer', '@missing'],
 		});
 
-		expect(result.deliveries).toHaveLength(3);
+		expect(result.deliveries).toHaveLength(2);
 		expect(result.deliveries[0]).toMatchObject({
 			targetActorId: `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
 			targetRef: '@worker:node-review/reviewer',
 			state: 'queued',
 		});
 		expect(result.deliveries[1]).toMatchObject({
-			targetActorId: `worker:${encodeURIComponent(runId)}:node-qa:reviewer`,
-			targetRef: '@worker:node-qa/reviewer',
-			state: 'queued',
-		});
-		expect(result.deliveries[2]).toMatchObject({
 			targetRef: '@missing',
 			state: 'failed',
 			lastError: 'No routable actor found for handle @missing',

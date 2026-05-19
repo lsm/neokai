@@ -44,6 +44,30 @@ export class SpaceMessageResolver implements ActorResolver {
 		const unresolved: UnresolvedTarget[] = [];
 		const seen = new Set<string>();
 
+		if (message.spaceId !== this.context.spaceId) {
+			return {
+				resolved,
+				unresolved: message.targets.map((targetRef) => ({
+					targetRef,
+					reason: `Message space ${message.spaceId} does not match resolver space ${this.context.spaceId}`,
+				})),
+			};
+		}
+
+		if (
+			this.context.workflowRunId &&
+			message.workflowRunId &&
+			message.workflowRunId !== this.context.workflowRunId
+		) {
+			return {
+				resolved,
+				unresolved: message.targets.map((targetRef) => ({
+					targetRef,
+					reason: `Message workflowRunId ${message.workflowRunId} does not match resolver workflowRunId ${this.context.workflowRunId}`,
+				})),
+			};
+		}
+
 		for (const targetRef of message.targets) {
 			let address: ParsedAddress;
 			try {
@@ -95,8 +119,9 @@ export class SpaceMessageResolver implements ActorResolver {
 				const active = holders.filter((actor) => actor.status === 'active');
 				const inactive = holders.filter((actor) => actor.status === 'inactive');
 				const routable = active.length > 0 ? active : inactive;
-				return routable.length > 0
-					? { actors: stableActors(routable) }
+				const permitted = this.permitRoleActors(routable);
+				return permitted.length > 0
+					? { actors: stableActors(permitted) }
 					: { actors: [], reason: `No routable actor found for role ${address.role}` };
 			}
 			case 'session': {
@@ -181,7 +206,21 @@ export class SpaceMessageResolver implements ActorResolver {
 		return { actors: stableActors(permitted) };
 	}
 
-	private canSendToWorker(workflowRunId: string, actor: ActorRef, address: WorkerAddress): boolean {
+	private permitRoleActors(actors: ActorRef[]): ActorRef[] {
+		if (!this.context.workflowRunId || !this.context.nodeId) return actors;
+		return actors.filter((actor) => {
+			if (actor.kind !== 'worker') return true;
+			const parsed = parseWorkerActorId(actor.actorId);
+			if (!parsed || parsed.workflowRunId !== this.context.workflowRunId) return false;
+			return this.canSendToWorker(this.context.workflowRunId!, actor);
+		});
+	}
+
+	private canSendToWorker(
+		workflowRunId: string,
+		actor: ActorRef,
+		address?: WorkerAddress
+	): boolean {
 		const run = this.config.workflowRunRepo.getRun(workflowRunId);
 		if (!run || run.spaceId !== this.context.spaceId) return false;
 		const workflow = this.config.workflowRepo.getWorkflow(run.workflowId);
@@ -189,7 +228,7 @@ export class SpaceMessageResolver implements ActorResolver {
 		const parsed = parseWorkerActorId(actor.actorId);
 		if (!parsed) return false;
 
-		if (address.workflowRunId && !this.context.nodeId) return true;
+		if (address?.workflowRunId && !this.context.nodeId) return true;
 
 		const fromNodeName = workflowNodeName(workflow.nodes, this.context.nodeId);
 		const targetNodeName = workflowNodeName(workflow.nodes, parsed.nodeId);
