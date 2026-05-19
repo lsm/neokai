@@ -106,16 +106,6 @@ export class SpaceAgentNotificationService {
 				{ subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.timeout` }
 			),
 			this.internalEventBus.subscribe(
-				'space.workflowRun.completed',
-				(event) => {
-					if (event.spaceId !== this.spaceId) return;
-					void this.notify(formatWorkflowRunCompleted(event, this.autonomyLevel));
-				},
-				{
-					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.completed`,
-				}
-			),
-			this.internalEventBus.subscribe(
 				'space.workflowRun.reopened',
 				(event) => {
 					if (event.spaceId !== this.spaceId) return;
@@ -137,6 +127,7 @@ export class SpaceAgentNotificationService {
 				'space.agent.idleNonTerminal',
 				(event) => {
 					if (event.spaceId !== this.spaceId) return;
+					if (!shouldNotifyAgentIdleNonTerminal(this.autonomyLevel)) return;
 					void this.notify(formatAgentIdleNonTerminal(event, this.autonomyLevel));
 				},
 				{
@@ -201,6 +192,10 @@ export class SpaceAgentNotificationService {
 // Message formatters
 // ---------------------------------------------------------------------------
 
+function shouldNotifyAgentIdleNonTerminal(autonomyLevel: SpaceAutonomyLevel): boolean {
+	return autonomyLevel >= 3;
+}
+
 function formatTaskBlocked(
 	event: {
 		spaceId: string;
@@ -263,38 +258,6 @@ function formatTaskTimeout(
 		autonomyLevel,
 	};
 	return buildMessage('task_timeout', humanReadable, payload);
-}
-
-function formatWorkflowRunCompleted(
-	event: {
-		spaceId: string;
-		runId: string;
-		status: 'done' | 'cancelled' | 'blocked';
-		summary?: string;
-		timestamp: string;
-	},
-	autonomyLevel: SpaceAutonomyLevel
-): string {
-	const statusLabel =
-		event.status === 'done'
-			? 'completed successfully'
-			: event.status === 'cancelled'
-				? 'was cancelled'
-				: 'ended and is blocked';
-	const summaryPart = event.summary ? ` Summary: ${event.summary}` : '';
-	const humanReadable = `Workflow run ${event.runId} in space ${event.spaceId} ${statusLabel}.${summaryPart}`;
-	const payload: Record<string, unknown> = {
-		kind: 'workflow_run_completed',
-		spaceId: event.spaceId,
-		runId: event.runId,
-		status: event.status,
-		timestamp: event.timestamp,
-		autonomyLevel,
-	};
-	if (event.summary !== undefined) {
-		payload['summary'] = event.summary;
-	}
-	return buildMessage('workflow_run_completed', humanReadable, payload);
 }
 
 function formatWorkflowRunReopened(

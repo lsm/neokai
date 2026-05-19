@@ -289,9 +289,9 @@ describe('buildSpaceChatSystemPrompt — event handling', () => {
 		expect(prompt).toContain('task_timeout');
 	});
 
-	test('includes workflow_run_completed event kind', () => {
+	test('does not include routine workflow_run_completed event kind', () => {
 		const prompt = buildSpaceChatSystemPrompt();
-		expect(prompt).toContain('workflow_run_completed');
+		expect(prompt).not.toContain('workflow_run_completed');
 	});
 
 	test('event handling section present regardless of autonomy level', () => {
@@ -300,7 +300,7 @@ describe('buildSpaceChatSystemPrompt — event handling', () => {
 		const empty = buildSpaceChatSystemPrompt({});
 		for (const prompt of [supervised, semi, empty]) {
 			expect(prompt).toContain('task_blocked');
-			expect(prompt).toContain('workflow_run_completed');
+			expect(prompt).not.toContain('workflow_run_completed');
 		}
 	});
 });
