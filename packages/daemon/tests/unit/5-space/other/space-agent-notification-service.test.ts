@@ -302,25 +302,8 @@ describe('SpaceAgentNotificationService', () => {
 	});
 
 	describe('space.agent.idleNonTerminal event', () => {
-		it('does not inject idle non-terminal events at supervised autonomy level', async () => {
-			const { factory, bus } = makeService(undefined, { autonomyLevel: 1 });
-			await bus.publish('space.agent.idleNonTerminal', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				taskId: 'task-idle',
-				runId: 'run-idle',
-				executionId: 'exec-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				reason: 'Agent stopped responding',
-				timestamp: TIMESTAMP,
-			});
-
-			expect(factory.calls).toHaveLength(0);
-		});
-
-		it('formats idle non-terminal message when autonomy level allows corrective action', async () => {
-			const { factory, bus } = makeService(undefined, { autonomyLevel: 3 });
+		it('formats idle non-terminal message', async () => {
+			const { factory, bus } = makeService();
 			await bus.publish('space.agent.idleNonTerminal', {
 				sessionId: 'global',
 				spaceId: SPACE_ID,

@@ -127,7 +127,6 @@ export class SpaceAgentNotificationService {
 				'space.agent.idleNonTerminal',
 				(event) => {
 					if (event.spaceId !== this.spaceId) return;
-					if (!shouldNotifyAgentIdleNonTerminal(this.autonomyLevel)) return;
 					void this.notify(formatAgentIdleNonTerminal(event, this.autonomyLevel));
 				},
 				{
@@ -191,10 +190,6 @@ export class SpaceAgentNotificationService {
 // ---------------------------------------------------------------------------
 // Message formatters
 // ---------------------------------------------------------------------------
-
-function shouldNotifyAgentIdleNonTerminal(autonomyLevel: SpaceAutonomyLevel): boolean {
-	return autonomyLevel >= 3;
-}
 
 function formatTaskBlocked(
 	event: {
