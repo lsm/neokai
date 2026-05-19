@@ -56,6 +56,24 @@ export class TopicTrie<T> {
 		return results;
 	}
 
+	count(predicate: (value: T) => boolean): number {
+		let total = 0;
+
+		const walk = (node: TrieNode<T>): void => {
+			if (node.values) {
+				for (const value of node.values) {
+					if (predicate(value)) total += 1;
+				}
+			}
+
+			for (const child of node.exactChildren.values()) walk(child);
+			for (const child of node.globChildren.values()) walk(child);
+		};
+
+		walk(this.root);
+		return total;
+	}
+
 	remove(predicate: (value: T) => boolean): void {
 		const clean = (node: TrieNode<T>): boolean => {
 			if (node.values) {
