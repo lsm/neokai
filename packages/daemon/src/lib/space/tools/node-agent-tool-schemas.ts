@@ -96,7 +96,7 @@ export const SubscribeExternalEventSchema = z.object({
 	topicPattern: z
 		.string()
 		.min(1)
-		.describe('Glob pattern matching event topics (e.g. github/lsm/neokai/pull_request/42.*)'),
+		.describe('Glob pattern matching event topics (e.g. github/lsm/neokai/pull_request.review_*)'),
 	label: z.string().describe('Optional label for diagnostics').optional(),
 });
 

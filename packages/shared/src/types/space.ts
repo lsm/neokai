@@ -1403,7 +1403,7 @@ export interface DeclarativeToolGuard {
 export interface EventInterest {
 	/**
 	 * Glob pattern matching event topics.
-	 * Examples: 'github/owner/repo/pull_request/42.*', 'github/owner/repo/pull_request/*.review_*'
+	 * Examples: 'github/owner/repo/pull_request.*', 'github/owner/repo/pull_request.review_*'
 	 *
 	 * The topic pattern IS the filter — the format encodes source identity,
 	 * scope (e.g. owner/repo for GitHub), resource, and entity/action.
@@ -1999,6 +1999,11 @@ export interface ExportedWorkflowNodeAgent {
 	 * Mirrors `WorkflowNodeAgent.toolGuards`.
 	 */
 	toolGuards?: DeclarativeToolGuard[];
+	/**
+	 * Static external event subscriptions for this exported agent slot.
+	 * Mirrors `WorkflowNodeAgent.eventInterests`.
+	 */
+	eventInterests?: EventInterest[];
 }
 
 /**
