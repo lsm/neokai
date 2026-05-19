@@ -422,7 +422,88 @@ describe('SpaceRuntime external event subscriptions', () => {
 			expect(eventStore.getById(event.id)?.state).toBe('delivered');
 			expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
 		}
-		expect(rateLimitState.externalEventRateLimits.size).toBe(0);
+		expect(rateLimitState.externalEventRateLimits.size).toBe(1);
+	});
+
+	test('coalesces all events after digest within the same rate window', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-sustained-rate-limit',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-sustained-rate-limit');
+		const originalNow = Date.now;
+		let fakeNow = originalNow();
+		Date.now = () => fakeNow;
+		try {
+			const firstBurst = Array.from({ length: 15 }, (_, index) =>
+				makeEvent({
+					id: `evt-sustained-rate-first-${index}`,
+					dedupeKey: `dedupe-sustained-rate-first-${index}`,
+					occurredAt: 1_700_000_000_000 + index,
+				})
+			);
+			for (const event of firstBurst) {
+				await eventService.publish(event);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(injected).toHaveLength(11);
+
+			fakeNow += 1_000;
+			const secondBurst = Array.from({ length: 3 }, (_, index) =>
+				makeEvent({
+					id: `evt-sustained-rate-second-${index}`,
+					dedupeKey: `dedupe-sustained-rate-second-${index}`,
+					occurredAt: 1_700_000_001_000 + index,
+				})
+			);
+			for (const event of secondBurst) {
+				await eventService.publish(event);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(injected).toHaveLength(12);
+			expect(injected[11]!.message).toContain(
+				'3 events received for topics: github/lsm/neokai/pull_request.review_submitted'
+			);
+		} finally {
+			Date.now = originalNow;
+		}
+	});
+
+	test('flushes digest even if execution state changes before timer fires', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-digest-transition',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-digest-transition');
+		const events = Array.from({ length: 11 }, (_, index) =>
+			makeEvent({
+				id: `evt-digest-transition-${index}`,
+				dedupeKey: `dedupe-digest-transition-${index}`,
+				occurredAt: 1_700_000_000_000 + index,
+			})
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		nodeExecutionRepo.update(execution.id, {
+			status: 'idle',
+			completedAt: Date.now(),
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(injected).toHaveLength(11);
+		expect(injected[10]!.message).toContain(
+			'1 events received for topics: github/lsm/neokai/pull_request.review_submitted'
+		);
+		expect(eventStore.getById(events[10]!.id)?.state).toBe('delivered');
 	});
 
 	test('delivers events within rate limit normally', async () => {
@@ -462,6 +543,51 @@ describe('SpaceRuntime external event subscriptions', () => {
 				nodeId: 'code',
 				agentName: 'coder',
 				sessionId: 'session-expired-queued',
+			});
+		} finally {
+			Date.now = originalNow;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(injected).toHaveLength(0);
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('ttl_expired');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('drops rehydrated pending deliveries using original event created time', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const event = makeEvent({
+			id: 'evt-expired-rehydrated',
+			dedupeKey: 'dedupe-expired-rehydrated',
+		});
+		await eventService.publish(event);
+		await runtime.stop();
+		const originalNow = Date.now;
+		Date.now = () => originalNow() + 300_001;
+		try {
+			runtime = new SpaceRuntime({
+				db,
+				spaceManager: new SpaceManager(db),
+				spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				nodeExecutionRepo,
+				internalEventBus: bus,
+				commandBus: createInternalCommandBus(),
+				externalEventStore: eventStore,
+				taskAgentManager: tam as never,
+			});
+			runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+			await runtime.rehydrateExecutors();
+			runtime.flushPendingNodeQueue({
+				workflowRunId: run.id,
+				taskId: task.id,
+				nodeId: 'code',
+				agentName: 'coder',
+				sessionId: 'session-expired-rehydrated',
 			});
 		} finally {
 			Date.now = originalNow;

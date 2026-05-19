@@ -856,6 +856,7 @@ export class SpaceRuntime {
 
 	flushPendingNodeQueue(target: SubscriptionTarget): void {
 		if (!target.sessionId) return;
+		const targetWithExecution = this.resolveSubscriptionTarget(target);
 		const key = this.buildQueueKey(target);
 		const queued = this.pendingExternalEventQueue.get(key);
 		if (!queued) return;
@@ -868,7 +869,7 @@ export class SpaceRuntime {
 			}
 			this.clearExternalEventRetry(item.deliveryKey);
 			void this.enqueueDeliverableExternalEvent(
-				target,
+				targetWithExecution,
 				item.event,
 				item.deliveryKey,
 				item.deliveryMode
@@ -951,7 +952,8 @@ export class SpaceRuntime {
 		deliveryMode: 'immediate' | 'defer'
 	): Promise<void> {
 		const now = Date.now();
-		const state = this.getExternalEventRateLimitState(target);
+		const rateLimitKey = this.buildRateLimitKey(target);
+		const state = this.getExternalEventRateLimitState(rateLimitKey);
 		state.timestamps = state.timestamps.filter(
 			(timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
 		);
@@ -965,23 +967,28 @@ export class SpaceRuntime {
 		if (!state.digestTimer) {
 			state.digestTimer = setTimeout(() => {
 				state.digestTimer = null;
-				void this.flushExternalEventDigest(target);
+				void this.flushExternalEventDigest(rateLimitKey, target);
 			}, 0);
 		}
 	}
 
-	private async flushExternalEventDigest(target: SubscriptionTarget): Promise<void> {
-		const key = this.buildRateLimitKey(target);
-		const state = this.externalEventRateLimits.get(key);
+	private async flushExternalEventDigest(
+		rateLimitKey: string,
+		target: SubscriptionTarget
+	): Promise<void> {
+		const state = this.externalEventRateLimits.get(rateLimitKey);
 		if (!state || state.pendingDigest.length === 0) return;
+		const now = Date.now();
 		const digestItems = state.pendingDigest.splice(0);
-		state.timestamps = [];
+		state.timestamps = state.timestamps.filter(
+			(timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
+		);
 		if (state.digestTimer) {
 			clearTimeout(state.digestTimer);
 			state.digestTimer = null;
 		}
 		if (state.pendingDigest.length === 0 && state.timestamps.length === 0) {
-			this.externalEventRateLimits.delete(key);
+			this.externalEventRateLimits.delete(rateLimitKey);
 		}
 		await this.deliverDigestToSession(target, digestItems);
 	}
@@ -1237,7 +1244,8 @@ export class SpaceRuntime {
 		target: SubscriptionTarget,
 		event: ExternalEventPublishedPayload,
 		deliveryKey: string,
-		deliveryMode: 'immediate' | 'defer' = 'immediate'
+		deliveryMode: 'immediate' | 'defer' = 'immediate',
+		createdAt = Date.now()
 	): void {
 		const key = this.buildQueueKey(target);
 		const queue = this.pendingExternalEventQueue.get(key) ?? [];
@@ -1262,7 +1270,7 @@ export class SpaceRuntime {
 				`SpaceRuntime: pending external event queue overflow for ${key}; dropped oldest event`
 			);
 		}
-		queue.push({ event, deliveryKey, deliveryMode, createdAt: Date.now() });
+		queue.push({ event, deliveryKey, deliveryMode, createdAt });
 		this.pendingExternalEventQueue.set(key, queue);
 	}
 
@@ -1383,16 +1391,15 @@ export class SpaceRuntime {
 		return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
 	}
 
-	private getExternalEventRateLimitState(target: SubscriptionTarget): ExternalEventRateLimitState {
-		const key = this.buildRateLimitKey(target);
-		const existing = this.externalEventRateLimits.get(key);
+	private getExternalEventRateLimitState(rateLimitKey: string): ExternalEventRateLimitState {
+		const existing = this.externalEventRateLimits.get(rateLimitKey);
 		if (existing) return existing;
 		const created = {
 			timestamps: [],
 			pendingDigest: [],
 			digestTimer: null,
 		};
-		this.externalEventRateLimits.set(key, created);
+		this.externalEventRateLimits.set(rateLimitKey, created);
 		return created;
 	}
 
@@ -2714,7 +2721,13 @@ export class SpaceRuntime {
 				? 'defer'
 				: 'immediate';
 			const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-			this.queueForPendingNode(target, eventPayload, delivery.deliveryKey, mode);
+			this.queueForPendingNode(
+				target,
+				eventPayload,
+				delivery.deliveryKey,
+				mode,
+				eventRecord.createdAt
+			);
 			const resolved = this.resolveSubscriptionTarget(target);
 			if (resolved.sessionId) {
 				this.scheduleExternalEventRetry(
