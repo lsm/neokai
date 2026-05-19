@@ -278,6 +278,7 @@ interface ExternalEventDigestItem {
 	deliveryKey: string;
 	deliveryMode: 'immediate' | 'defer';
 	createdAt: number;
+	allowTargetSessionFallback: boolean;
 }
 
 interface ExternalEventRateLimitState {
@@ -875,7 +876,8 @@ export class SpaceRuntime {
 				item.event,
 				item.deliveryKey,
 				item.deliveryMode,
-				item.createdAt
+				item.createdAt,
+				true
 			);
 		}
 	}
@@ -953,7 +955,8 @@ export class SpaceRuntime {
 		event: ExternalEventPublishedPayload,
 		deliveryKey: string,
 		deliveryMode: 'immediate' | 'defer',
-		createdAt = Date.now()
+		createdAt = Date.now(),
+		allowTargetSessionFallback = false
 	): Promise<void> {
 		const now = Date.now();
 		const rateLimitKey = this.buildRateLimitKey(target);
@@ -968,7 +971,14 @@ export class SpaceRuntime {
 			return;
 		}
 
-		state.pendingDigest.push({ target, event, deliveryKey, deliveryMode, createdAt });
+		state.pendingDigest.push({
+			target,
+			event,
+			deliveryKey,
+			deliveryMode,
+			createdAt,
+			allowTargetSessionFallback,
+		});
 		if (!state.digestTimer) {
 			state.digestTimer = setTimeout(() => {
 				state.digestTimer = null;
@@ -996,9 +1006,13 @@ export class SpaceRuntime {
 	private async deliverDigestToSession(items: ExternalEventDigestItem[]): Promise<void> {
 		const store = this.config.externalEventStore;
 		if (!store || items.length === 0) return;
-		const target = this.resolveSubscriptionTarget(items[0]!.target);
+		const target = this.resolveDigestDeliveryTarget(items[0]!);
 		if (!target.sessionId) {
 			for (const item of items) {
+				store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+					terminal: false,
+					reason: `deliveryMode:${item.deliveryMode}; digest requeued after session loss`,
+				});
 				this.queueForPendingNode(
 					item.target,
 					item.event,
@@ -1072,6 +1086,18 @@ export class SpaceRuntime {
 				this.externalEventDeliveriesInFlight.delete(deliveryKey);
 			}
 		}
+	}
+
+	private resolveDigestDeliveryTarget(item: ExternalEventDigestItem): SubscriptionTarget {
+		const target = item.target;
+		const resolved = this.resolveSubscriptionTarget({
+			workflowRunId: target.workflowRunId,
+			taskId: target.taskId,
+			nodeId: target.nodeId,
+			agentName: target.agentName,
+		});
+		if (resolved.sessionId) return resolved;
+		return item.allowTargetSessionFallback ? target : resolved;
 	}
 
 	private async deliverToSession(
@@ -2862,7 +2888,7 @@ export class SpaceRuntime {
 					delivery.deliveryKey,
 					mode,
 					delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after runtime rehydrate`,
-					{ preserveAttemptCount: true }
+					{ preserveAttemptCount: true, createdAt: eventRecord.createdAt }
 				);
 			}
 		}

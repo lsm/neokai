@@ -860,6 +860,62 @@ describe('SpaceRuntime external event subscriptions', () => {
 		).toBe(true);
 	});
 
+	test('preserves deferred mode when digest fallback requeues after session loss', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-digest-fallback-lost',
+			startedAt: Date.now(),
+		});
+		const events = Array.from({ length: 11 }, (_, index) =>
+			makeEvent({
+				id: `evt-digest-fallback-lost-${index}`,
+				dedupeKey: `dedupe-digest-fallback-lost-${index}`,
+			})
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		tam.alive.delete('session-digest-fallback-lost');
+		nodeExecutionRepo.updateSessionId(execution.id, null);
+		expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBeNull();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const delivery = eventStore.listDeliveries(events[10]!.id)[0]!;
+		expect(delivery.state).toBe('pending');
+		expect(delivery.failureReason).toBe('deliveryMode:defer; digest requeued after session loss');
+		await runtime.stop();
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: createInternalCommandBus(),
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+		await runtime.rehydrateExecutors();
+		const rehydratedDelivery = eventStore.listDeliveries(events[10]!.id)[0]!;
+		expect(rehydratedDelivery.failureReason).toBe(
+			'deliveryMode:defer; digest requeued after session loss'
+		);
+		const queued = runtime as unknown as {
+			pendingExternalEventQueue: Map<string, Array<{ deliveryMode: string }>>;
+		};
+
+		expect(
+			[...queued.pendingExternalEventQueue.values()].some((items) =>
+				items.some((item) => item.deliveryMode === 'defer')
+			)
+		).toBe(true);
+	});
+
 	test('expires digest items preserved across stop before retry replay', async () => {
 		const { workflow, run, task } = await startRunWithSubscription();
 		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
