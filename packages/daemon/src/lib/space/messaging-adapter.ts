@@ -113,15 +113,10 @@ export class SpaceMessageResolver implements ActorResolver {
 			}
 			case 'role': {
 				const role = actorRole(address.role);
+				const workflowRunId = message.workflowRunId ?? this.context.workflowRunId;
 				const holders = this.permitRoleActors([
-					...actors.filter(
-						(actor) => actor.roles?.includes(address.role) || actor.roles?.includes(role)
-					),
-					...this.declaredRoleActors(
-						message.workflowRunId ?? this.context.workflowRunId,
-						address.role,
-						actors
-					),
+					...actors.filter((actor) => this.actorHasRole(actor, address.role, role, workflowRunId)),
+					...this.declaredRoleActors(workflowRunId, address.role, actors),
 				]);
 				const active = holders.filter((actor) => actor.status === 'active');
 				const inactive = holders.filter((actor) => actor.status === 'inactive');
@@ -227,6 +222,25 @@ export class SpaceMessageResolver implements ActorResolver {
 		return { actors: stableActors(permitted) };
 	}
 
+	private actorHasRole(
+		actor: ActorRef,
+		role: string,
+		encodedRole: string,
+		workflowRunId: string | undefined
+	): boolean {
+		if (actor.kind !== 'worker') {
+			return actor.roles?.includes(role) || actor.roles?.includes(encodedRole) || false;
+		}
+		const parsed = parseWorkerActorId(actor.actorId);
+		if (!parsed) return false;
+		if (workflowRunId && parsed.workflowRunId !== workflowRunId) return false;
+		return Boolean(
+			actor.roles?.includes(role) ||
+				actor.roles?.includes(encodedRole) ||
+				this.workerNodeMatchesRole(workflowRunId ?? parsed.workflowRunId, parsed.nodeId, role)
+		);
+	}
+
 	private permitRoleActors(actors: ActorRef[]): ActorRef[] {
 		if (!this.context.workflowRunId || !this.context.nodeId) return actors;
 		return actors.filter((actor) => {
@@ -275,6 +289,7 @@ export class SpaceMessageResolver implements ActorResolver {
 				.filter(
 					(agent) =>
 						agent.name === role ||
+						actorRole(agent.name) === role ||
 						node.id === role ||
 						node.name === role ||
 						actorRole(node.id) === role ||
@@ -286,6 +301,18 @@ export class SpaceMessageResolver implements ActorResolver {
 					return this.declaredWorkerActor(workflowRunId, node.id, agent.name);
 				})
 				.filter((actor): actor is ActorRef => Boolean(actor))
+		);
+	}
+
+	private workerNodeMatchesRole(workflowRunId: string, nodeId: string, role: string): boolean {
+		const workflow = this.workflowForRun(workflowRunId);
+		const node = workflow?.nodes.find((candidate) => candidate.id === nodeId);
+		return Boolean(
+			node &&
+				(node.id === role ||
+					node.name === role ||
+					actorRole(node.id) === role ||
+					actorRole(node.name) === role)
 		);
 	}
 

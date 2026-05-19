@@ -491,6 +491,86 @@ describe('Space messaging adapter', () => {
 		]);
 	});
 
+	it('resolves spawned workers for node-name role targets', async () => {
+		nodeExecutionRepo.create({
+			workflowRunId: runId,
+			workflowNodeId: 'node-deploy',
+			agentName: 'deployer',
+			agentId: spaceAgentRepo.getBySpaceId(spaceId)[0].id,
+			agentSessionId: 'deploy-session',
+			status: 'in_progress',
+		});
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@role:Deploy'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor)).toEqual([
+			expect.objectContaining({
+				actorId: `worker:${encodeURIComponent(runId)}:node-deploy:deployer`,
+				status: 'active',
+			}),
+		]);
+	});
+
+	it('includes declared worker slots for encoded agent-role targets', async () => {
+		nodeExecutionRepo.delete(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id
+		);
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@role:actor-role:reviewer'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor)).toEqual([
+			expect.objectContaining({
+				actorId: `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+				status: 'inactive',
+			}),
+		]);
+	});
+
+	it('scopes role worker candidates to the message workflow run', async () => {
+		nodeExecutionRepo.delete(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id
+		);
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@role:reviewer'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor.actorId)).toEqual([
+			`worker:${encodeURIComponent(runId)}:node-qa:reviewer`,
+			`worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+		]);
+		expect(result.resolved.every((target) => target.actor.status === 'inactive')).toBe(true);
+	});
+
 	it('queues missing context-selected worker slots instead of unrelated spawned slots', async () => {
 		nodeExecutionRepo.delete(
 			nodeExecutionRepo
