@@ -381,6 +381,96 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 
+	test('coalesces events over rate limit into a digest', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-rate-limit',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-rate-limit');
+
+		const events = Array.from({ length: 15 }, (_, index) =>
+			makeEvent({
+				id: `evt-rate-limit-${index}`,
+				dedupeKey: `dedupe-rate-limit-${index}`,
+				topic:
+					index % 2 === 0
+						? 'github/lsm/neokai/pull_request.review_submitted'
+						: 'github/lsm/neokai/pull_request.review_comment',
+				occurredAt: 1_700_000_000_000 + index,
+			})
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(injected).toHaveLength(11);
+		expect(injected.slice(0, 10).map((item) => JSON.parse(item.message).eventId)).toEqual(
+			events.slice(0, 10).map((event) => event.id)
+		);
+		expect(injected[10]!.message).toBe(
+			'5 events received for topics: github/lsm/neokai/pull_request.review_comment, github/lsm/neokai/pull_request.review_submitted (oldest: 2023-11-14T22:13:20.010Z, newest: 2023-11-14T22:13:20.014Z). Use subscribe_external_event to get details.'
+		);
+		for (const event of events) {
+			expect(eventStore.getById(event.id)?.state).toBe('delivered');
+			expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+		}
+	});
+
+	test('delivers events within rate limit normally', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-within-rate-limit',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-within-rate-limit');
+		const events = Array.from({ length: 10 }, (_, index) =>
+			makeEvent({ id: `evt-within-rate-${index}`, dedupeKey: `dedupe-within-rate-${index}` })
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(injected).toHaveLength(10);
+		expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual(
+			events.map((event) => event.id)
+		);
+	});
+
+	test('drops queued deliveries older than ttl instead of delivering them', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const event = makeEvent({ id: 'evt-expired-queued', dedupeKey: 'dedupe-expired-queued' });
+		await eventService.publish(event);
+		const originalNow = Date.now;
+		Date.now = () => originalNow() + 300_001;
+		try {
+			runtime.flushPendingNodeQueue({
+				workflowRunId: run.id,
+				taskId: task.id,
+				nodeId: 'code',
+				agentName: 'coder',
+				sessionId: 'session-expired-queued',
+			});
+		} finally {
+			Date.now = originalNow;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(injected).toHaveLength(0);
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('ttl_expired');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
 	test('enforces pending queue overflow cap and fails oldest delivery', async () => {
 		const { workflow, run, task } = await startRunWithSubscription();
 		const events = Array.from({ length: 51 }, (_, index) =>
@@ -1459,11 +1549,12 @@ describe('SpaceRuntime external event subscriptions', () => {
 
 		// Trigger the retry by waiting for the retry timer
 		await new Promise((resolve) => setTimeout(resolve, 1100));
+		await runtime.executeTick();
 
-		// The retry should check blocked-run activity and fail terminally
+		// Runtime recovery keeps the blocked run retryable and leaves delivery queued.
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
-		expect(delivery.state).toBe('failed');
-		expect(delivery.failureReason).toBe('run_not_externally_deliverable');
+		expect(delivery.state).toBe('pending');
+		expect(delivery.failureReason).toContain('simulated transient failure');
 	});
 
 	test('re-registers interests when recovering a terminal workflow run', async () => {
