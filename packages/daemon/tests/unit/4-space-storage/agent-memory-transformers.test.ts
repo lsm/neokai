@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { withoutAuthorization } from '../../../src/storage/repositories/agent-memory-fetch-options.ts';
 
-describe('agent memory embeddings', () => {
+describe('agent memory transformers embedder', () => {
 	test('removes authorization headers from redirected fetch options', () => {
 		const options = {
 			method: 'GET',
