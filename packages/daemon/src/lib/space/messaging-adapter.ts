@@ -191,7 +191,7 @@ export class SpaceMessageResolver implements ActorResolver {
 			if (declared && !hasDeclared) matches.push(declared);
 		}
 		let routable = matches.filter(isRoutable);
-		if (!agentName && !this.context.agentName && declaredAgentNames.length > 1) {
+		if (!agentName && declaredAgentNames.length > 1 && !declaredAgentName) {
 			return {
 				actors: [],
 				reason: `Worker target ${targetRef} is ambiguous; specify @worker:<node>/<agent>`,
@@ -272,7 +272,14 @@ export class SpaceMessageResolver implements ActorResolver {
 		if (!workflow) return [];
 		return workflow.nodes.flatMap((node) =>
 			node.agents
-				.filter((agent) => agent.name === role)
+				.filter(
+					(agent) =>
+						agent.name === role ||
+						node.id === role ||
+						node.name === role ||
+						actorRole(node.id) === role ||
+						actorRole(node.name) === role
+				)
 				.map((agent) => {
 					const actorId = workerActorId(workflowRunId, node.id, agent.name);
 					if (actors.some((actor) => actor.actorId === actorId)) return null;
@@ -348,9 +355,11 @@ export class SpaceDeliveryFacade {
 			if (target.actor.status === 'active' && this.config.deliverToSession) {
 				try {
 					const deliveredSessionId = await this.config.deliverToSession(target.actor, message);
-					delivery.state = 'delivered';
-					delivery.deliveredAt = Date.now();
-					if (deliveredSessionId) delivery.deliveredSessionId = deliveredSessionId;
+					if (deliveredSessionId) {
+						delivery.state = 'delivered';
+						delivery.deliveredAt = Date.now();
+						delivery.deliveredSessionId = deliveredSessionId;
+					}
 				} catch (error) {
 					delivery.state = 'failed';
 					delivery.attemptCount += 1;
