@@ -42,6 +42,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { formatAgentMessage } from '../agent-message-envelope';
+import { translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
@@ -960,7 +961,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			task_id?: string;
 			task_number?: number;
 			message: string;
-			node_id: string;
+			node_id?: string;
+			target?: string;
 		}): Promise<ToolResult> {
 			if (!taskAgentManager) {
 				return jsonResult({
@@ -1002,11 +1004,50 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
+			if (args.target === 'task-agent' || args.node_id === 'task-agent') {
+				return jsonResult({
+					success: false,
+					error: 'Target "task-agent" is no longer supported. Use @coordinator or node_id.',
+				});
+			}
+
+			// --- Generic actor target path ---
+			if (args.target) {
+				try {
+					const genericTarget = translateTaskMessageTarget(
+						{ target: args.target, nodeId: args.node_id },
+						{
+							workflowRunId: task.workflowRunId ?? '',
+							nodeExecutions: task.workflowRunId
+								? nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)
+								: [],
+							workflow: task.workflowRunId
+								? (() => {
+										const run = workflowRunRepo.getRun(task.workflowRunId!);
+										return run ? (workflowManager.getWorkflow(run.workflowId) ?? null) : null;
+									})()
+								: null,
+						}
+					);
+					if (genericTarget === '@coordinator' || genericTarget.startsWith('@role:')) {
+						return jsonResult({
+							success: false,
+							error: `Generic target ${genericTarget} is not routable from this tool yet. Use node_id for workflow workers.`,
+						});
+					}
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			}
+
 			// --- Path A: no node_id — target is required ---
 			if (!args.node_id) {
 				return jsonResult({
 					success: false,
-					error: 'Target agent is required. Use node_id to specify a target agent.',
+					error: 'Target agent is required. Use node_id or target to specify a recipient.',
 				});
 			}
 
@@ -2039,8 +2080,15 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 				message: z.string().describe('Message to send to the target node agent'),
 				node_id: z
 					.string()
+					.optional()
 					.describe(
-						'Required workflow node selector. Accepts a node_execution UUID or an agent name (e.g. "coder", "reviewer"). The message is routed to that node\'s sub-session; the node is activated automatically if it has no live session.'
+						'Workflow node selector. Accepts a node_execution UUID or an agent name (e.g. "coder", "reviewer"). The message is routed to that node\'s sub-session; the node is activated automatically if it has no live session.'
+					),
+				target: z
+					.string()
+					.optional()
+					.describe(
+						'Explicit generic target such as @coordinator, @role:task-manager, @session:<id>, or @worker:<node>/<agent>. Takes precedence over node_id when supported.'
 					),
 			},
 			(args) => handlers.send_message_to_task(args)

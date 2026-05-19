@@ -92,6 +92,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
+import { translateLegacyNodeTargets } from '../messaging-adapter';
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -620,6 +621,29 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 */
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message, data } = args;
+			let translatedTargets: string[] = [];
+			if (workflow) {
+				try {
+					translatedTargets = translateLegacyNodeTargets(target, {
+						spaceId,
+						workflowRunId,
+						workflowNodeId,
+						agentName: myAgentName,
+						workflow,
+						actors: nodeExecutionRepo.listByWorkflowRun(workflowRunId).map((execution) => ({
+							actorId: `worker:${[workflowRunId, execution.workflowNodeId, execution.agentName].map(encodeURIComponent).join(':')}`,
+							kind: 'worker' as const,
+							spaceId,
+							status: execution.agentSessionId ? ('active' as const) : ('inactive' as const),
+						})),
+					});
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			}
 
 			// Auto gate-write: if data is provided and the outbound channel to this
 			// target is gated, merge the data into the gate before delivery.
@@ -805,10 +829,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				});
 			}
 
+			const routedTarget =
+				translatedTargets.length > 0
+					? translatedTargets.length === 1
+						? translatedTargets[0]
+						: translatedTargets
+					: target;
 			const result = await agentMessageRouter.deliverMessage({
 				fromAgentName: myAgentName,
 				fromSessionId: mySessionId,
-				target,
+				target: routedTarget,
 				message,
 				data,
 			});

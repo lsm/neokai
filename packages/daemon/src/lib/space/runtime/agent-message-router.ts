@@ -16,6 +16,7 @@
  * is used by node-agent-tools to deliver messages between live sessions at runtime.
  */
 
+import { parseAddress } from '../../../../../messaging/src/address';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { WorkflowChannel } from '@neokai/shared';
@@ -152,6 +153,219 @@ const log = new Logger('agent-message-router');
 export class AgentMessageRouter {
 	constructor(private readonly config: AgentMessageRouterConfig) {}
 
+	private async deliverGenericMessage(params: {
+		fromAgentName: string;
+		fromSessionId: string;
+		targets: string[];
+		message: string;
+		data?: Record<string, unknown>;
+		slotToNode: Map<string, string>;
+	}): Promise<AgentMessageResult> {
+		const { fromAgentName, fromSessionId, targets, message, data, slotToNode } = params;
+		const {
+			nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels,
+			messageInjector,
+			channelRouter,
+			spaceAgentInjector,
+			pendingMessageRepo,
+			spaceId,
+			taskId,
+			taskNumber,
+			activateTargetSession,
+			onMessageQueued,
+		} = this.config;
+		const resolver = new ChannelResolver(workflowChannels);
+		const fromNodeName = slotToNode.get(fromAgentName) ?? fromAgentName;
+		const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+		let peers = allExecutions
+			.filter((e) => e.agentSessionId && e.agentSessionId !== fromSessionId)
+			.map((e) => ({ sessionId: e.agentSessionId!, agentName: e.agentName }));
+		const delivered: Array<{ agentName: string; sessionId: string }> = [];
+		const queued: Array<{ agentName: string; messageId: string }> = [];
+		const notFound: string[] = [];
+		const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
+		const dataAppendix =
+			data && Object.keys(data).length > 0
+				? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
+				: '';
+
+		for (const target of targets) {
+			const address = parseAddress(target);
+			if (address.kind === 'handle' && address.handle === 'coordinator') {
+				if (!spaceAgentInjector || !spaceId) {
+					notFound.push(target);
+					continue;
+				}
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'space-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
+				try {
+					await spaceAgentInjector(spaceId, envelopedMessage, null);
+					delivered.push({ agentName: 'space-agent', sessionId: `space:chat:${spaceId}` });
+				} catch (err) {
+					failed.push({
+						agentName: 'space-agent',
+						sessionId: `space:chat:${spaceId}`,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+				continue;
+			}
+			if (address.kind === 'session') {
+				if (!spaceAgentInjector || !spaceId) {
+					notFound.push(target);
+					continue;
+				}
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'space-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
+				try {
+					await spaceAgentInjector(spaceId, envelopedMessage, address.sessionId);
+					delivered.push({ agentName: 'space-agent', sessionId: address.sessionId });
+				} catch (err) {
+					failed.push({
+						agentName: 'space-agent',
+						sessionId: address.sessionId,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+				continue;
+			}
+			if (address.kind !== 'worker') {
+				notFound.push(target);
+				continue;
+			}
+			const runId = address.workflowRunId ?? workflowRunId;
+			if (runId !== workflowRunId) {
+				notFound.push(target);
+				continue;
+			}
+			const nodeName = decodeURIComponent(address.nodeId);
+			const agentName = address.agentName ? decodeURIComponent(address.agentName) : null;
+			if (!agentName) {
+				notFound.push(target);
+				continue;
+			}
+			if (!resolver.canSend(fromNodeName, nodeName) && !resolver.canSend(fromNodeName, agentName)) {
+				return {
+					success: false,
+					delivered: [],
+					failed: [],
+					reason: `Channel topology does not permit '${fromAgentName}' to send to: ${target}.`,
+					unauthorizedAgentNames: [target],
+					permittedTargets: resolver.getPermittedTargets(fromNodeName),
+				};
+			}
+			try {
+				await channelRouter?.deliverMessage(workflowRunId, fromAgentName, agentName, message);
+			} catch (err) {
+				return {
+					success: false,
+					delivered: [],
+					failed: [],
+					reason: err instanceof Error ? err.message : String(err),
+				};
+			}
+			if (!peers.some((peer) => peer.agentName === agentName) && activateTargetSession) {
+				try {
+					const activated = await activateTargetSession(agentName);
+					peers = [...peers, ...activated].filter((peer) => peer.sessionId !== fromSessionId);
+				} catch (err) {
+					log.warn(
+						`[AgentMessageRouter] failed to activate generic target "${agentName}": ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+			}
+			const sessions = peers.filter((peer) => peer.agentName === agentName);
+			if (sessions.length === 0) {
+				if (pendingMessageRepo && spaceId) {
+					const rawMessage = formatAgentMessage({
+						fromLevel: 'node-agent',
+						fromAgentName,
+						toLevel: 'node-agent',
+						body: `${message}${dataAppendix}`,
+						taskId,
+						taskNumber,
+						nodeId: fromAgentName,
+					});
+					const { record, deduped } = pendingMessageRepo.enqueue({
+						workflowRunId,
+						spaceId,
+						taskId: taskId ?? null,
+						sourceAgentName: fromAgentName,
+						targetKind: 'node_agent',
+						targetAgentName: agentName,
+						message: rawMessage,
+						idempotencyKey: JSON.stringify([fromSessionId, target, rawMessage]),
+						ttlMs: 60_000,
+						maxAttempts: 3,
+					});
+					queued.push({ agentName, messageId: record.id });
+					if (!deduped) onMessageQueued?.(agentName);
+				}
+				notFound.push(agentName);
+				continue;
+			}
+			for (const session of sessions) {
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'node-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
+				try {
+					await messageInjector(session.sessionId, envelopedMessage);
+					delivered.push(session);
+				} catch (err) {
+					failed.push({ ...session, error: err instanceof Error ? err.message : String(err) });
+				}
+			}
+		}
+
+		if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
+			return {
+				success: false,
+				delivered: [],
+				failed: [],
+				reason: `Could not deliver message to target agent(s): ${notFound.join(', ')}. The target is declared but no live session received the message.`,
+				queued: queued.length > 0 ? queued : undefined,
+				notFoundAgentNames: notFound,
+			};
+		}
+		if (delivered.length === 0 && queued.length === 0 && failed.length > 0) {
+			return {
+				success: false,
+				delivered,
+				failed,
+				notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+			};
+		}
+		return {
+			success: failed.length > 0 ? 'partial' : true,
+			delivered,
+			failed,
+			queued: queued.length > 0 ? queued : undefined,
+			notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+		};
+	}
+
 	/**
 	 * Deliver a message to the specified target.
 	 *
@@ -200,6 +414,16 @@ export class AgentMessageRouter {
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
 		const wantsSpaceAgent = target !== '*' && requestedTargets.includes('space-agent');
+		if (requestedTargets.length > 0 && requestedTargets.every(isGenericAddress)) {
+			return this.deliverGenericMessage({
+				fromAgentName,
+				fromSessionId,
+				targets: requestedTargets,
+				message,
+				data,
+				slotToNode,
+			});
+		}
 
 		// Channel topology required except for built-in inter-level targets.
 		if (resolver.isEmpty() && !(wantsSpaceAgent && spaceAgentInjector && spaceId)) {
@@ -611,5 +835,14 @@ export class AgentMessageRouter {
 			queued: queued.length > 0 ? queued : undefined,
 			notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 		};
+	}
+}
+
+function isGenericAddress(target: string): boolean {
+	try {
+		parseAddress(target);
+		return true;
+	} catch {
+		return false;
 	}
 }
