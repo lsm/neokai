@@ -698,7 +698,7 @@ export function createTables(db: BunDatabase): void {
 function createAgentMemoryTables(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_memory (
-			rowid INTEGER PRIMARY KEY,
+			id INTEGER PRIMARY KEY,
 			key TEXT NOT NULL,
 			space_id TEXT NOT NULL,
 			content TEXT NOT NULL,
@@ -708,6 +708,13 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			access_count INTEGER NOT NULL DEFAULT 0,
 			last_accessed_at INTEGER,
+			embedding_status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(embedding_status IN ('pending', 'ready', 'failed')),
+			embedding_model TEXT,
+			embedding_updated_at INTEGER,
+			embedding_error TEXT,
+			embedding_revision INTEGER NOT NULL DEFAULT 0,
+			embedding_token TEXT NOT NULL DEFAULT '',
 			UNIQUE(space_id, key),
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
@@ -718,31 +725,41 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			content,
 			tags,
 			content='space_agent_memory',
-			content_rowid='rowid',
+			content_rowid='id',
 			tokenize='trigram'
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS memory_vectors (
+			memory_id INTEGER PRIMARY KEY,
+			embedding BLOB NOT NULL,
+			dimensions INTEGER NOT NULL,
+			model TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
 		)
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
 		AFTER INSERT ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
-			VALUES (new.rowid, new.key, new.content, new.tags);
+			VALUES (new.id, new.key, new.content, new.tags);
 		END
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
 		AFTER DELETE ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
-			VALUES ('delete', old.rowid, old.key, old.content, old.tags);
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
 		END
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
 		AFTER UPDATE OF key, content, tags ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
-			VALUES ('delete', old.rowid, old.key, old.content, old.tags);
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
 			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
-			VALUES (new.rowid, new.key, new.content, new.tags);
+			VALUES (new.id, new.key, new.content, new.tags);
 		END
 	`);
 }
@@ -790,6 +807,9 @@ function createIndexes(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
 	);
 
 	// Room indexes
