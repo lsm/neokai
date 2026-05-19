@@ -79,12 +79,14 @@ class DeferredKeywordEmbedder implements AgentMemoryEmbedder {
 class FailingEmbedder implements AgentMemoryEmbedder {
 	model = 'test-failing';
 	dimensions = 3;
+	passageCalls = 0;
 
 	embedQuery(): Promise<Float32Array> {
 		return Promise.reject(new Error('embedding unavailable'));
 	}
 
 	embedPassage(): Promise<Float32Array> {
+		this.passageCalls++;
 		return Promise.reject(new Error('embedding unavailable'));
 	}
 }
@@ -686,6 +688,23 @@ describe('AgentMemoryRepository', () => {
 		expect(embedder.pendingCount).toBe(1);
 	});
 
+	test('startup backfill retries failed rows only once per pass', async () => {
+		const embedder = new FailingEmbedder();
+		repo = new AgentMemoryRepository(db, undefined, embedder);
+		repo.write({
+			spaceId: 'space-a',
+			key: 'backfill.failed.once',
+			content: 'Delete stale session records after retention expires.',
+		});
+		await flushPromises();
+		expect(embedder.passageCalls).toBe(1);
+
+		repo.backfillPendingEmbeddings();
+		await flushPromises();
+
+		expect(embedder.passageCalls).toBe(2);
+	});
+
 	test('vector search ranks ready vectors beyond the first 100 rows', async () => {
 		repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
 		for (let index = 0; index < 120; index++) {
@@ -716,5 +735,29 @@ describe('AgentMemoryRepository', () => {
 		const page = await repo.list('space-a', { query: 'pagination topic', limit: 10, offset: 110 });
 
 		expect(page).toHaveLength(10);
+	});
+
+	test('filtered list keeps the default candidate pool for paginated hybrid ranking', async () => {
+		for (let index = 0; index < 120; index++) {
+			repo.write({
+				spaceId: 'space-a',
+				key: `hybrid.${index.toString().padStart(3, '0')}`,
+				content: `Hybrid pagination topic ${index}`,
+			});
+		}
+
+		const fullPage = await repo.list('space-a', {
+			query: 'hybrid pagination topic',
+			limit: 30,
+		});
+		const page = await repo.list('space-a', {
+			query: 'hybrid pagination topic',
+			limit: 10,
+			offset: 10,
+		});
+
+		expect(page.map((memory) => memory.key)).toEqual(
+			fullPage.slice(10, 20).map((memory) => memory.key)
+		);
 	});
 });

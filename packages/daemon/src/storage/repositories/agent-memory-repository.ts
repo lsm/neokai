@@ -199,9 +199,8 @@ export class AgentMemoryRepository {
 		const ftsQuery = buildFtsQuery(query);
 		const limit = normalizeLimit(options?.limit ?? 10, options?.maxLimit ?? 20);
 		const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
-		const poolLimit = options?.offset
-			? limit + offset
-			: (options?.maxLimit ?? VECTOR_CANDIDATE_LIMIT);
+		const candidateLimit = options?.maxLimit ?? VECTOR_CANDIDATE_LIMIT;
+		const poolLimit = Math.max(candidateLimit, limit + offset);
 
 		const ftsRows = ftsQuery ? this.searchFts(spaceId, ftsQuery, poolLimit, 0) : [];
 		const vectorRows = await this.searchVector(spaceId, query, poolLimit);
@@ -283,6 +282,7 @@ export class AgentMemoryRepository {
 
 	private async backfillEmbeddingBatches(): Promise<void> {
 		if (!this.embedder) return;
+		const attemptedMemoryIds = new Set<number>();
 		for (;;) {
 			const rows = this.db
 				.prepare(
@@ -301,8 +301,12 @@ export class AgentMemoryRepository {
 					this.embedder.dimensions,
 					EMBEDDING_BACKFILL_BATCH_SIZE
 				) as AgentMemoryRow[];
-			if (rows.length === 0) return;
-			for (const row of rows) await this.updateEmbedding(row);
+			const unattemptedRows = rows.filter((row) => !attemptedMemoryIds.has(row.id));
+			if (unattemptedRows.length === 0) return;
+			for (const row of unattemptedRows) {
+				attemptedMemoryIds.add(row.id);
+				await this.updateEmbedding(row);
+			}
 		}
 	}
 
