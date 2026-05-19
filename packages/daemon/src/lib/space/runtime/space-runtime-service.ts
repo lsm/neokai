@@ -10,12 +10,21 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { McpServerConfig, Session, Space, SpaceTask } from '@neokai/shared';
+import type { AgentDefinition, McpServerConfig, Session, Space, SpaceTask } from '@neokai/shared';
+import { KNOWN_TOOLS } from '@neokai/shared';
+import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
+import { SpaceActorRegistryAdapter } from '../actor-registry';
+import { SpaceMessageResolver } from '../messaging-adapter';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository';
+import type { SessionRepository } from '../../../storage/repositories/session-repository';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
+import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
+import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
@@ -34,6 +43,7 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
+import { resolveCustomAgentPrompt } from '../agents/custom-agent';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
@@ -45,8 +55,29 @@ import type { DaemonCommandMap, InternalCommandBus } from '../../internal-comman
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import type { ExternalEventService } from '../../external-events/external-event-service';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
+import type { SDKUserMessage } from '@neokai/shared/sdk';
+import type { UUID } from 'crypto';
 
 const log = new Logger('space-runtime-service');
+
+const LONG_TERM_AGENT_SESSION_FEATURES = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: false,
+} as const;
+
+const CLAUDE_CODE_BUILTIN_TOOLS = [
+	...KNOWN_TOOLS,
+	'NotebookEdit',
+	'TodoWrite',
+	'AskUserQuestion',
+	'EnterPlanMode',
+	'ExitPlanMode',
+	'Skill',
+	'ToolSearch',
+] as const;
 
 export interface SpaceRuntimeServiceConfig {
 	db: BunDatabase;
@@ -132,6 +163,18 @@ export interface SpaceRuntimeServiceConfig {
 	replyRoutingRegistry?: ReplyRoutingRegistry;
 	/** Persistent per-space agent memory repository. */
 	memoryRepo?: AgentMemoryRepository;
+	/** Repositories used by generic actor messaging for long-term Space agents. */
+	actorRegistryRepos?: {
+		spaceRepo: SpaceRepository;
+		sessionRepo: SessionRepository;
+		spaceAgentRepo: SpaceAgentRepository;
+		workflowRepo: SpaceWorkflowRepository;
+		workflowRunRepo: SpaceWorkflowRunRepository;
+		nodeExecutionRepo: NodeExecutionRepository;
+		pendingMessageRepo?: PendingAgentMessageRepository;
+	};
+	/** Durable inbox for inactive long-term Space agents. */
+	spaceAgentInboxRepo?: SpaceAgentInboxRepository;
 	/** Optional goal service for processing terminal goal-task side effects. */
 	goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
 }
@@ -145,6 +188,7 @@ export class SpaceRuntimeService {
 	private taskAgentManager: TaskAgentManager | null = null;
 	/** Resolved nodeExecutionRepo — created from db if not provided in config. */
 	private readonly nodeExecutionRepo: NodeExecutionRepository;
+	private readonly actorRegistry: SpaceActorRegistryAdapter | null;
 	/** Audit log repository for MCP write operations. */
 	private readonly auditLogRepo: McpAuditLogRepository;
 	/** Stores db-query server instances per space for cleanup on stop. */
@@ -185,6 +229,9 @@ export class SpaceRuntimeService {
 		// Ensure nodeExecutionRepo is available — create from db if not provided.
 		this.nodeExecutionRepo =
 			this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+		this.actorRegistry = config.actorRegistryRepos
+			? new SpaceActorRegistryAdapter(config.actorRegistryRepos)
+			: null;
 		this.auditLogRepo = new McpAuditLogRepository(this.config.db);
 		this.runtime = new SpaceRuntime({
 			...config,
@@ -239,6 +286,270 @@ export class SpaceRuntimeService {
 	setTaskAgentManager(manager: TaskAgentManager): void {
 		this.taskAgentManager = manager;
 		this.runtime.setTaskAgentManager(manager);
+	}
+
+	longTermAgentDeliveryCallbacks():
+		| {
+				deliverToSession: (actor: ActorRef, message: MessageRecord) => Promise<string | null>;
+				queueForActivation: (actor: ActorRef, message: MessageRecord) => Promise<string | null>;
+		  }
+		| undefined {
+		if (!this.config.sessionManager || !this.config.spaceAgentInboxRepo) return undefined;
+		return {
+			deliverToSession: (actor, message) => this.deliverToLongTermAgent(actor, message),
+			queueForActivation: (actor, message) => this.queueLongTermAgentMessage(actor, message),
+		};
+	}
+
+	createMessageResolver(
+		spaceId: string,
+		context?: { workflowRunId?: string; nodeId?: string; agentName?: string }
+	): SpaceMessageResolver | undefined {
+		if (!this.actorRegistry || !this.config.actorRegistryRepos) return undefined;
+		return new SpaceMessageResolver(
+			{
+				actorRegistry: this.actorRegistry,
+				workflowRepo: this.config.actorRegistryRepos.workflowRepo,
+				workflowRunRepo: this.config.actorRegistryRepos.workflowRunRepo,
+			},
+			{ spaceId, ...context }
+		);
+	}
+
+	private async deliverToLongTermAgent(
+		actor: ActorRef,
+		message: MessageRecord
+	): Promise<string | null> {
+		const session = await this.ensureLongTermAgentSession(actor);
+		if (!session) return null;
+		await this.injectLongTermAgentMessage(session, message.body);
+		return session.getSessionData().id;
+	}
+
+	private async queueLongTermAgentMessage(
+		actor: ActorRef,
+		message: MessageRecord
+	): Promise<string | null> {
+		const inboxRepo = this.config.spaceAgentInboxRepo;
+		if (!inboxRepo) return null;
+		const agentId = agentIdFromActorId(actor.actorId);
+		if (!agentId) return null;
+		const sourceSessionId = sourceSessionIdFromActorId(message.senderActorId);
+		const { record } = inboxRepo.enqueue({
+			spaceId: message.spaceId,
+			targetAgentId: agentId,
+			sourceActorId: message.senderActorId,
+			sourceSessionId,
+			message: message.body,
+			messageRecordJson: JSON.stringify(message),
+			idempotencyKey: message.idempotencyKey ?? message.messageId,
+		});
+		void this.activateLongTermAgentAndFlush(actor, record.id).catch((err) => {
+			inboxRepo.markAttemptFailed(record.id, err instanceof Error ? err.message : String(err));
+			log.warn(
+				`Long-term Space agent activation failed for ${actor.actorId}: ${err instanceof Error ? err.message : String(err)}`
+			);
+		});
+		return record.id;
+	}
+
+	private async activateLongTermAgentAndFlush(
+		actor: ActorRef,
+		queuedMessageId?: string
+	): Promise<void> {
+		const session = await this.ensureLongTermAgentSession(actor);
+		if (!session) return;
+		await this.flushLongTermAgentInbox(actor, session, queuedMessageId);
+	}
+
+	private async flushLongTermAgentInbox(
+		actor: ActorRef,
+		session: {
+			getSessionData(): Session;
+			ensureQueryStarted(): Promise<void>;
+			messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
+		},
+		preferredMessageId?: string
+	): Promise<void> {
+		const inboxRepo = this.config.spaceAgentInboxRepo;
+		if (!inboxRepo) return;
+		const agentId = agentIdFromActorId(actor.actorId);
+		if (!agentId) return;
+		inboxRepo.expireStale(actor.spaceId);
+		const pending = inboxRepo.listPendingForAgent(actor.spaceId, agentId);
+		const ordered = preferredMessageId
+			? [
+					...pending.filter((row) => row.id === preferredMessageId),
+					...pending.filter((row) => row.id !== preferredMessageId),
+				]
+			: pending;
+		for (const row of ordered) {
+			try {
+				await this.injectLongTermAgentMessage(session, row.message, row.id);
+				inboxRepo.markDelivered(row.id, session.getSessionData().id);
+			} catch (err) {
+				inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
+			}
+		}
+	}
+
+	private async injectLongTermAgentMessage(
+		session: {
+			getSessionData(): Session;
+			ensureQueryStarted(): Promise<void>;
+			messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
+		},
+		message: string,
+		messageId?: string
+	): Promise<string> {
+		const id = messageId ?? generateRuntimeMessageId();
+		const sessionId = session.getSessionData().id;
+		const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
+			type: 'user' as const,
+			uuid: id as UUID,
+			session_id: sessionId,
+			parent_tool_use_id: null,
+			isSynthetic: true,
+			message: {
+				role: 'user' as const,
+				content: [{ type: 'text' as const, text: message }],
+			},
+		};
+		await session.ensureQueryStarted();
+		this.config.reactiveDb?.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+		await session.messageQueue.enqueueWithId(id, message);
+		return id;
+	}
+
+	private async ensureLongTermAgentSession(actor: ActorRef) {
+		const sessionManager = this.config.sessionManager;
+		if (!sessionManager) return null;
+		const agentId = agentIdFromActorId(actor.actorId);
+		if (!agentId) return null;
+		const agent = this.config.spaceAgentManager.getById(agentId);
+		if (!agent || agent.spaceId !== actor.spaceId) return null;
+		const space = await this.config.spaceManager.getSpace(actor.spaceId);
+		if (!space) return null;
+		const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
+		const agentKey = sanitizeLongTermAgentKey(agent.name);
+		let session = await sessionManager.getSessionAsync(sessionId);
+		if (!session) {
+			const resolvedPrompt = resolveCustomAgentPrompt(agent, {
+				resolutionContext: { agentId: agent.id, agentName: agent.name },
+			});
+			const customTools = agent.tools && agent.tools.length > 0 ? agent.tools : undefined;
+			const customDisallowedBuiltins = customTools
+				? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
+				: [];
+			await sessionManager.createSession({
+				sessionId,
+				workspacePath: space.workspacePath,
+				title: `${agent.name} inbox`,
+				spaceId: space.id,
+				worktreeMode: 'direct',
+				config: {
+					model: agent.model ?? space.defaultModel,
+					provider: agent.provider as Session['config']['provider'],
+					thinkingLevel: agent.thinkingLevel,
+					systemPrompt: {
+						type: 'preset',
+						preset: 'claude_code',
+						append: resolvedPrompt.value,
+					},
+					features: LONG_TERM_AGENT_SESSION_FEATURES,
+					...(customTools
+						? {
+								sdkToolsPreset: customTools,
+								allowedTools: customTools,
+								disallowedTools: customDisallowedBuiltins,
+							}
+						: {}),
+					agent: customTools ? agentKey : undefined,
+					agents: customTools
+						? {
+								[agentKey]: {
+									description: agent.description ?? `Space agent: ${agent.name}`,
+									disallowedTools: customDisallowedBuiltins,
+									model: 'inherit',
+									prompt: resolvedPrompt.value,
+								} satisfies AgentDefinition,
+							}
+						: undefined,
+					settingSources: agent.settingSources ?? space.settingSources,
+				},
+			});
+			session = await sessionManager.getSessionAsync(sessionId);
+			const currentMetadata = session?.getSessionData().metadata;
+			if (currentMetadata) {
+				this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
+					metadata: {
+						...currentMetadata,
+						promptProvenance: {
+							source: resolvedPrompt.source,
+							hash: resolvedPrompt.hash,
+							agentId: agent.id,
+							agentName: agent.name,
+						},
+					},
+				});
+			}
+		}
+		if (!session) return null;
+		const mcpServers: Record<string, McpServerConfig> = {
+			'space-agent-tools': this.buildLongTermAgentMcpServer(
+				space,
+				agent.name,
+				sessionId
+			) as unknown as McpServerConfig,
+		};
+		if (this.config.memoryRepo) {
+			mcpServers['agent-memory'] = createAgentMemoryMcpServer({
+				spaceId: space.id,
+				memoryRepo: this.config.memoryRepo,
+				mySessionId: sessionId,
+			}) as unknown as McpServerConfig;
+		}
+		if (this.config.dbPath) {
+			mcpServers['db-query'] = createDbQueryMcpServer({
+				dbPath: this.config.dbPath,
+				scopeType: 'space',
+				scopeValue: space.id,
+			}) as unknown as McpServerConfig;
+		}
+		session.mergeRuntimeMcpServers(mcpServers);
+		return session;
+	}
+
+	private buildLongTermAgentMcpServer(space: Space, agentName: string, sessionId: string) {
+		return createSpaceAgentMcpServer({
+			spaceId: space.id,
+			runtime: this.runtime,
+			workflowManager: this.config.spaceWorkflowManager,
+			spaceManager: this.config.spaceManager,
+			taskRepo: this.config.taskRepo,
+			nodeExecutionRepo: this.nodeExecutionRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			taskManager: new SpaceTaskManager(this.config.db, space.id, this.config.reactiveDb),
+			spaceAgentManager: this.config.spaceAgentManager,
+			taskAgentManager: this.taskAgentManager ?? undefined,
+			gateDataRepo: this.config.gateDataRepo,
+			internalEventBus: this.config.internalEventBus,
+			onGateChanged: (runId, gateId) => {
+				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
+			},
+			pendingMessageQueue: this.config.pendingMessageRepo,
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await this.config.spaceManager.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
+			myAgentName: agentName,
+			mySessionId: sessionId,
+			auditLogRepo: this.auditLogRepo,
+			scheduleService: this.config.scheduleService,
+			replyRoutingRegistry: this.config.replyRoutingRegistry,
+			messageResolver: this.createMessageResolver(space.id),
+			longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
+		});
 	}
 
 	/**
@@ -798,6 +1109,8 @@ export class SpaceRuntimeService {
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
 			replyRoutingRegistry: this.config.replyRoutingRegistry,
+			messageResolver: this.createMessageResolver(space.id),
+			longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
 		});
 
 		const additional: Record<string, McpServerConfig> = {
@@ -910,6 +1223,8 @@ export class SpaceRuntimeService {
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
 			replyRoutingRegistry: this.config.replyRoutingRegistry,
+			messageResolver: this.createMessageResolver(space.id),
+			longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.
@@ -1240,4 +1555,36 @@ export class SpaceRuntimeService {
 		const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
 		return recovered.task;
 	}
+}
+
+function agentIdFromActorId(actorId: string): string | null {
+	if (!actorId.startsWith('agent:')) return null;
+	try {
+		return decodeURIComponent(actorId.slice('agent:'.length));
+	} catch {
+		return null;
+	}
+}
+
+function sourceSessionIdFromActorId(actorId: string): string | null {
+	if (!actorId.startsWith('session:')) return null;
+	return actorId.slice('session:'.length) || null;
+}
+
+function longTermAgentSessionId(spaceId: string, agentId: string): string {
+	return `space:agent:${encodeURIComponent(spaceId)}:${encodeURIComponent(agentId)}`;
+}
+
+function generateRuntimeMessageId(): string {
+	return `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+function sanitizeLongTermAgentKey(name: string): string {
+	return (
+		name
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '')
+			.slice(0, 40) || 'space-agent'
+	);
 }

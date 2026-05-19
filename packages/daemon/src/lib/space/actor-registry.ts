@@ -103,7 +103,21 @@ export class SpaceActorRegistryAdapter {
 			handleCounts.set(slug, (handleCounts.get(slug) ?? 0) + 1);
 		}
 
-		return agents.map((agent) => agentActor(agent, handleCounts));
+		return agents.map((agent) =>
+			agentActor(agent, handleCounts, this.findLongTermAgentSession(spaceId, agent.id))
+		);
+	}
+
+	private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {
+		const canonicalId = longTermAgentSessionId(spaceId, agentId);
+		const canonical = this.repos.sessionRepo.getSession(canonicalId);
+		if (canonical && isSessionInSpace(canonical, spaceId)) return canonical;
+
+		return (
+			this.repos.sessionRepo
+				.listSessionsBySpaceAgent(spaceId, agentId)
+				.find((session) => isSessionInSpace(session, spaceId)) ?? null
+		);
 	}
 
 	private findCoordinatorSession(spaceId: string): Session | null {
@@ -164,7 +178,11 @@ function sessionActorForSession(session: Session, spaceId: string): ActorRef | n
 	};
 }
 
-function agentActor(agent: SpaceAgent, handleCounts: Map<string, number>): ActorRef {
+function agentActor(
+	agent: SpaceAgent,
+	handleCounts: Map<string, number>,
+	session: Session | null
+): ActorRef {
 	const slug = baseHandleSlug(agent.name, agent.id);
 	const handleSlug = handleCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
 	return {
@@ -173,7 +191,7 @@ function agentActor(agent: SpaceAgent, handleCounts: Map<string, number>): Actor
 		spaceId: agent.spaceId,
 		handle: `@${handleSlug}`,
 		roles: unique(['space-agent', routingRole(handleSlug)]),
-		status: 'active',
+		status: session ? statusFromSession(session) : 'inactive',
 	};
 }
 
@@ -214,6 +232,10 @@ function pendingWorkerActors(
 
 function workerActorId(workflowRunId: string, nodeId: string, agentName: string): string {
 	return `worker:${[workflowRunId, nodeId, agentName].map(encodeActorIdComponent).join(':')}`;
+}
+
+function longTermAgentSessionId(spaceId: string, agentId: string): string {
+	return `space:agent:${encodeActorIdComponent(spaceId)}:${encodeActorIdComponent(agentId)}`;
 }
 
 function workerHandle(workflowRunId: string, nodeId: string, agentName: string): string {

@@ -641,6 +641,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 136: Add agent-memory embedding status and vector storage.
 	runMigration136(db);
+
+	// Migration 137: Add durable inbox for long-term Space agents.
+	runMigration137(db);
 }
 
 /**
@@ -9431,6 +9434,49 @@ export function runMigration135(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_space_status ` +
 			`ON pending_agent_messages(space_id, status, created_at)`
+	);
+}
+
+/**
+ * Migration 137: Add durable inbox for long-term Space agents.
+ *
+ * Workflow-node pending messages are scoped to a workflow run. Long-term Space
+ * agents are space-scoped and can receive DMs from ad-hoc sessions or workers,
+ * so they need a separate inbox that can wake/replay their stable session.
+ */
+export function runMigration137(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_inbox_messages (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			target_agent_id TEXT NOT NULL,
+			source_actor_id TEXT NOT NULL,
+			source_session_id TEXT,
+			message TEXT NOT NULL,
+			message_record_json TEXT,
+			idempotency_key TEXT,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			max_attempts INTEGER NOT NULL DEFAULT 5,
+			last_attempt_at INTEGER,
+			last_error TEXT,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('pending', 'delivered', 'expired', 'failed')),
+			delivered_at INTEGER,
+			delivered_session_id TEXT,
+			expires_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (target_agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_inbox_target_status ` +
+			`ON space_agent_inbox_messages(space_id, target_agent_id, status, created_at)`
+	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agent_inbox_idempotency ` +
+			`ON space_agent_inbox_messages(space_id, target_agent_id, idempotency_key) ` +
+			`WHERE idempotency_key IS NOT NULL AND status = 'pending'`
 	);
 }
 
