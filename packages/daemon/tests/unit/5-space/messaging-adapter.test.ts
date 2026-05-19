@@ -214,6 +214,40 @@ describe('Space messaging adapter', () => {
 		]);
 	});
 
+	it('falls back to permitted inactive role holders when active holders are rejected', async () => {
+		nodeExecutionRepo.create({
+			workflowRunId: runId,
+			workflowNodeId: 'node-qa',
+			agentName: 'reviewer',
+			agentId: spaceAgentRepo.getBySpaceId(spaceId)[0].id,
+			agentSessionId: 'qa-session',
+			status: 'in_progress',
+		});
+		nodeExecutionRepo.updateStatus(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id,
+			'pending'
+		);
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@role:reviewer'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor.actorId)).toEqual([
+			`worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+		]);
+		expect(result.resolved[0].actor.status).toBe('inactive');
+	});
+
 	it('errors instead of falling back for stale handles and forbidden worker topology', async () => {
 		const resolver = new SpaceMessageResolver(
 			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
@@ -332,6 +366,33 @@ describe('Space messaging adapter', () => {
 		]);
 	});
 
+	it('queues declared workflow workers that have not spawned yet', async () => {
+		nodeExecutionRepo.delete(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id
+		);
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@worker:Review/reviewer'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor)).toEqual([
+			expect.objectContaining({
+				actorId: `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+				status: 'inactive',
+			}),
+		]);
+	});
+
 	it('returns unresolved deliveries for malformed worker escapes', async () => {
 		const resolver = new SpaceMessageResolver(
 			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
@@ -396,6 +457,13 @@ describe('Space messaging adapter', () => {
 	});
 
 	it('maps legacy senders and terminal deliveries without inventing actors', () => {
+		const observerExecution = nodeExecutionRepo
+			.listByWorkflowRun(runId)
+			.find(
+				(execution) =>
+					execution.workflowNodeId === 'node-review' && execution.agentName === 'observer'
+			)!;
+		nodeExecutionRepo.updateStatus(observerExecution.id, 'cancelled');
 		const actors = registry.listActors(spaceId);
 		const queued = pendingMessageRepo.enqueue({
 			workflowRunId: runId,
@@ -406,6 +474,18 @@ describe('Space messaging adapter', () => {
 			targetAgentName: 'reviewer',
 			message: 'queued review',
 		}).record;
+		const archivedSender = pendingMessageToMessageRecord(
+			{
+				...queued,
+				sourceAgentName: 'observer',
+				targetAgentName: 'reviewer',
+			},
+			actors
+		);
+		expect(archivedSender.senderActorId).toBe(
+			`worker:${encodeURIComponent(runId)}:node-review:observer`
+		);
+
 		const mappedWorkerSender = pendingMessageToMessageRecord(queued, actors);
 		expect(mappedWorkerSender.senderActorId).toBe(
 			`worker:${encodeURIComponent(runId)}:node-coding:coder`
@@ -417,14 +497,28 @@ describe('Space messaging adapter', () => {
 		);
 		expect(coordinator.senderActorId).toBe(`agent:coordinator:${spaceId}`);
 
+		nodeExecutionRepo.updateStatus(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id,
+			'cancelled'
+		);
+		const actorsWithArchivedReviewer = registry.listActors(spaceId);
 		const delivered = {
 			...queued,
+			targetAgentName: 'observer',
 			status: 'delivered' as const,
-			deliveredSessionId: 'reviewer',
+			deliveredSessionId: 'observer',
 			deliveredAt: Date.now(),
 		};
-		expect(pendingMessageToDeliveryRecords(delivered, actors)).toEqual([
-			expect.objectContaining({ targetActorId: undefined, state: 'delivered' }),
+		expect(pendingMessageToDeliveryRecords(delivered, actorsWithArchivedReviewer)).toEqual([
+			expect.objectContaining({
+				targetActorId: `worker:${encodeURIComponent(runId)}:node-review:observer`,
+				state: 'delivered',
+			}),
 		]);
 
 		const failed = { ...queued, status: 'failed' as const };

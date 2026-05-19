@@ -113,15 +113,16 @@ export class SpaceMessageResolver implements ActorResolver {
 			}
 			case 'role': {
 				const role = actorRole(address.role);
-				const holders = actors.filter(
-					(actor) => actor.roles?.includes(address.role) || actor.roles?.includes(role)
+				const holders = this.permitRoleActors(
+					actors.filter(
+						(actor) => actor.roles?.includes(address.role) || actor.roles?.includes(role)
+					)
 				);
 				const active = holders.filter((actor) => actor.status === 'active');
 				const inactive = holders.filter((actor) => actor.status === 'inactive');
 				const routable = active.length > 0 ? active : inactive;
-				const permitted = this.permitRoleActors(routable);
-				return permitted.length > 0
-					? { actors: stableActors(permitted) }
+				return routable.length > 0
+					? { actors: stableActors(routable) }
 					: { actors: [], reason: `No routable actor found for role ${address.role}` };
 			}
 			case 'session': {
@@ -177,6 +178,10 @@ export class SpaceMessageResolver implements ActorResolver {
 			if (parsed.nodeId !== targetNodeId) return false;
 			return agentName ? parsed.agentName === agentName.value : true;
 		});
+		if (matches.length === 0) {
+			const declared = this.declaredWorkerActor(workflowRunId, targetNodeId, agentName?.value);
+			if (declared) matches.push(declared);
+		}
 		let routable = matches.filter(isRoutable);
 		if (!agentName && this.context.agentName) {
 			const contextMatches = routable.filter(
@@ -239,6 +244,25 @@ export class SpaceMessageResolver implements ActorResolver {
 			[fromNodeName, this.context.agentName],
 			[targetNodeName, parsed.agentName]
 		);
+	}
+
+	private declaredWorkerActor(
+		workflowRunId: string,
+		nodeId: string,
+		agentName: string | undefined
+	): ActorRef | null {
+		if (!agentName) return null;
+		const workflow = this.workflowForRun(workflowRunId);
+		const node = workflow?.nodes.find((candidate) => candidate.id === nodeId);
+		if (!node?.agents.some((agent) => agent.name === agentName)) return null;
+		return {
+			actorId: workerActorId(workflowRunId, nodeId, agentName),
+			kind: 'worker',
+			spaceId: this.context.spaceId,
+			handle: workerHandle(workflowRunId, nodeId, agentName),
+			roles: uniqueStrings([actorRole(agentName), actorRole(nodeId)]),
+			status: 'inactive',
+		};
 	}
 
 	private workflowForRun(workflowRunId: string) {
@@ -388,7 +412,8 @@ function legacyTargetActors(row: PendingAgentMessageRecord, actors: ActorRef[]):
 		return actors.filter((actor) => actor.handle === '@coordinator' && isRoutable(actor));
 	}
 	const matches = actors.filter((actor) => {
-		if (actor.kind !== 'worker' || !isRoutable(actor)) return false;
+		if (actor.kind !== 'worker') return false;
+		if (row.status === 'pending' && !isRoutable(actor)) return false;
 		const parsed = parseWorkerActorId(actor.actorId);
 		return parsed?.workflowRunId === row.workflowRunId && parsed.agentName === row.targetAgentName;
 	});
@@ -421,7 +446,7 @@ function legacySenderActorId(row: PendingAgentMessageRecord, actors: ActorRef[])
 		return `agent:coordinator:${row.spaceId}`;
 	}
 	const matches = actors.filter((actor) => {
-		if (actor.kind !== 'worker' || !isRoutable(actor)) return false;
+		if (actor.kind !== 'worker') return false;
 		const parsed = parseWorkerActorId(actor.actorId);
 		return parsed?.workflowRunId === row.workflowRunId && parsed.agentName === row.sourceAgentName;
 	});
@@ -482,6 +507,14 @@ function decodeAddressComponent(
 		}
 		throw error;
 	}
+}
+
+function workerActorId(workflowRunId: string, nodeId: string, agentName: string): string {
+	return `worker:${[workflowRunId, nodeId, agentName].map(encodeURIComponent).join(':')}`;
+}
+
+function workerHandle(workflowRunId: string, nodeId: string, agentName: string): string {
+	return `@worker:${[workflowRunId, nodeId, agentName].map(encodeURIComponent).join('/')}`;
 }
 
 function parseWorkerActorId(
