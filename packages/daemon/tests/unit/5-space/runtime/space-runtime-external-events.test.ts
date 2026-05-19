@@ -787,6 +787,171 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected.some((item) => item.message.includes(events[10]!.id))).toBe(true);
 	});
 
+	test('preserves deferred mode for unflushed digest deliveries after rehydrate', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-digest-rehydrate-defer',
+			startedAt: Date.now(),
+		});
+		const events = Array.from({ length: 11 }, (_, index) =>
+			makeEvent({
+				id: `evt-digest-rehydrate-defer-${index}`,
+				dedupeKey: `dedupe-digest-rehydrate-defer-${index}`,
+			})
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		await runtime.stop();
+		const delivery = eventStore.listDeliveries(events[10]!.id)[0]!;
+		expect(delivery.failureReason).toBe('deliveryMode:defer; digest pending during runtime stop');
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus: createInternalCommandBus(),
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+		await runtime.rehydrateExecutors();
+		const queued = runtime as unknown as {
+			pendingExternalEventQueue: Map<string, Array<{ deliveryMode: string }>>;
+		};
+
+		expect(
+			[...queued.pendingExternalEventQueue.values()].some((items) =>
+				items.some((item) => item.deliveryMode === 'defer')
+			)
+		).toBe(true);
+	});
+
+	test('expires digest items preserved across stop before retry replay', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-digest-expire-stop',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-digest-expire-stop');
+		const events = Array.from({ length: 11 }, (_, index) =>
+			makeEvent({
+				id: `evt-digest-expire-stop-${index}`,
+				dedupeKey: `dedupe-digest-expire-stop-${index}`,
+			})
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		await runtime.stop();
+		const originalNow = Date.now;
+		Date.now = () => originalNow() + 300_001;
+		try {
+			runtime.start();
+		} finally {
+			Date.now = originalNow;
+		}
+
+		expect(injected.some((item) => item.message.includes(events[10]!.id))).toBe(false);
+		const delivery = eventStore.listDeliveries(events[10]!.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('ttl_expired');
+	});
+
+	test('preserves large digest backlog during stop without pending queue overflow', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-digest-large-stop',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-digest-large-stop');
+		const events = Array.from({ length: 61 }, (_, index) =>
+			makeEvent({
+				id: `evt-digest-large-stop-${index}`,
+				dedupeKey: `dedupe-digest-large-stop-${index}`,
+			})
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		await runtime.stop();
+
+		for (const event of events.slice(10)) {
+			const delivery = eventStore.listDeliveries(event.id)[0]!;
+			expect(delivery.state).toBe('pending');
+			expect(delivery.failureReason).not.toBe('pending_node_queue_overflow');
+		}
+	});
+
+	test('preserves original queue age across transient retry requeues', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-retry-age',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-retry-age');
+		await runtime.stop();
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async () => ({
+			ok: false,
+			error: 'temporary retry age failure',
+		}));
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+		const event = makeEvent({ id: 'evt-retry-age', dedupeKey: 'dedupe-retry-age' });
+
+		await eventService.publish(event);
+		const queued = runtime as unknown as {
+			pendingExternalEventQueue: Map<string, Array<{ createdAt: number }>>;
+		};
+		const firstQueued = [...queued.pendingExternalEventQueue.values()][0]![0]!;
+		const originalCreatedAt = firstQueued.createdAt;
+		const originalNow = Date.now;
+		Date.now = () => originalCreatedAt + 300_001;
+		try {
+			runtime.flushPendingNodeQueue({
+				workflowRunId: run.id,
+				taskId: task.id,
+				nodeId: 'code',
+				agentName: 'coder',
+				sessionId: 'session-retry-age',
+			});
+		} finally {
+			Date.now = originalNow;
+		}
+
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('ttl_expired');
+	});
+
 	test('enforces pending queue overflow cap and fails oldest delivery', async () => {
 		const { workflow, run, task } = await startRunWithSubscription();
 		const events = Array.from({ length: 51 }, (_, index) =>
