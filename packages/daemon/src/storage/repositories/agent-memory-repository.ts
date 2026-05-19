@@ -284,26 +284,33 @@ export class AgentMemoryRepository {
 		if (!this.embedder) return;
 		const attemptedMemoryIds = new Set<number>();
 		for (;;) {
+			const attemptedIds = [...attemptedMemoryIds];
+			const attemptedFilter = attemptedIds.length
+				? `AND m.id NOT IN (${attemptedIds.map(() => '?').join(', ')})`
+				: '';
 			const rows = this.db
 				.prepare(
 					`SELECT m.*
 					 FROM space_agent_memory m
 					 LEFT JOIN memory_vectors v ON v.memory_id = m.id
-					 WHERE m.embedding_status IN ('pending', 'failed')
+					 WHERE (
+						m.embedding_status IN ('pending', 'failed')
 						OR v.memory_id IS NULL
 						OR v.model != ?
 						OR v.dimensions != ?
+					 )
+					 ${attemptedFilter}
 					 ORDER BY m.updated_at ASC, m.key ASC
 					 LIMIT ?`
 				)
 				.all(
 					this.embedder.model,
 					this.embedder.dimensions,
+					...attemptedIds,
 					EMBEDDING_BACKFILL_BATCH_SIZE
 				) as AgentMemoryRow[];
-			const unattemptedRows = rows.filter((row) => !attemptedMemoryIds.has(row.id));
-			if (unattemptedRows.length === 0) return;
-			for (const row of unattemptedRows) {
+			if (rows.length === 0) return;
+			for (const row of rows) {
 				attemptedMemoryIds.add(row.id);
 				await this.updateEmbedding(row);
 			}

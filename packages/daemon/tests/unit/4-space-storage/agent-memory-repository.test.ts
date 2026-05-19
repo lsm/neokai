@@ -91,6 +91,22 @@ class FailingEmbedder implements AgentMemoryEmbedder {
 	}
 }
 
+class FailingThenReadyEmbedder implements AgentMemoryEmbedder {
+	model = 'test-failing-then-ready';
+	dimensions = 3;
+	passageInputs: string[] = [];
+
+	embedQuery(): Float32Array {
+		return new Float32Array([1, 0, 0]);
+	}
+
+	embedPassage(text: string): Float32Array {
+		this.passageInputs.push(text);
+		if (text.includes('fails')) throw new Error('content-specific embedding error');
+		return new Float32Array([1, 0, 0]);
+	}
+}
+
 class QueryFailingEmbedder extends KeywordEmbedder {
 	override embedQuery(): Promise<Float32Array> {
 		return Promise.reject(new Error('query embedding unavailable'));
@@ -703,6 +719,45 @@ describe('AgentMemoryRepository', () => {
 		await flushPromises();
 
 		expect(embedder.passageCalls).toBe(2);
+	});
+
+	test('startup backfill advances past failed rows in the same pass', async () => {
+		const embedder = new FailingThenReadyEmbedder();
+		repo = new AgentMemoryRepository(db, undefined, embedder);
+		const now = Date.now();
+		const insertMemory = db.prepare(
+			`INSERT INTO space_agent_memory
+				(key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision, embedding_token)
+			 VALUES (?, 'space-a', ?, '[]', NULL, ?, ?, 0, NULL, ?, NULL, NULL, NULL, 1, ?)`
+		);
+		for (let index = 0; index < 25; index++) {
+			insertMemory.run(
+				`failed.${index.toString().padStart(2, '0')}`,
+				`This content fails ${index}`,
+				now,
+				now + index,
+				'failed',
+				`failed-token-${index}`
+			);
+		}
+		insertMemory.run(
+			'later.pending',
+			'This later memory can embed successfully.',
+			now,
+			now + 25,
+			'pending',
+			'later-token'
+		);
+
+		repo.backfillPendingEmbeddings();
+		for (let index = 0; index < 30; index++) await flushPromises();
+
+		expect(embedder.passageInputs).toHaveLength(26);
+		expect(embedder.passageInputs.at(-1)).toContain('later.pending');
+		const row = db
+			.prepare(`SELECT embedding_status FROM space_agent_memory WHERE key = 'later.pending'`)
+			.get() as { embedding_status: string };
+		expect(row.embedding_status).toBe('ready');
 	});
 
 	test('vector search ranks ready vectors beyond the first 100 rows', async () => {
