@@ -369,6 +369,15 @@ describe('Space messaging adapter', () => {
 				workflow: workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId),
 			})
 		).toThrow('task-agent');
+		expect(() =>
+			translateLegacyNodeTargets(['reviewer', 'ghost'], {
+				spaceId,
+				workflowRunId: runId,
+				workflowNodeId: 'node-coding',
+				agentName: 'coder',
+				workflow: workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId),
+			})
+		).toThrow('Unknown target "ghost"');
 	});
 
 	it('translates task message node_id selectors to generic worker targets', () => {
@@ -387,10 +396,10 @@ describe('Space messaging adapter', () => {
 		).toBe(`@worker:${encodeURIComponent(runId)}/Review/reviewer`);
 		expect(
 			translateTaskMessageTarget(
-				{ nodeId: 'reviewer' },
+				{ nodeId: 'observer' },
 				{ workflowRunId: runId, nodeExecutions: executions, workflow }
 			)
-		).toBe(`@worker:${encodeURIComponent(runId)}/QA/reviewer`);
+		).toBe(`@worker:${encodeURIComponent(runId)}/Review/observer`);
 		expect(
 			translateTaskMessageTarget(
 				{ target: '@session:abc', nodeId: reviewExecution.id },

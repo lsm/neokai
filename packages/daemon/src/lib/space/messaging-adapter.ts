@@ -392,7 +392,13 @@ export function translateLegacyNodeTargets(
 	config: LegacyNodeTargetTranslatorConfig
 ): string[] {
 	const targets = Array.isArray(target) ? target : [target];
-	const translated = targets.flatMap((targetRef) => translateLegacyNodeTarget(targetRef, config));
+	const translated = targets.flatMap((targetRef) => {
+		const matches = translateLegacyNodeTarget(targetRef, config);
+		if (matches.length === 0) {
+			throw new Error(`Unknown target "${targetRef}".`);
+		}
+		return matches;
+	});
 	return uniqueStrings(translated);
 }
 

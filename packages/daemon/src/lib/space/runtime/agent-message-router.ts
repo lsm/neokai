@@ -198,6 +198,7 @@ export class AgentMessageRouter {
 			}
 		}
 		const hasNodeNameMap = workflowNodeNameById && Object.keys(workflowNodeNameById).length > 0;
+		const scopedAgentName = (nodeName: string, agentName: string) => `${nodeName}/${agentName}`;
 		const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
 		let peers: Array<{
 			sessionId: string;
@@ -330,7 +331,7 @@ export class AgentMessageRouter {
 				};
 			}
 			try {
-				await channelRouter?.deliverMessage(workflowRunId, fromAgentName, agentName, message);
+				await channelRouter?.deliverMessage(workflowRunId, fromAgentName, nodeName, message);
 			} catch (err) {
 				return {
 					success: false,
@@ -379,20 +380,21 @@ export class AgentMessageRouter {
 						taskNumber,
 						nodeId: fromAgentName,
 					});
+					const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
 					const { record, deduped } = pendingMessageRepo.enqueue({
 						workflowRunId,
 						spaceId,
 						taskId: taskId ?? null,
 						sourceAgentName: fromAgentName,
 						targetKind: 'node_agent',
-						targetAgentName: agentName,
+						targetAgentName: queueTargetName,
 						message: rawMessage,
 						idempotencyKey: JSON.stringify([fromSessionId, target, rawMessage]),
 						ttlMs: 60_000,
 						maxAttempts: 3,
 					});
-					queued.push({ agentName, messageId: record.id });
-					if (!deduped) onMessageQueued?.(agentName);
+					queued.push({ agentName: queueTargetName, messageId: record.id });
+					if (!deduped) onMessageQueued?.(queueTargetName);
 				}
 				notFound.push(agentName);
 				continue;

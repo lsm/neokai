@@ -65,6 +65,12 @@ export interface NodeExecutionLookup {
 	}>;
 }
 
+type ResolvedTaskMessageTarget = {
+	agentName?: string;
+	nodeExecutionId?: string;
+	sessionId?: string;
+};
+
 /**
  * Minimal interface for interacting with the Task Agent manager.
  * Decouples RPC handlers from the concrete TaskAgentManager class.
@@ -194,9 +200,9 @@ export function setupSpaceTaskMessageHandlers(
 	function resolveGenericTarget(
 		task: ReturnType<SpaceTaskRepository['getTask']>,
 		target: string
-	): { agentName?: string; nodeExecutionId?: string } {
+	): ResolvedTaskMessageTarget {
 		const address = parseAddress(target);
-		if (address.kind === 'session') return { nodeExecutionId: address.sessionId };
+		if (address.kind === 'session') return { sessionId: address.sessionId };
 		if (address.kind !== 'worker' || !address.agentName) {
 			throw new Error(
 				`Generic target ${target} is not routable from this RPC. Use @worker:<node>/<agent> or @session:<task-agent-session>.`
@@ -205,6 +211,11 @@ export function setupSpaceTaskMessageHandlers(
 		if (!task?.workflowRunId || !nodeExecutionRepo) {
 			throw new Error(
 				`Task ${task?.id ?? 'unknown'} has no workflow run — cannot target workflow agents.`
+			);
+		}
+		if (address.workflowRunId && address.workflowRunId !== task.workflowRunId) {
+			throw new Error(
+				`Worker target ${target} belongs to workflow run ${address.workflowRunId}, not task run ${task.workflowRunId}.`
 			);
 		}
 		let nodeName: string;
@@ -218,11 +229,18 @@ export function setupSpaceTaskMessageHandlers(
 			);
 		}
 		const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+		const nodeNameMatches = (workflowNodeId?: string) => {
+			if (!workflowNodeId) return false;
+			return (
+				workflowNodeId === nodeName ||
+				workflowNodeId.toLowerCase() === nodeName.toLowerCase() ||
+				workflowNodeId.split(/[-_]/).some((part) => part.toLowerCase() === nodeName.toLowerCase())
+			);
+		};
 		const matches = executions.filter(
 			(exec) =>
 				exec.agentName.toLowerCase() === agentName.toLowerCase() &&
-				(exec.workflowNodeId === nodeName ||
-					exec.workflowNodeId?.toLowerCase() === nodeName.toLowerCase())
+				nodeNameMatches(exec.workflowNodeId)
 		);
 		const match = matches.at(-1);
 		if (!match?.id) {
@@ -235,7 +253,7 @@ export function setupSpaceTaskMessageHandlers(
 		task: ReturnType<SpaceTaskRepository['getTask']>,
 		taskId: string,
 		message: string,
-		target: { agentName?: string; nodeExecutionId?: string },
+		target: ResolvedTaskMessageTarget,
 		images?: MessageImage[]
 	): Promise<{
 		ok: true;
@@ -259,11 +277,14 @@ export function setupSpaceTaskMessageHandlers(
 		// disambiguated by execution, so falling back to agentName broadens the
 		// match to every execution sharing the same name across all nodes.
 		// agentName-only matching is only used when nodeExecutionId is absent.
-		const matches = target.nodeExecutionId
-			? executions.filter((e) => e.id === target.nodeExecutionId)
-			: executions.filter(
-					(e) => !!target.agentName && e.agentName.toLowerCase() === target.agentName!.toLowerCase()
-				);
+		const matches = target.sessionId
+			? executions.filter((e) => e.agentSessionId === target.sessionId)
+			: target.nodeExecutionId
+				? executions.filter((e) => e.id === target.nodeExecutionId)
+				: executions.filter(
+						(e) =>
+							!!target.agentName && e.agentName.toLowerCase() === target.agentName!.toLowerCase()
+					);
 
 		if (matches.length === 0) {
 			// No existing execution row for this agent. If the agent is declared
@@ -295,7 +316,7 @@ export function setupSpaceTaskMessageHandlers(
 			if (matches.length === 0) {
 				const available = [...new Set(executions.map((e) => e.agentName))].sort();
 				throw new Error(
-					`Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? 'unknown'}. ` +
+					`Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? target.sessionId ?? 'unknown'}. ` +
 						`Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
 				);
 			}
@@ -321,12 +342,14 @@ export function setupSpaceTaskMessageHandlers(
 				.filter((e) => e.status !== 'cancelled');
 			// Re-apply the same strict matching logic used above (exact
 			// nodeExecutionId match when provided, agentName otherwise).
-			const refreshedMatches = target.nodeExecutionId
-				? refreshed.filter((e) => e.id === target.nodeExecutionId)
-				: refreshed.filter(
-						(e) =>
-							!!target.agentName && e.agentName.toLowerCase() === target.agentName!.toLowerCase()
-					);
+			const refreshedMatches = target.sessionId
+				? refreshed.filter((e) => e.agentSessionId === target.sessionId)
+				: target.nodeExecutionId
+					? refreshed.filter((e) => e.id === target.nodeExecutionId)
+					: refreshed.filter(
+							(e) =>
+								!!target.agentName && e.agentName.toLowerCase() === target.agentName!.toLowerCase()
+						);
 			deliverable = refreshedMatches.filter((e) => e.agentSessionId);
 		}
 

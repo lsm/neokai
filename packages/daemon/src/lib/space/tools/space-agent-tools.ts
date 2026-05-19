@@ -124,11 +124,13 @@ function resolveNodeExecution(executions: NodeExecution[], selector: string): No
 
 function resolveWorkerTargetExecution(
 	executions: NodeExecution[],
+	workflowRunId: string,
 	workflowNodeNameById: Map<string, string>,
 	target: string
 ): NodeExecution | null {
 	const address = parseAddress(target);
 	if (address.kind !== 'worker' || !address.agentName) return null;
+	if (address.workflowRunId && address.workflowRunId !== workflowRunId) return null;
 	let nodeName: string;
 	let agentName: string;
 	try {
@@ -1075,6 +1077,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				if (address.kind === 'worker') {
 					resolved = resolveWorkerTargetExecution(
 						allExecutions,
+						task.workflowRunId,
 						workflowNodeNameById,
 						genericTarget
 					);

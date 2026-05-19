@@ -1123,8 +1123,16 @@ export class TaskAgentManager {
 		// Expire stale rows first so we don't deliver messages that have exceeded their TTL.
 		repo.expireStale(workflowRunId);
 
-		const pending = repo
-			.listPendingForTarget(workflowRunId, targetAgentName)
+		const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+		const workflowNodeName = execution
+			? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
+			: null;
+		const queueTargetNames = [
+			targetAgentName,
+			...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
+		];
+		const pending = queueTargetNames
+			.flatMap((targetName) => repo.listPendingForTarget(workflowRunId, targetName))
 			.filter((row) => row.targetKind === 'node_agent');
 		if (pending.length === 0) return;
 
@@ -2348,6 +2356,13 @@ export class TaskAgentManager {
 			.replace(/^-+|-+$/g, '');
 		if (kebab) variants.add(kebab);
 		return [...variants];
+	}
+
+	private workflowNodeNameForRun(workflowRunId: string, workflowNodeId: string): string | null {
+		const run = this.config.workflowRunRepo.getRun(workflowRunId);
+		if (!run?.workflowId) return null;
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		return workflow?.nodes.find((node) => node.id === workflowNodeId)?.name ?? null;
 	}
 
 	private buildAgentNameAliasesForExecution(
