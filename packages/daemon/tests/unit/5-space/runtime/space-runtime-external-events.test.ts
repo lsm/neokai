@@ -276,7 +276,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 					task.id,
 					'code',
 					'coder',
-					`github/owner/repo/pull_request/${index}.opened`
+					`github/owner/repo/pull_request_${index}.opened`
 				)
 			).not.toThrow();
 		}
@@ -293,7 +293,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				task.id,
 				'code',
 				'coder',
-				`github/owner/repo/pull_request/${index}.opened`
+				`github/owner/repo/pull_request_${index}.opened`
 			);
 		}
 
@@ -303,7 +303,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				task.id,
 				'code',
 				'coder',
-				'github/owner/repo/pull_request/10.opened'
+				'github/owner/repo/pull_request_10.opened'
 			)
 		).toThrow('cannot register more than 10 event interests');
 	});
@@ -319,7 +319,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				task.id,
 				'code',
 				'coder',
-				`github/owner/repo/pull_request/${index}.opened`
+				`github/owner/repo/pull_request_${index}.opened`
 			);
 		}
 
@@ -331,7 +331,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				task.id,
 				'code',
 				'coder',
-				'github/owner/repo/pull_request/10.opened'
+				'github/owner/repo/pull_request_10.opened'
 			)
 		).not.toThrow();
 	});
