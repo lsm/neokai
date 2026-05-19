@@ -1387,6 +1387,154 @@ describe('AgentMessageRouter: pure topology target (no execution, no nodeGroups)
 	});
 });
 
+describe('AgentMessageRouter: generic address targets', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('routes @worker to matching node and agent only', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('Coding', 'Review A'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
+		seedPeerTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			'node-review-a',
+			'reviewer',
+			'session-review-a'
+		);
+		seedPeerTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			'node-review-b',
+			'reviewer',
+			'session-review-b'
+		);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const router = makeRouter(ctx, workflowRunId, injected, [makeChannel('Coding', 'Review A')], {
+			nodeGroups: { Coding: ['coder'], 'Review A': ['reviewer'], 'Review B': ['reviewer'] },
+			workflowNodeNameById: {
+				'node-coding': 'Coding',
+				'node-review-a': 'Review A',
+				'node-review-b': 'Review B',
+			},
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: `@worker:${encodeURIComponent(workflowRunId)}/${encodeURIComponent('Review A')}/reviewer`,
+			message: 'review A only',
+		});
+
+		expect(result.success).toBe(true);
+		expect(injected.map((call) => call.sessionId)).toEqual(['session-review-a']);
+	});
+
+	test('queues inactive @worker targets and fires queue callback', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('Coding', 'Review'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: 'node-review',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const queuedAgents: string[] = [];
+		const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
+			nodeGroups: { Coding: ['coder'], Review: ['reviewer'] },
+			workflowNodeNameById: { 'node-coding': 'Coding', 'node-review': 'Review' },
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			onMessageQueued: (agentName) => queuedAgents.push(agentName),
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: `@worker:${encodeURIComponent(workflowRunId)}/Review/reviewer`,
+			message: 'wake reviewer',
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.queued).toHaveLength(1);
+		expect(queuedAgents).toEqual(['reviewer']);
+		expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(1);
+	});
+
+	test('rejects unauthorized @session targets and permits reply-route sessions', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		const injected: string[] = [];
+		const router = makeRouter(ctx, workflowRunId, [], [], {
+			spaceId: ctx.spaceId,
+			spaceAgentInjector: async (_spaceId, _message, replyToSessionId) => {
+				injected.push(replyToSessionId ?? 'default');
+			},
+			replyRoutingLookup: () => 'session-origin',
+		});
+
+		const rejected = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: '@session:other-session',
+			message: 'bad route',
+		});
+		expect(rejected.success).toBe(false);
+		expect(rejected.reason).toContain('not an authorized reply route');
+
+		const delivered = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: '@session:session-origin',
+			message: 'good route',
+		});
+		expect(delivered.success).toBe(true);
+		expect(injected).toEqual(['session-origin']);
+	});
+
+	test('returns structured errors for malformed and unsupported generic targets', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('Coding', 'Review'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
+		const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
+			nodeGroups: { Coding: ['coder'], Review: ['reviewer'] },
+			workflowNodeNameById: { 'node-coding': 'Coding', 'node-review': 'Review' },
+		});
+
+		const malformed = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: '@worker:Review/%GG',
+			message: 'bad target',
+		});
+		expect(malformed.success).toBe(false);
+		expect(malformed.reason).toContain('Invalid worker target');
+
+		const unsupported = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: '@role:reviewer',
+			message: 'bad target',
+		});
+		expect(unsupported.success).toBe(false);
+		expect(unsupported.reason).toContain('not supported');
+	});
+});
+
 // ---------------------------------------------------------------------------
 // Tests: onMessageQueued callback — auto-resume hook (Task #70)
 // ---------------------------------------------------------------------------

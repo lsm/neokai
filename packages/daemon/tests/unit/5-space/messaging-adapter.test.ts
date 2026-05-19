@@ -387,6 +387,12 @@ describe('Space messaging adapter', () => {
 		).toBe(`@worker:${encodeURIComponent(runId)}/Review/reviewer`);
 		expect(
 			translateTaskMessageTarget(
+				{ nodeId: 'reviewer' },
+				{ workflowRunId: runId, nodeExecutions: executions, workflow }
+			)
+		).toBe(`@worker:${encodeURIComponent(runId)}/QA/reviewer`);
+		expect(
+			translateTaskMessageTarget(
 				{ target: '@session:abc', nodeId: reviewExecution.id },
 				{ workflowRunId: runId, nodeExecutions: executions, workflow }
 			)
