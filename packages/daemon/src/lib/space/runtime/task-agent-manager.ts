@@ -3613,6 +3613,9 @@ export class TaskAgentManager {
 			// Wire up the pending-message queue so node agents can queue messages for
 			// peers that haven't spawned yet (declared but inactive). The queue is
 			// drained by flushPendingMessagesForTarget() when the target session activates.
+			workflowNodeNameById: Object.fromEntries(
+				(workflow?.nodes ?? []).map((node) => [node.id, node.name])
+			),
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceId,
 			taskId,
@@ -3854,6 +3857,10 @@ export class TaskAgentManager {
 				return s?.autonomyLevel ?? 1;
 			},
 			onRestoreNodeAgent,
+			replyRoutingLookup: (fromAgentName) => {
+				const registry = this.config.replyRoutingRegistry;
+				return registry ? registry.get(taskId, fromAgentName) : null;
+			},
 		});
 	}
 

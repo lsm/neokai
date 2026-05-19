@@ -241,6 +241,8 @@ export interface NodeAgentToolsConfig {
 	 * archive tasks without the broader space-agent-tools namespace.
 	 */
 	onArchiveTask?: (args: ArchiveTaskInput) => Promise<ToolResult>;
+	/** Optional lookup callback for symmetric reply routing to Space sessions. */
+	replyRoutingLookup?: (agentName?: string | null) => string | null;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * When provided, agent gate writes via send_message are blocked when
@@ -636,6 +638,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							spaceId,
 							status: execution.agentSessionId ? ('active' as const) : ('inactive' as const),
 						})),
+						replyRoutingLookup: config.replyRoutingLookup,
 					});
 				} catch (err) {
 					return jsonResult({

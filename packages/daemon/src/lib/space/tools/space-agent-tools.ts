@@ -32,6 +32,7 @@ import type {
 	TaskScheduleStatus,
 	TaskScheduleTriggerType,
 } from '@neokai/shared';
+import { parseAddress } from '../../../../../messaging/src/address';
 import { z } from 'zod';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
@@ -119,6 +120,30 @@ function resolveNodeExecution(executions: NodeExecution[], selector: string): No
 		(exec) => normalizeAgentNameToken(exec.agentName) === targetName
 	);
 	return byName.at(-1) ?? null;
+}
+
+function resolveWorkerTargetExecution(
+	executions: NodeExecution[],
+	workflowNodeNameById: Map<string, string>,
+	target: string
+): NodeExecution | null {
+	const address = parseAddress(target);
+	if (address.kind !== 'worker' || !address.agentName) return null;
+	let nodeName: string;
+	let agentName: string;
+	try {
+		nodeName = decodeURIComponent(address.nodeId);
+		agentName = decodeURIComponent(address.agentName);
+	} catch {
+		return null;
+	}
+	const matches = executions.filter(
+		(exec) =>
+			normalizeAgentNameToken(exec.agentName) === normalizeAgentNameToken(agentName) &&
+			(workflowNodeNameById.get(exec.workflowNodeId) === nodeName ||
+				exec.workflowNodeId === nodeName)
+	);
+	return matches.at(-1) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,65 +1032,77 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			if (args.target === 'task-agent' || args.node_id === 'task-agent') {
 				return jsonResult({
 					success: false,
-					error: 'Target "task-agent" is no longer supported. Use @coordinator or node_id.',
+					error: 'Target "task-agent" is no longer supported. Use a worker target or node_id.',
 				});
 			}
 
-			// --- Generic actor target path ---
+			if (!args.node_id && !args.target) {
+				return jsonResult({
+					success: false,
+					error: 'Target agent is required. Use node_id or target to specify a recipient.',
+				});
+			}
+			if (!task.workflowRunId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${task.id} has no workflow run — cannot target workflow workers.`,
+				});
+			}
+			const allExecutions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+			const run = workflowRunRepo.getRun(task.workflowRunId);
+			const workflow = run ? (workflowManager.getWorkflow(run.workflowId) ?? null) : null;
+			const workflowNodeNameById = new Map(
+				(workflow?.nodes ?? []).map((node) => [node.id, node.name] as const)
+			);
+			let resolved: NodeExecution | null = null;
+			let routedTarget = args.node_id ?? null;
+
 			if (args.target) {
+				let genericTarget: string;
 				try {
-					const genericTarget = translateTaskMessageTarget(
+					genericTarget = translateTaskMessageTarget(
 						{ target: args.target, nodeId: args.node_id },
-						{
-							workflowRunId: task.workflowRunId ?? '',
-							nodeExecutions: task.workflowRunId
-								? nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)
-								: [],
-							workflow: task.workflowRunId
-								? (() => {
-										const run = workflowRunRepo.getRun(task.workflowRunId!);
-										return run ? (workflowManager.getWorkflow(run.workflowId) ?? null) : null;
-									})()
-								: null,
-						}
+						{ workflowRunId: task.workflowRunId, nodeExecutions: allExecutions, workflow }
 					);
-					if (genericTarget === '@coordinator' || genericTarget.startsWith('@role:')) {
-						return jsonResult({
-							success: false,
-							error: `Generic target ${genericTarget} is not routable from this tool yet. Use node_id for workflow workers.`,
-						});
-					}
 				} catch (err) {
 					return jsonResult({
 						success: false,
 						error: err instanceof Error ? err.message : String(err),
 					});
 				}
+				routedTarget = genericTarget;
+				const address = parseAddress(genericTarget);
+				if (address.kind === 'worker') {
+					resolved = resolveWorkerTargetExecution(
+						allExecutions,
+						workflowNodeNameById,
+						genericTarget
+					);
+				} else if (address.kind === 'session') {
+					resolved =
+						allExecutions.find((exec) => exec.agentSessionId === address.sessionId) ?? null;
+				} else {
+					return jsonResult({
+						success: false,
+						error: `Generic target ${genericTarget} is not routable from this tool. Use @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`,
+					});
+				}
+			} else if (args.node_id) {
+				resolved = resolveNodeExecution(allExecutions, args.node_id);
 			}
 
-			// --- Path A: no node_id — target is required ---
-			if (!args.node_id) {
+			if (!routedTarget) {
 				return jsonResult({
 					success: false,
 					error: 'Target agent is required. Use node_id or target to specify a recipient.',
 				});
 			}
-
-			// --- Path B: node_id provided — target a specific workflow node ---
-			if (!task.workflowRunId) {
-				return jsonResult({
-					success: false,
-					error: `Task ${task.id} has no workflow run — cannot target node_id.`,
-				});
-			}
-			const allExecutions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-			const resolved = resolveNodeExecution(allExecutions, args.node_id);
 			if (!resolved) {
 				return jsonResult({
 					success: false,
 					error:
-						`Node not found for task ${task.id}: "${args.node_id}". ` +
-						`Expected an execution UUID or an agent name present in this workflow run.`,
+						`Node not found for task ${task.id}: "${routedTarget}". ` +
+						`Expected an execution UUID, agent name, @worker target, or task agent @session target.`,
 				});
 			}
 

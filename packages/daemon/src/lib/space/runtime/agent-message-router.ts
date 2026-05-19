@@ -79,6 +79,8 @@ export interface AgentMessageRouterConfig {
 	activateTargetSession?: (
 		agentName: string
 	) => Promise<Array<{ agentName: string; sessionId: string }>>;
+	/** Optional workflow-node id → node-name map for generic @worker target isolation. */
+	workflowNodeNameById?: Record<string, string>;
 	/**
 	 * Optional callback fired after a message is persisted to `pendingMessageRepo`
 	 * for a declared-but-inactive target. This is now only a diagnostic/backstop
@@ -175,13 +177,45 @@ export class AgentMessageRouter {
 			taskNumber,
 			activateTargetSession,
 			onMessageQueued,
+			replyRoutingLookup,
+			workflowNodeNameById,
 		} = this.config;
 		const resolver = new ChannelResolver(workflowChannels);
 		const fromNodeName = slotToNode.get(fromAgentName) ?? fromAgentName;
+		const selfExecution = nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.find((e) => e.agentName === fromAgentName && e.agentSessionId === fromSessionId);
+		const singleNodeByAgentName = new Map<string, string>();
+		for (const [nodeName, slots] of this.config.nodeGroups
+			? Object.entries(this.config.nodeGroups)
+			: []) {
+			for (const slot of slots) {
+				if (singleNodeByAgentName.has(slot)) {
+					singleNodeByAgentName.delete(slot);
+				} else {
+					singleNodeByAgentName.set(slot, nodeName);
+				}
+			}
+		}
+		const hasNodeNameMap = workflowNodeNameById && Object.keys(workflowNodeNameById).length > 0;
 		const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-		let peers = allExecutions
+		let peers: Array<{
+			sessionId: string;
+			agentName: string;
+			workflowNodeId?: string;
+			nodeName?: string;
+		}> = allExecutions
 			.filter((e) => e.agentSessionId && e.agentSessionId !== fromSessionId)
-			.map((e) => ({ sessionId: e.agentSessionId!, agentName: e.agentName }));
+			.map((e) => ({
+				sessionId: e.agentSessionId!,
+				agentName: e.agentName,
+				workflowNodeId: e.workflowNodeId,
+				nodeName:
+					workflowNodeNameById?.[e.workflowNodeId] ??
+					(e.workflowNodeId === selfExecution?.workflowNodeId ? fromNodeName : undefined) ??
+					singleNodeByAgentName.get(e.agentName) ??
+					e.workflowNodeId,
+			}));
 		const delivered: Array<{ agentName: string; sessionId: string }> = [];
 		const queued: Array<{ agentName: string; messageId: string }> = [];
 		const notFound: string[] = [];
@@ -224,6 +258,16 @@ export class AgentMessageRouter {
 					notFound.push(target);
 					continue;
 				}
+				const replyTo = replyRoutingLookup?.(fromAgentName);
+				if (!replyTo || address.sessionId !== replyTo) {
+					return {
+						success: false,
+						delivered: [],
+						failed: [],
+						reason: `Session target ${target} is not an authorized reply route for '${fromAgentName}'.`,
+						unauthorizedAgentNames: [target],
+					};
+				}
 				const envelopedMessage = formatAgentMessage({
 					fromLevel: 'node-agent',
 					fromAgentName,
@@ -246,16 +290,31 @@ export class AgentMessageRouter {
 				continue;
 			}
 			if (address.kind !== 'worker') {
-				notFound.push(target);
-				continue;
+				return {
+					success: false,
+					delivered: [],
+					failed: [],
+					reason: `Generic target ${target} is not supported by node-agent send_message. Use @coordinator, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
+				};
 			}
 			const runId = address.workflowRunId ?? workflowRunId;
 			if (runId !== workflowRunId) {
 				notFound.push(target);
 				continue;
 			}
-			const nodeName = decodeURIComponent(address.nodeId);
-			const agentName = address.agentName ? decodeURIComponent(address.agentName) : null;
+			let nodeName: string;
+			let agentName: string | null;
+			try {
+				nodeName = decodeURIComponent(address.nodeId);
+				agentName = address.agentName ? decodeURIComponent(address.agentName) : null;
+			} catch (err) {
+				return {
+					success: false,
+					delivered: [],
+					failed: [],
+					reason: `Invalid worker target ${target}: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
 			if (!agentName) {
 				notFound.push(target);
 				continue;
@@ -280,17 +339,35 @@ export class AgentMessageRouter {
 					reason: err instanceof Error ? err.message : String(err),
 				};
 			}
-			if (!peers.some((peer) => peer.agentName === agentName) && activateTargetSession) {
+			const matchesTargetNode = (peer: { agentName: string; nodeName?: string }) =>
+				peer.agentName === agentName && (!hasNodeNameMap || peer.nodeName === nodeName);
+			if (!peers.some(matchesTargetNode) && activateTargetSession) {
 				try {
 					const activated = await activateTargetSession(agentName);
-					peers = [...peers, ...activated].filter((peer) => peer.sessionId !== fromSessionId);
+					const refreshed = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+					const hydrated = activated.map((session) => {
+						const execution = refreshed.find(
+							(e) => e.agentName === session.agentName && e.agentSessionId === session.sessionId
+						);
+						return {
+							...session,
+							workflowNodeId: execution?.workflowNodeId,
+							nodeName: execution
+								? (workflowNodeNameById?.[execution.workflowNodeId] ??
+									singleNodeByAgentName.get(execution.agentName) ??
+									execution.workflowNodeId)
+								: (singleNodeByAgentName.get(session.agentName) ??
+									slotToNode.get(session.agentName)),
+						};
+					});
+					peers = [...peers, ...hydrated].filter((peer) => peer.sessionId !== fromSessionId);
 				} catch (err) {
 					log.warn(
 						`[AgentMessageRouter] failed to activate generic target "${agentName}": ${err instanceof Error ? err.message : String(err)}`
 					);
 				}
 			}
-			const sessions = peers.filter((peer) => peer.agentName === agentName);
+			const sessions = peers.filter(matchesTargetNode);
 			if (sessions.length === 0) {
 				if (pendingMessageRepo && spaceId) {
 					const rawMessage = formatAgentMessage({

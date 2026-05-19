@@ -7,6 +7,7 @@
  */
 
 import type { MessageHub, MessageImage } from '@neokai/shared';
+import { parseAddress } from '../../../../messaging/src/address';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -131,7 +132,8 @@ export interface PendingAgentMessageQueue {
 
 type SpaceTaskMessageTarget =
 	| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string }
-	| { kind: 'node_agent'; nodeExecutionId: string; agentName?: string };
+	| { kind: 'node_agent'; nodeExecutionId: string; agentName?: string }
+	| { kind: 'generic'; target: string };
 
 /**
  * Register RPC handlers for human ↔ Task Agent message routing.
@@ -187,6 +189,46 @@ export function setupSpaceTaskMessageHandlers(
 				}`
 			);
 		}
+	}
+
+	function resolveGenericTarget(
+		task: ReturnType<SpaceTaskRepository['getTask']>,
+		target: string
+	): { agentName?: string; nodeExecutionId?: string } {
+		const address = parseAddress(target);
+		if (address.kind === 'session') return { nodeExecutionId: address.sessionId };
+		if (address.kind !== 'worker' || !address.agentName) {
+			throw new Error(
+				`Generic target ${target} is not routable from this RPC. Use @worker:<node>/<agent> or @session:<task-agent-session>.`
+			);
+		}
+		if (!task?.workflowRunId || !nodeExecutionRepo) {
+			throw new Error(
+				`Task ${task?.id ?? 'unknown'} has no workflow run — cannot target workflow agents.`
+			);
+		}
+		let nodeName: string;
+		let agentName: string;
+		try {
+			nodeName = decodeURIComponent(address.nodeId);
+			agentName = decodeURIComponent(address.agentName);
+		} catch (err) {
+			throw new Error(
+				`Invalid worker target ${target}: ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+		const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+		const matches = executions.filter(
+			(exec) =>
+				exec.agentName.toLowerCase() === agentName.toLowerCase() &&
+				(exec.workflowNodeId === nodeName ||
+					exec.workflowNodeId?.toLowerCase() === nodeName.toLowerCase())
+		);
+		const match = matches.at(-1);
+		if (!match?.id) {
+			throw new Error(`Workflow worker not found for target ${target}.`);
+		}
+		return { nodeExecutionId: match.id, agentName: match.agentName };
 	}
 
 	async function routeToNodeAgents(
@@ -385,14 +427,12 @@ export function setupSpaceTaskMessageHandlers(
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
 
-		if (params.target?.kind === 'node_agent') {
-			const result = await routeToNodeAgents(
-				task,
-				params.taskId,
-				params.message,
-				params.target,
-				images
-			);
+		if (params.target?.kind === 'node_agent' || params.target?.kind === 'generic') {
+			const target =
+				params.target.kind === 'generic'
+					? resolveGenericTarget(task, params.target.target)
+					: params.target;
+			const result = await routeToNodeAgents(task, params.taskId, params.message, target, images);
 			log.info(
 				`space.task.sendMessage: explicit target routing to [${result.routedTo.join(', ')}] for task ${params.taskId}`
 			);
