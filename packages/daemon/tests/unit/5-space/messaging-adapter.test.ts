@@ -101,9 +101,10 @@ describe('Space messaging adapter', () => {
 						{ agentId: agent.id, name: 'observer' },
 					],
 				},
+				{ id: 'node-deploy', name: 'Deploy', agents: [{ agentId: agent.id, name: 'deployer' }] },
 				{ id: 'node-qa', name: 'QA', agents: [{ agentId: agent.id, name: 'reviewer' }] },
 			],
-			channels: [{ from: 'Coding', to: ['Review'] }],
+			channels: [{ from: 'Coding', to: ['Review', 'Deploy'] }],
 			transitions: [],
 			startNodeId: 'Coding',
 			rules: [],
@@ -393,6 +394,88 @@ describe('Space messaging adapter', () => {
 		]);
 	});
 
+	it('queues declared single-slot worker shorthand without a spawned execution', async () => {
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@worker:Deploy'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor)).toEqual([
+			expect.objectContaining({
+				actorId: `worker:${encodeURIComponent(runId)}:node-deploy:deployer`,
+				status: 'inactive',
+			}),
+		]);
+	});
+
+	it('includes declared worker slots in role resolution', async () => {
+		nodeExecutionRepo.delete(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id
+		);
+		nodeExecutionRepo.updateStatus(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-qa' && execution.agentName === 'reviewer'
+				)!.id,
+			'cancelled'
+		);
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@role:reviewer'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor)).toEqual([
+			expect.objectContaining({
+				actorId: `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+				status: 'inactive',
+			}),
+		]);
+	});
+
+	it('queues missing context-selected worker slots instead of unrelated spawned slots', async () => {
+		nodeExecutionRepo.delete(
+			nodeExecutionRepo
+				.listByWorkflowRun(runId)
+				.find(
+					(execution) =>
+						execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
+				)!.id
+		);
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'reviewer' }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			targets: ['@worker:Review'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor)).toEqual([
+			expect.objectContaining({
+				actorId: `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+				status: 'inactive',
+			}),
+		]);
+	});
+
 	it('returns unresolved deliveries for malformed worker escapes', async () => {
 		const resolver = new SpaceMessageResolver(
 			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
@@ -524,6 +607,50 @@ describe('Space messaging adapter', () => {
 		const failed = { ...queued, status: 'failed' as const };
 		expect(pendingMessageToDeliveryRecords(failed, actors)).toEqual([
 			expect.objectContaining({ targetActorId: undefined, state: 'failed' }),
+		]);
+	});
+
+	it('preserves terminal coordinator delivery targets', () => {
+		sessionRepo.createSession({
+			id: `space:chat:${spaceId}`,
+			title: 'Space chat',
+			workspacePath: '/workspace/project',
+			createdAt: new Date().toISOString(),
+			lastActiveAt: new Date().toISOString(),
+			status: 'archived',
+			config: {},
+			metadata: {
+				messageCount: 0,
+				totalTokens: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				toolCallCount: 0,
+			},
+			type: 'space_chat',
+			context: { spaceId },
+		});
+		const actors = registry.listActors(spaceId);
+		const queued = pendingMessageRepo.enqueue({
+			workflowRunId: runId,
+			spaceId,
+			sourceAgentName: 'coder',
+			targetKind: 'space_agent',
+			targetAgentName: 'coordinator',
+			message: 'terminal escalation',
+		}).record;
+		const delivered = {
+			...queued,
+			status: 'delivered' as const,
+			deliveredSessionId: `space:chat:${spaceId}`,
+			deliveredAt: Date.now(),
+		};
+
+		expect(pendingMessageToDeliveryRecords(delivered, actors)).toEqual([
+			expect.objectContaining({
+				targetActorId: `agent:coordinator:${spaceId}`,
+				state: 'delivered',
+			}),
 		]);
 	});
 });

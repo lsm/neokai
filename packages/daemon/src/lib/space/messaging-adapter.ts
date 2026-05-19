@@ -16,7 +16,7 @@ import type {
 import type { PendingAgentMessageRecord } from '../../storage/repositories/pending-agent-message-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import type { WorkflowChannel, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@neokai/shared';
 import { ChannelResolver } from './runtime/channel-resolver';
 import type { SpaceActorRegistryAdapter } from './actor-registry';
 
@@ -113,11 +113,15 @@ export class SpaceMessageResolver implements ActorResolver {
 			}
 			case 'role': {
 				const role = actorRole(address.role);
-				const holders = this.permitRoleActors(
-					actors.filter(
+				const holders = this.permitRoleActors([
+					...actors.filter(
 						(actor) => actor.roles?.includes(address.role) || actor.roles?.includes(role)
-					)
-				);
+					),
+					...this.declaredRoleActors(
+						message.workflowRunId ?? this.context.workflowRunId,
+						address.role
+					),
+				]);
 				const active = holders.filter((actor) => actor.status === 'active');
 				const inactive = holders.filter((actor) => actor.status === 'inactive');
 				const routable = active.length > 0 ? active : inactive;
@@ -178,16 +182,20 @@ export class SpaceMessageResolver implements ActorResolver {
 			if (parsed.nodeId !== targetNodeId) return false;
 			return agentName ? parsed.agentName === agentName.value : true;
 		});
-		if (matches.length === 0) {
-			const declared = this.declaredWorkerActor(workflowRunId, targetNodeId, agentName?.value);
-			if (declared) matches.push(declared);
+		const declaredAgentName = this.declaredAgentName(workflow, targetNodeId, agentName?.value);
+		if (declaredAgentName) {
+			const declared = this.declaredWorkerActor(workflowRunId, targetNodeId, declaredAgentName);
+			const hasDeclared = matches.some((actor) => actor.actorId === declared?.actorId);
+			if (declared && !hasDeclared) matches.push(declared);
 		}
 		let routable = matches.filter(isRoutable);
 		if (!agentName && this.context.agentName) {
 			const contextMatches = routable.filter(
 				(actor) => parseWorkerActorId(actor.actorId)?.agentName === this.context.agentName
 			);
-			if (contextMatches.length > 0) routable = contextMatches;
+			if (contextMatches.length > 0 || declaredAgentName === this.context.agentName) {
+				routable = contextMatches;
+			}
 		}
 		if (routable.length === 0) {
 			return { actors: [], reason: `No routable worker actor found for ${targetRef}` };
@@ -246,6 +254,18 @@ export class SpaceMessageResolver implements ActorResolver {
 		);
 	}
 
+	private declaredRoleActors(workflowRunId: string | undefined, role: string): ActorRef[] {
+		if (!workflowRunId) return [];
+		const workflow = this.workflowForRun(workflowRunId);
+		if (!workflow) return [];
+		return workflow.nodes.flatMap((node) =>
+			node.agents
+				.filter((agent) => agent.name === role)
+				.map((agent) => this.declaredWorkerActor(workflowRunId, node.id, agent.name))
+				.filter((actor): actor is ActorRef => Boolean(actor))
+		);
+	}
+
 	private declaredWorkerActor(
 		workflowRunId: string,
 		nodeId: string,
@@ -263,6 +283,27 @@ export class SpaceMessageResolver implements ActorResolver {
 			roles: uniqueStrings([actorRole(agentName), actorRole(nodeId)]),
 			status: 'inactive',
 		};
+	}
+
+	private declaredAgentName(
+		workflow: SpaceWorkflow | null,
+		nodeId: string,
+		explicitAgentName: string | undefined
+	): string | undefined {
+		const node = workflow?.nodes.find((candidate) => candidate.id === nodeId);
+		if (!node) return explicitAgentName;
+		if (explicitAgentName) {
+			return node.agents.some((agent) => agent.name === explicitAgentName)
+				? explicitAgentName
+				: undefined;
+		}
+		if (
+			this.context.agentName &&
+			node.agents.some((agent) => agent.name === this.context.agentName)
+		) {
+			return this.context.agentName;
+		}
+		return node.agents.length === 1 ? node.agents[0].name : undefined;
 	}
 
 	private workflowForRun(workflowRunId: string) {
@@ -409,7 +450,10 @@ function createLegacyDelivery(
 
 function legacyTargetActors(row: PendingAgentMessageRecord, actors: ActorRef[]): ActorRef[] {
 	if (row.targetKind === 'space_agent') {
-		return actors.filter((actor) => actor.handle === '@coordinator' && isRoutable(actor));
+		return actors.filter(
+			(actor) =>
+				actor.handle === '@coordinator' && (row.status === 'pending' ? isRoutable(actor) : true)
+		);
 	}
 	const matches = actors.filter((actor) => {
 		if (actor.kind !== 'worker') return false;
