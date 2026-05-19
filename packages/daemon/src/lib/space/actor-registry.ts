@@ -7,6 +7,7 @@ import type { SpaceAgentRepository } from '../../storage/repositories/space-agen
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session';
 
 export const SPACE_SYSTEM_ACTORS = [
 	{ actorId: 'system:runtime', handle: '@system-runtime', roles: ['runtime'] },
@@ -234,10 +235,6 @@ function workerActorId(workflowRunId: string, nodeId: string, agentName: string)
 	return `worker:${[workflowRunId, nodeId, agentName].map(encodeActorIdComponent).join(':')}`;
 }
 
-function longTermAgentSessionId(spaceId: string, agentId: string): string {
-	return `space:agent:${encodeActorIdComponent(spaceId)}:${encodeActorIdComponent(agentId)}`;
-}
-
 function workerHandle(workflowRunId: string, nodeId: string, agentName: string): string {
 	return `@worker:${encodeWorkerHandleSegment(workflowRunId)}/${encodeWorkerHandleSegment(nodeId)}/${encodeWorkerHandleSegment(agentName)}`;
 }
@@ -250,10 +247,6 @@ const ROUTING_ROLE_PREFIX = 'actor-role:';
 
 function routingRole(role: string): string {
 	return `${ROUTING_ROLE_PREFIX}${encodeURIComponent(role)}`;
-}
-
-function encodeActorIdComponent(value: string): string {
-	return encodeURIComponent(value);
 }
 
 function encodeWorkerHandleSegment(value: string): string {

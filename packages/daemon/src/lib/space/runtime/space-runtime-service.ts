@@ -51,6 +51,7 @@ import {
 	SpaceAgentNotificationService,
 	type SpaceAgentNotificationServiceConfig,
 } from './space-agent-notification-service';
+import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import type { ExternalEventService } from '../../external-events/external-event-service';
@@ -205,6 +206,7 @@ export class SpaceRuntimeService {
 	 * Created when a space's chat session is provisioned; cleaned up on stop.
 	 */
 	private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
+	private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
 	/**
 	 * Resolves when startup-time session provisioning has completed:
 	 *   - every existing space's space:chat session has had MCP tools +
@@ -357,9 +359,24 @@ export class SpaceRuntimeService {
 		actor: ActorRef,
 		queuedMessageId?: string
 	): Promise<void> {
-		const session = await this.ensureLongTermAgentSession(actor);
-		if (!session) return;
-		await this.flushLongTermAgentInbox(actor, session, queuedMessageId);
+		const agentId = agentIdFromActorId(actor.actorId);
+		const lockKey = agentId ? `${actor.spaceId}:${agentId}` : actor.actorId;
+		const previous = this.longTermAgentFlushes.get(lockKey) ?? Promise.resolve();
+		const current = previous
+			.catch(() => {})
+			.then(async () => {
+				const session = await this.ensureLongTermAgentSession(actor);
+				if (!session) return;
+				await this.flushLongTermAgentInbox(actor, session, queuedMessageId);
+			});
+		this.longTermAgentFlushes.set(lockKey, current);
+		try {
+			await current;
+		} finally {
+			if (this.longTermAgentFlushes.get(lockKey) === current) {
+				this.longTermAgentFlushes.delete(lockKey);
+			}
+		}
 	}
 
 	private async flushLongTermAgentInbox(
@@ -431,7 +448,6 @@ export class SpaceRuntimeService {
 		const space = await this.config.spaceManager.getSpace(actor.spaceId);
 		if (!space) return null;
 		const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
-		const agentKey = sanitizeLongTermAgentKey(agent.name);
 		let session = await sessionManager.getSessionAsync(sessionId);
 		if (!session) {
 			const resolvedPrompt = resolveCustomAgentPrompt(agent, {
@@ -441,64 +457,80 @@ export class SpaceRuntimeService {
 			const customDisallowedBuiltins = customTools
 				? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
 				: [];
-			await sessionManager.createSession({
-				sessionId,
-				workspacePath: space.workspacePath,
-				title: `${agent.name} inbox`,
-				spaceId: space.id,
-				worktreeMode: 'direct',
-				config: {
-					model: agent.model ?? space.defaultModel,
-					provider: agent.provider as Session['config']['provider'],
-					thinkingLevel: agent.thinkingLevel,
-					systemPrompt: {
-						type: 'preset',
-						preset: 'claude_code',
-						append: resolvedPrompt.value,
-					},
-					features: LONG_TERM_AGENT_SESSION_FEATURES,
-					...(customTools
-						? {
-								sdkToolsPreset: customTools,
-								allowedTools: customTools,
-								disallowedTools: customDisallowedBuiltins,
-							}
-						: {}),
-					agent: customTools ? agentKey : undefined,
-					agents: customTools
-						? {
-								[agentKey]: {
-									description: agent.description ?? `Space agent: ${agent.name}`,
-									disallowedTools: customDisallowedBuiltins,
-									model: 'inherit',
-									prompt: resolvedPrompt.value,
-								} satisfies AgentDefinition,
-							}
-						: undefined,
-					settingSources: agent.settingSources ?? space.settingSources,
-				},
-			});
-			session = await sessionManager.getSessionAsync(sessionId);
-			const currentMetadata = session?.getSessionData().metadata;
-			if (currentMetadata) {
-				this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
-					metadata: {
-						...currentMetadata,
-						promptProvenance: {
-							source: resolvedPrompt.source,
-							hash: resolvedPrompt.hash,
-							agentId: agent.id,
-							agentName: agent.name,
+			try {
+				const agentKey = sanitizeLongTermAgentKey(agent.name);
+				await sessionManager.createSession({
+					sessionId,
+					workspacePath: space.workspacePath,
+					title: `${agent.name} inbox`,
+					spaceId: space.id,
+					worktreeMode: 'direct',
+					config: {
+						model: agent.model ?? space.defaultModel,
+						provider: agent.provider as Session['config']['provider'],
+						thinkingLevel: agent.thinkingLevel,
+						systemPrompt: {
+							type: 'preset',
+							preset: 'claude_code',
+							append: resolvedPrompt.value,
 						},
+						features: LONG_TERM_AGENT_SESSION_FEATURES,
+						...(customTools
+							? {
+									sdkToolsPreset: customTools,
+									allowedTools: customTools,
+									disallowedTools: customDisallowedBuiltins,
+								}
+							: {}),
+						agent: customTools ? agentKey : undefined,
+						agents: customTools
+							? {
+									[agentKey]: {
+										description: agent.description ?? `Space agent: ${agent.name}`,
+										disallowedTools: customDisallowedBuiltins,
+										model: 'inherit',
+										prompt: resolvedPrompt.value,
+									} satisfies AgentDefinition,
+								}
+							: undefined,
+						settingSources: agent.settingSources ?? space.settingSources,
 					},
 				});
+			} catch (err) {
+				session = await sessionManager.getSessionAsync(sessionId);
+				if (!session) throw err;
 			}
+			session = session ?? (await sessionManager.getSessionAsync(sessionId));
+			if (!session) return null;
+			const currentMetadata = session.getSessionData().metadata;
+			this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
+				metadata: {
+					...currentMetadata,
+					promptProvenance: {
+						source: resolvedPrompt.source,
+						hash: resolvedPrompt.hash,
+						agentId: agent.id,
+						agentName: agent.name,
+					},
+				},
+			});
+			this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId);
 		}
-		if (!session) return null;
+		return session;
+	}
+
+	private attachLongTermAgentMcpServers(
+		session: {
+			mergeRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void;
+		},
+		space: Space,
+		agentName: string,
+		sessionId: string
+	): void {
 		const mcpServers: Record<string, McpServerConfig> = {
 			'space-agent-tools': this.buildLongTermAgentMcpServer(
 				space,
-				agent.name,
+				agentName,
 				sessionId
 			) as unknown as McpServerConfig,
 		};
@@ -517,7 +549,6 @@ export class SpaceRuntimeService {
 			}) as unknown as McpServerConfig;
 		}
 		session.mergeRuntimeMcpServers(mcpServers);
-		return session;
 	}
 
 	private buildLongTermAgentMcpServer(space: Space, agentName: string, sessionId: string) {
@@ -641,6 +672,7 @@ export class SpaceRuntimeService {
 		// comes from `SpaceRuntime.recoveryDone`, not this sequencing.
 		this.provisioningPromise = (async () => {
 			await this.provisionExistingSpaces();
+			await this.recoverLongTermAgentInbox();
 			await this.recoverStalledWorkflowRuns();
 		})().catch((err) => {
 			log.error('Failed to provision existing spaces during startup:', err);
@@ -665,6 +697,37 @@ export class SpaceRuntimeService {
 			await this.runtime.recoverStalledRuns();
 		} catch (err) {
 			log.error('SpaceRuntimeService: recoverStalledWorkflowRuns failed:', err);
+		}
+	}
+
+	private async recoverLongTermAgentInbox(): Promise<void> {
+		const inboxRepo = this.config.spaceAgentInboxRepo;
+		if (!inboxRepo) return;
+		try {
+			inboxRepo.expireStale();
+			for (const space of await this.config.spaceManager.listSpaces()) {
+				for (const row of inboxRepo.listPendingForSpace(space.id)) {
+					const agent = this.config.spaceAgentManager.getById(row.targetAgentId);
+					if (!agent || agent.spaceId !== space.id) continue;
+					void this.activateLongTermAgentAndFlush(
+						{
+							actorId: `agent:${encodeActorIdComponent(row.targetAgentId)}`,
+							kind: 'agent',
+							spaceId: space.id,
+							roles: ['space-agent'],
+							status: 'inactive',
+						},
+						row.id
+					).catch((err) => {
+						inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
+						log.warn(
+							`Long-term Space agent inbox recovery failed for ${row.targetAgentId}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+				}
+			}
+		} catch (err) {
+			log.error('SpaceRuntimeService: recoverLongTermAgentInbox failed:', err);
 		}
 	}
 
@@ -1569,10 +1632,6 @@ function agentIdFromActorId(actorId: string): string | null {
 function sourceSessionIdFromActorId(actorId: string): string | null {
 	if (!actorId.startsWith('session:')) return null;
 	return actorId.slice('session:'.length) || null;
-}
-
-function longTermAgentSessionId(spaceId: string, agentId: string): string {
-	return `space:agent:${encodeURIComponent(spaceId)}:${encodeURIComponent(agentId)}`;
 }
 
 function generateRuntimeMessageId(): string {

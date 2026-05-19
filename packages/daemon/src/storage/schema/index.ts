@@ -732,6 +732,10 @@ function createSpaceAgentInboxTables(db: BunDatabase): void {
 			`ON space_agent_inbox_messages(space_id, target_agent_id, idempotency_key) ` +
 			`WHERE idempotency_key IS NOT NULL AND status = 'pending'`
 	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance ` +
+			`ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`
+	);
 }
 
 function createAgentMemoryTables(db: BunDatabase): void {
