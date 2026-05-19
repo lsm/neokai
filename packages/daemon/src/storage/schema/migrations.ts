@@ -638,6 +638,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 135: Add space-scoped pending message lookup index for actor registry.
 	runMigration135(db);
+
+	// Migration 136: Add agent-memory embedding status and vector storage.
+	runMigration136(db);
 }
 
 /**
@@ -9016,6 +9019,93 @@ export function runMigration131(db: BunDatabase): void {
  * searched text is derived from SDK JSON. Repository writes maintain rows for new messages; this
  * migration backfills existing messages and task titles/descriptions.
  */
+export function runMigration136(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agent_memory')) return;
+	ensureAgentMemoryNamedPrimaryKey(db);
+
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_status')) {
+		db.exec(
+			`ALTER TABLE space_agent_memory ADD COLUMN embedding_status TEXT NOT NULL DEFAULT 'pending' CHECK(embedding_status IN ('pending', 'ready', 'failed'))`
+		);
+	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_model')) {
+		db.exec(`ALTER TABLE space_agent_memory ADD COLUMN embedding_model TEXT`);
+	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_updated_at')) {
+		db.exec(`ALTER TABLE space_agent_memory ADD COLUMN embedding_updated_at INTEGER`);
+	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_error')) {
+		db.exec(`ALTER TABLE space_agent_memory ADD COLUMN embedding_error TEXT`);
+	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_revision')) {
+		db.exec(
+			`ALTER TABLE space_agent_memory ADD COLUMN embedding_revision INTEGER NOT NULL DEFAULT 0`
+		);
+	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_token')) {
+		db.exec(`ALTER TABLE space_agent_memory ADD COLUMN embedding_token TEXT NOT NULL DEFAULT ''`);
+	}
+
+	recreateMemoryVectorsWithNamedParentKey(db);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+	);
+}
+
+function ensureAgentMemoryNamedPrimaryKey(db: BunDatabase): void {
+	if (tableHasColumn(db, 'space_agent_memory', 'id')) return;
+
+	db.exec(`DROP TRIGGER IF EXISTS space_agent_memory_ai`);
+	db.exec(`DROP TRIGGER IF EXISTS space_agent_memory_ad`);
+	db.exec(`DROP TRIGGER IF EXISTS space_agent_memory_au`);
+	db.exec(`DROP TABLE IF EXISTS space_agent_memory_fts`);
+
+	db.exec(`ALTER TABLE space_agent_memory RENAME TO space_agent_memory_old`);
+	db.exec(`
+		CREATE TABLE space_agent_memory (
+			id INTEGER PRIMARY KEY,
+			key TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '',
+			created_by_session TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			access_count INTEGER NOT NULL DEFAULT 0,
+			last_accessed_at INTEGER,
+			UNIQUE(space_id, key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`
+		INSERT INTO space_agent_memory (
+			id, key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at
+		)
+		SELECT rowid, key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at
+		FROM space_agent_memory_old
+	`);
+	db.exec(`DROP TABLE space_agent_memory_old`);
+	createAgentMemoryTables(db);
+}
+
+function recreateMemoryVectorsWithNamedParentKey(db: BunDatabase): void {
+	if (tableExists(db, 'memory_vectors') && tableHasColumn(db, 'memory_vectors', 'memory_id')) {
+		return;
+	}
+
+	db.exec(`DROP TABLE IF EXISTS memory_vectors`);
+	db.exec(`
+		CREATE TABLE memory_vectors (
+			memory_id INTEGER PRIMARY KEY,
+			embedding BLOB NOT NULL,
+			dimensions INTEGER NOT NULL,
+			model TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+}
+
 export function runMigration134(db: BunDatabase): void {
 	const existed = tableExists(db, 'message_search_fts');
 	createMessageSearchFtsTable(db);
@@ -9268,7 +9358,7 @@ function createAgentMemoryTables(db: BunDatabase): void {
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_memory (
-			rowid INTEGER PRIMARY KEY,
+			id INTEGER PRIMARY KEY,
 			key TEXT NOT NULL,
 			space_id TEXT NOT NULL,
 			content TEXT NOT NULL,
@@ -9289,7 +9379,7 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			content,
 			tags,
 			content='space_agent_memory',
-			content_rowid='rowid',
+			content_rowid='id',
 			tokenize='trigram'
 		)
 	`);
@@ -9298,23 +9388,23 @@ function createAgentMemoryTables(db: BunDatabase): void {
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
 		AFTER INSERT ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
-			VALUES (new.rowid, new.key, new.content, new.tags);
+			VALUES (new.id, new.key, new.content, new.tags);
 		END
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
 		AFTER DELETE ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
-			VALUES ('delete', old.rowid, old.key, old.content, old.tags);
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
 		END
 	`);
 	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
 		AFTER UPDATE OF key, content, tags ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
-			VALUES ('delete', old.rowid, old.key, old.content, old.tags);
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
 			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
-			VALUES (new.rowid, new.key, new.content, new.tags);
+			VALUES (new.id, new.key, new.content, new.tags);
 		END
 	`);
 

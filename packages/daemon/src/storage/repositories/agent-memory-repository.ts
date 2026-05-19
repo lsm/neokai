@@ -18,7 +18,15 @@ export interface AgentMemorySearchResult {
 	rank: number;
 }
 
+export interface AgentMemoryEmbedder {
+	model: string;
+	dimensions: number;
+	embedQuery(text: string): Float32Array | number[] | Promise<Float32Array | number[]>;
+	embedPassage(text: string): Float32Array | number[] | Promise<Float32Array | number[]>;
+}
+
 interface AgentMemoryRow {
+	id: number;
 	key: string;
 	space_id: string;
 	content: string;
@@ -28,20 +36,42 @@ interface AgentMemoryRow {
 	updated_at: number;
 	access_count: number;
 	last_accessed_at: number | null;
+	embedding_status: 'pending' | 'ready' | 'failed';
+	embedding_model: string | null;
+	embedding_updated_at: number | null;
+	embedding_error: string | null;
+	embedding_revision: number;
+	embedding_token: string;
 }
 
 interface AgentMemorySearchRow extends AgentMemoryRow {
 	rank: number;
 }
 
+interface AgentMemoryVectorRow extends AgentMemoryRow {
+	embedding: Buffer;
+	dimensions: number;
+	model: string;
+}
+
+interface RankedRow {
+	row: AgentMemorySearchRow;
+	rank: number;
+}
+
 const MEMORY_CONTENT_MAX_LENGTH = 10_000;
 const MEMORY_TAG_MAX_LENGTH = 50;
 const MEMORY_TAG_MAX_COUNT = 50;
+const RRF_K = 60;
+const VECTOR_CANDIDATE_LIMIT = 100;
+const EMBEDDING_ERROR_MAX_LENGTH = 500;
+const EMBEDDING_BACKFILL_BATCH_SIZE = 25;
 
 export class AgentMemoryRepository {
 	constructor(
 		private db: BunDatabase,
-		private reactiveDb?: ReactiveDatabase
+		private reactiveDb?: ReactiveDatabase,
+		private embedder?: AgentMemoryEmbedder
 	) {}
 
 	write(params: {
@@ -56,6 +86,7 @@ export class AgentMemoryRepository {
 		const tagsProvided = params.tags !== undefined;
 		const tags = normalizeTags(params.tags ?? []);
 		const now = Date.now();
+		const embeddingToken = crypto.randomUUID();
 
 		// On conflict (existing row): preserve `tags` when caller did not supply them
 		// and never overwrite `created_by_session` so provenance stays with the
@@ -63,12 +94,18 @@ export class AgentMemoryRepository {
 		const row = this.db
 			.prepare(
 				`INSERT INTO space_agent_memory
-					(key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)
+					(key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision, embedding_token)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL, 1, ?)
 				 ON CONFLICT(space_id, key) DO UPDATE SET
 					content = excluded.content,
 					tags = CASE WHEN ? = 1 THEN excluded.tags ELSE space_agent_memory.tags END,
-					updated_at = excluded.updated_at
+					updated_at = excluded.updated_at,
+					embedding_status = 'pending',
+					embedding_model = NULL,
+					embedding_updated_at = NULL,
+					embedding_error = NULL,
+					embedding_revision = space_agent_memory.embedding_revision + 1,
+						embedding_token = excluded.embedding_token
 				 RETURNING *`
 			)
 			.get(
@@ -79,9 +116,11 @@ export class AgentMemoryRepository {
 				params.createdBySession ?? null,
 				now,
 				now,
+				embeddingToken,
 				tagsProvided ? 1 : 0
 			) as AgentMemoryRow;
 
+		this.updateEmbedding(row);
 		this.reactiveDb?.notifyChange('space_agent_memory');
 		return rowToEntry(row);
 	}
@@ -109,23 +148,23 @@ export class AgentMemoryRepository {
 		return result.changes > 0;
 	}
 
-	search(spaceId: string, query: string, limit = 10): AgentMemorySearchResult[] {
-		return this.searchWithOptions(spaceId, query, { limit }).map((row) => ({
+	async search(spaceId: string, query: string, limit = 10): Promise<AgentMemorySearchResult[]> {
+		return (await this.searchWithOptions(spaceId, query, { limit })).map((row) => ({
 			memory: rowToEntry(row),
 			rank: row.rank,
 		}));
 	}
 
-	list(
+	async list(
 		spaceId: string,
 		options?: { query?: string; limit?: number; offset?: number }
-	): AgentMemoryEntry[] {
+	): Promise<AgentMemoryEntry[]> {
 		const limit = normalizeLimit(options?.limit ?? 50, 100);
 		const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
 		const query = options?.query?.trim();
 
 		if (query) {
-			return this.searchWithOptions(spaceId, query, { limit, offset, maxLimit: 100 }).map(
+			return (await this.searchWithOptions(spaceId, query, { limit, offset, maxLimit: 100 })).map(
 				rowToEntry
 			);
 		}
@@ -152,26 +191,20 @@ export class AgentMemoryRepository {
 		this.reactiveDb?.notifyChange('space_agent_memory');
 	}
 
-	private searchWithOptions(
+	private async searchWithOptions(
 		spaceId: string,
 		query: string,
 		options?: { limit?: number; offset?: number; maxLimit?: number }
-	): AgentMemorySearchRow[] {
+	): Promise<AgentMemorySearchRow[]> {
 		const ftsQuery = buildFtsQuery(query);
 		const limit = normalizeLimit(options?.limit ?? 10, options?.maxLimit ?? 20);
 		const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
-		if (!ftsQuery) return [];
+		const candidateLimit = options?.maxLimit ?? VECTOR_CANDIDATE_LIMIT;
+		const poolLimit = Math.max(candidateLimit, limit + offset);
 
-		const rows = this.db
-			.prepare(
-				`SELECT m.*, bm25(space_agent_memory_fts) AS rank
-				 FROM space_agent_memory_fts
-				 JOIN space_agent_memory m ON m.rowid = space_agent_memory_fts.rowid
-				 WHERE space_agent_memory_fts MATCH ? AND m.space_id = ?
-				 ORDER BY rank ASC, m.updated_at DESC, m.key ASC
-				 LIMIT ? OFFSET ?`
-			)
-			.all(ftsQuery, spaceId, limit, offset) as AgentMemorySearchRow[];
+		const ftsRows = ftsQuery ? this.searchFts(spaceId, ftsQuery, poolLimit, 0) : [];
+		const vectorRows = await this.searchVector(spaceId, query, poolLimit);
+		const rows = mergeRankedRows(ftsRows, vectorRows).slice(offset, offset + limit);
 
 		if (rows.length > 0) {
 			const now = Date.now();
@@ -189,6 +222,224 @@ export class AgentMemoryRepository {
 
 		return rows;
 	}
+
+	private searchFts(
+		spaceId: string,
+		ftsQuery: string,
+		limit: number,
+		offset: number
+	): AgentMemorySearchRow[] {
+		return this.db
+			.prepare(
+				`SELECT m.*, bm25(space_agent_memory_fts) AS rank
+				 FROM space_agent_memory_fts
+				 JOIN space_agent_memory m ON m.id = space_agent_memory_fts.rowid
+				 WHERE space_agent_memory_fts MATCH ? AND m.space_id = ?
+				 ORDER BY rank ASC, m.updated_at DESC, m.key ASC
+				 LIMIT ? OFFSET ?`
+			)
+			.all(ftsQuery, spaceId, limit, offset) as AgentMemorySearchRow[];
+	}
+
+	private async searchVector(spaceId: string, query: string, limit: number): Promise<RankedRow[]> {
+		const queryVector = await this.embedText(query, 'query', { fallbackToNull: true });
+		if (!queryVector || !this.embedder) return [];
+
+		const rows = this.db
+			.prepare(
+				`SELECT m.*, v.embedding, v.dimensions, v.model
+				 FROM memory_vectors v
+				 JOIN space_agent_memory m ON m.id = v.memory_id
+				 WHERE m.space_id = ?
+					AND m.embedding_status = 'ready'
+					AND v.model = ?
+					AND v.dimensions = ?`
+			)
+			.all(spaceId, this.embedder.model, this.embedder.dimensions) as AgentMemoryVectorRow[];
+
+		return rows
+			.map((row) => {
+				const similarity = cosineSimilarity(queryVector, blobToFloat32Array(row.embedding));
+				return {
+					row: { ...row, rank: 1 - similarity },
+					rank: similarity,
+				};
+			})
+			.filter((item) => Number.isFinite(item.rank))
+			.sort(
+				(a, b) =>
+					b.rank - a.rank ||
+					b.row.updated_at - a.row.updated_at ||
+					a.row.key.localeCompare(b.row.key)
+			)
+			.slice(0, limit);
+	}
+
+	backfillPendingEmbeddings(): void {
+		if (!this.embedder) return;
+		void this.backfillEmbeddingBatches();
+	}
+
+	private async backfillEmbeddingBatches(): Promise<void> {
+		if (!this.embedder) return;
+		const attemptedMemoryIds = new Set<number>();
+		for (;;) {
+			const attemptedIds = [...attemptedMemoryIds];
+			const attemptedFilter = attemptedIds.length
+				? `AND m.id NOT IN (${attemptedIds.map(() => '?').join(', ')})`
+				: '';
+			const rows = this.db
+				.prepare(
+					`SELECT m.*
+					 FROM space_agent_memory m
+					 LEFT JOIN memory_vectors v ON v.memory_id = m.id
+					 WHERE (
+						m.embedding_status IN ('pending', 'failed')
+						OR v.memory_id IS NULL
+						OR v.model != ?
+						OR v.dimensions != ?
+					 )
+					 ${attemptedFilter}
+					 ORDER BY m.updated_at ASC, m.key ASC
+					 LIMIT ?`
+				)
+				.all(
+					this.embedder.model,
+					this.embedder.dimensions,
+					...attemptedIds,
+					EMBEDDING_BACKFILL_BATCH_SIZE
+				) as AgentMemoryRow[];
+			if (rows.length === 0) return;
+			for (const row of rows) {
+				attemptedMemoryIds.add(row.id);
+				await this.updateEmbedding(row);
+			}
+		}
+	}
+
+	private updateEmbedding(row: AgentMemoryRow): Promise<void> | void {
+		const sourceRevision = row.embedding_revision;
+		const sourceToken = row.embedding_token;
+		try {
+			const embedding = this.embedText(memoryEmbeddingText(row), 'passage');
+			if (!embedding) return;
+			if (embedding instanceof Promise) {
+				return embedding
+					.then((vector) => this.storeEmbedding(row.id, sourceRevision, sourceToken, vector))
+					.catch((error: unknown) =>
+						this.markEmbeddingFailed(row.id, sourceRevision, sourceToken, error)
+					);
+			}
+			this.storeEmbedding(row.id, sourceRevision, sourceToken, embedding);
+		} catch (error) {
+			this.markEmbeddingFailed(row.id, sourceRevision, sourceToken, error);
+		}
+	}
+
+	private storeEmbedding(
+		memoryId: number,
+		sourceRevision: number,
+		sourceToken: string,
+		embedding: Float32Array
+	): void {
+		const now = Date.now();
+		const store = this.db.transaction(() => {
+			const current = this.db
+				.prepare(`SELECT embedding_revision, embedding_token FROM space_agent_memory WHERE id = ?`)
+				.get(memoryId) as { embedding_revision: number; embedding_token: string } | undefined;
+			if (
+				!current ||
+				current.embedding_revision !== sourceRevision ||
+				current.embedding_token !== sourceToken
+			)
+				return;
+
+			this.db
+				.prepare(
+					`INSERT INTO memory_vectors (memory_id, embedding, dimensions, model, updated_at)
+					 VALUES (?, ?, ?, ?, ?)
+					 ON CONFLICT(memory_id) DO UPDATE SET
+						embedding = excluded.embedding,
+						dimensions = excluded.dimensions,
+						model = excluded.model,
+						updated_at = excluded.updated_at`
+				)
+				.run(
+					memoryId,
+					float32ArrayToBlob(embedding),
+					embedding.length,
+					this.embedder?.model ?? 'unknown',
+					now
+				);
+			this.db
+				.prepare(
+					`UPDATE space_agent_memory
+					 SET embedding_status = 'ready', embedding_model = ?, embedding_updated_at = ?, embedding_error = NULL
+					 WHERE id = ? AND embedding_revision = ? AND embedding_token = ?`
+				)
+				.run(this.embedder?.model ?? 'unknown', now, memoryId, sourceRevision, sourceToken);
+		});
+		store();
+	}
+
+	private markEmbeddingFailed(
+		memoryId: number,
+		sourceRevision: number,
+		sourceToken: string,
+		error: unknown
+	): void {
+		const now = Date.now();
+		this.db
+			.prepare(
+				`UPDATE space_agent_memory
+				 SET embedding_status = 'failed', embedding_model = ?, embedding_updated_at = ?, embedding_error = ?
+				 WHERE id = ? AND embedding_revision = ? AND embedding_token = ?`
+			)
+			.run(
+				this.embedder?.model ?? 'unknown',
+				now,
+				embeddingErrorMessage(error),
+				memoryId,
+				sourceRevision,
+				sourceToken
+			);
+	}
+
+	private embedText(
+		text: string,
+		kind: 'query' | 'passage'
+	): Float32Array | Promise<Float32Array> | null;
+	private embedText(
+		text: string,
+		kind: 'query' | 'passage',
+		options: { fallbackToNull: true }
+	): Float32Array | Promise<Float32Array | null> | null;
+	private embedText(
+		text: string,
+		kind: 'query' | 'passage',
+		options?: { fallbackToNull?: boolean }
+	): Float32Array | Promise<Float32Array | null> | null {
+		if (!this.embedder) return null;
+		try {
+			const embedding =
+				kind === 'query' ? this.embedder.embedQuery(text) : this.embedder.embedPassage(text);
+			if (embedding instanceof Promise) {
+				const normalized = embedding.then((value) => this.normalizeEmbedding(value));
+				return options?.fallbackToNull ? normalized.catch(() => null) : normalized;
+			}
+			return this.normalizeEmbedding(embedding);
+		} catch (error) {
+			if (options?.fallbackToNull) return null;
+			throw error;
+		}
+	}
+
+	private normalizeEmbedding(embedding: Float32Array | number[]): Float32Array {
+		const vector = embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
+		if (vector.length !== this.embedder?.dimensions)
+			throw new Error('Embedding dimension mismatch.');
+		return vector;
+	}
 }
 
 function rowToEntry(row: AgentMemoryRow): AgentMemoryEntry {
@@ -203,6 +454,78 @@ function rowToEntry(row: AgentMemoryRow): AgentMemoryEntry {
 		accessCount: row.access_count,
 		lastAccessedAt: row.last_accessed_at,
 	};
+}
+
+function mergeRankedRows(
+	ftsRows: AgentMemorySearchRow[],
+	vectorRows: RankedRow[]
+): AgentMemorySearchRow[] {
+	const merged = new Map<number, { row: AgentMemorySearchRow; score: number }>();
+
+	ftsRows.forEach((row, index) => {
+		merged.set(row.id, {
+			row,
+			score: 1 / (RRF_K + index + 1),
+		});
+	});
+
+	vectorRows.forEach((item, index) => {
+		const existing = merged.get(item.row.id);
+		const score = 1 / (RRF_K + index + 1);
+		if (existing) {
+			existing.score += score;
+		} else {
+			merged.set(item.row.id, { row: item.row, score });
+		}
+	});
+
+	return [...merged.values()]
+		.sort(
+			(a, b) =>
+				b.score - a.score ||
+				b.row.updated_at - a.row.updated_at ||
+				a.row.key.localeCompare(b.row.key)
+		)
+		.map((item) => ({ ...item.row, rank: item.score }));
+}
+
+function memoryEmbeddingText(row: AgentMemoryRow): string {
+	return [row.key, row.content, ...parseTags(row.tags)].join('\n');
+}
+
+function float32ArrayToBlob(vector: Float32Array): Buffer {
+	return Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
+}
+
+function blobToFloat32Array(blob: Buffer): Float32Array {
+	return new Float32Array(
+		blob.buffer,
+		blob.byteOffset,
+		Math.floor(blob.byteLength / Float32Array.BYTES_PER_ELEMENT)
+	);
+}
+
+function cosineSimilarity(left: Float32Array, right: Float32Array): number {
+	if (left.length !== right.length || left.length === 0) return Number.NEGATIVE_INFINITY;
+	const length = left.length;
+
+	let dot = 0;
+	let leftMagnitude = 0;
+	let rightMagnitude = 0;
+	for (let index = 0; index < length; index++) {
+		const leftValue = left[index] ?? 0;
+		const rightValue = right[index] ?? 0;
+		dot += leftValue * rightValue;
+		leftMagnitude += leftValue * leftValue;
+		rightMagnitude += rightValue * rightValue;
+	}
+	if (leftMagnitude === 0 || rightMagnitude === 0) return Number.NEGATIVE_INFINITY;
+	return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
+}
+
+function embeddingErrorMessage(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	return message.slice(0, EMBEDDING_ERROR_MAX_LENGTH);
 }
 
 function normalizeKey(key: string): string {
@@ -268,7 +591,7 @@ function buildFtsQuery(query: string): string | null {
 		// dashed identifiers (e.g. `src/lib/main.ts`, `pre-commit`) remain
 		// intact for trigram matching.
 		.map((term) => term.replace(/[^\p{L}\p{N}_./:-]/gu, ''))
-		// Trigram FTS cannot match terms shorter than three characters.
+		// Trigram FTS cannot match terms shorter than three chars.
 		.filter((term) => term.length >= 3);
 	if (terms.length === 0) return null;
 	return terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(' ');

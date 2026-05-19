@@ -50,7 +50,7 @@ export function createAgentMemoryToolHandlers(config: AgentMemoryToolsConfig) {
 		},
 
 		async 'memory.search'(args: z.infer<typeof MemorySearchSchema>): Promise<ToolResult> {
-			const results = memoryRepo.search(spaceId, args.query, args.limit);
+			const results = await memoryRepo.search(spaceId, args.query, args.limit);
 			return jsonResult({ success: true, results });
 		},
 
