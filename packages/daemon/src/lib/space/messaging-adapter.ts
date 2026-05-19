@@ -16,6 +16,7 @@ import type {
 import type { PendingAgentMessageRecord } from '../../storage/repositories/pending-agent-message-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { WorkflowNode } from '@neokai/shared';
 import { ChannelResolver } from './runtime/channel-resolver';
 import type { SpaceActorRegistryAdapter } from './actor-registry';
 
@@ -145,18 +146,25 @@ export class SpaceMessageResolver implements ActorResolver {
 			if (parsed.nodeId !== nodeId) return false;
 			return agentName ? parsed.agentName === agentName : true;
 		});
-		const routable = matches.filter(isRoutable);
+		let routable = matches.filter(isRoutable);
+		if (!agentName && this.context.agentName) {
+			routable = routable.filter(
+				(actor) => parseWorkerActorId(actor.actorId)?.agentName === this.context.agentName
+			);
+		}
 		if (routable.length === 0) {
 			return { actors: [], reason: `No routable worker actor found for ${targetRef}` };
 		}
-		if (!agentName && routable.length > 1 && !this.context.agentName) {
+		if (!agentName && routable.length > 1) {
 			return {
 				actors: [],
 				reason: `Worker target ${targetRef} is ambiguous; specify @worker:<node>/<agent>`,
 			};
 		}
 
-		const permitted = routable.filter((actor) => this.canSendToWorker(workflowRunId, actor));
+		const permitted = routable.filter((actor) =>
+			this.canSendToWorker(workflowRunId, actor, address)
+		);
 		if (permitted.length === 0) {
 			return {
 				actors: [],
@@ -166,16 +174,21 @@ export class SpaceMessageResolver implements ActorResolver {
 		return { actors: stableActors(permitted) };
 	}
 
-	private canSendToWorker(workflowRunId: string, actor: ActorRef): boolean {
-		const fromNode = this.context.nodeId;
-		if (!fromNode) return false;
+	private canSendToWorker(workflowRunId: string, actor: ActorRef, address: WorkerAddress): boolean {
 		const run = this.config.workflowRunRepo.getRun(workflowRunId);
-		if (!run) return false;
+		if (!run || run.spaceId !== this.context.spaceId) return false;
 		const workflow = this.config.workflowRepo.getWorkflow(run.workflowId);
-		if (!workflow?.channels || workflow.channels.length === 0) return false;
+		if (!workflow) return false;
 		const parsed = parseWorkerActorId(actor.actorId);
 		if (!parsed) return false;
-		return new ChannelResolver(workflow.channels).canSend(fromNode, parsed.nodeId);
+
+		if (address.workflowRunId && !this.context.nodeId) return true;
+
+		const fromNodeName = workflowNodeName(workflow.nodes, this.context.nodeId);
+		const targetNodeName = workflowNodeName(workflow.nodes, parsed.nodeId);
+		if (!fromNodeName || !targetNodeName) return false;
+		if (!workflow.channels || workflow.channels.length === 0) return false;
+		return new ChannelResolver(workflow.channels).canSend(fromNodeName, targetNodeName);
 	}
 }
 
@@ -255,11 +268,11 @@ function createDeliveryFromActor(
 	actor: ActorRef
 ): DeliveryRecord {
 	return {
-		deliveryId: `delivery_${message.messageId}_${encodeURIComponent(actor.actorId)}`,
+		deliveryId: `delivery_${message.messageId}_${encodeURIComponent(targetRef)}_${encodeURIComponent(actor.actorId)}`,
 		messageId: message.messageId,
 		targetActorId: actor.actorId,
 		targetRef,
-		state: actor.status === 'active' ? 'delivered' : 'queued',
+		state: 'queued',
 		attemptCount: 0,
 		maxAttempts: 5,
 		createdAt: Date.now(),
@@ -354,6 +367,12 @@ function stableActors(actors: ActorRef[]): ActorRef[] {
 
 function actorRole(role: string): string {
 	return `actor-role:${encodeURIComponent(role)}`;
+}
+
+function workflowNodeName(nodes: WorkflowNode[], nodeId: string | undefined): string | null {
+	if (!nodeId) return null;
+	const node = nodes.find((candidate) => candidate.id === nodeId || candidate.name === nodeId);
+	return node?.name ?? null;
 }
 
 function parseWorkerActorId(
