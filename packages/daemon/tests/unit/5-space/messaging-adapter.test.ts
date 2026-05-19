@@ -282,10 +282,10 @@ describe('Space messaging adapter', () => {
 		const facade = new SpaceDeliveryFacade({ resolver });
 		const result = await facade.routeMessage({
 			...message,
-			targets: ['@worker:%/reviewer', '@worker:Review/reviewer'],
+			targets: ['@worker:%/reviewer', '@worker:Review/reviewer', '@worker:%/reviewer'],
 		});
 
-		expect(result.deliveries).toHaveLength(2);
+		expect(result.deliveries).toHaveLength(3);
 		expect(result.deliveries[0]).toMatchObject({
 			targetRef: '@worker:Review/reviewer',
 			state: 'queued',
@@ -295,6 +295,14 @@ describe('Space messaging adapter', () => {
 			state: 'failed',
 			lastError: 'Invalid worker target escape in @worker:%/reviewer',
 		});
+		expect(result.deliveries[2]).toMatchObject({
+			targetRef: '@worker:%/reviewer',
+			state: 'failed',
+			lastError: 'Invalid worker target escape in @worker:%/reviewer',
+		});
+		expect(new Set(result.deliveries.map((delivery) => delivery.deliveryId)).size).toBe(
+			result.deliveries.length
+		);
 	});
 
 	it('maps pending_agent_messages rows into message and delivery facade records', () => {
@@ -309,8 +317,9 @@ describe('Space messaging adapter', () => {
 			idempotencyKey: 'idem-1',
 		}).record;
 
-		const mappedMessage = pendingMessageToMessageRecord(pending);
-		const deliveries = pendingMessageToDeliveryRecords(pending, registry.listActors(spaceId));
+		const actors = registry.listActors(spaceId);
+		const mappedMessage = pendingMessageToMessageRecord(pending, actors);
+		const deliveries = pendingMessageToDeliveryRecords(pending, actors);
 
 		expect(mappedMessage).toMatchObject({
 			messageId: `msg_legacy_${pending.id}`,
@@ -326,5 +335,43 @@ describe('Space messaging adapter', () => {
 			`worker:${encodeURIComponent(runId)}:node-review:reviewer`,
 		]);
 		expect(deliveries.every((delivery) => delivery.state === 'queued')).toBe(true);
+	});
+
+	it('maps legacy senders and terminal deliveries without inventing actors', () => {
+		const actors = registry.listActors(spaceId);
+		const queued = pendingMessageRepo.enqueue({
+			workflowRunId: runId,
+			spaceId,
+			taskId: 'task-1',
+			sourceAgentName: 'coder',
+			targetKind: 'node_agent',
+			targetAgentName: 'reviewer',
+			message: 'queued review',
+		}).record;
+		const mappedWorkerSender = pendingMessageToMessageRecord(queued, actors);
+		expect(mappedWorkerSender.senderActorId).toBe(
+			`worker:${encodeURIComponent(runId)}:node-coding:coder`
+		);
+
+		const coordinator = pendingMessageToMessageRecord(
+			{ ...queued, sourceAgentName: 'coordinator' },
+			actors
+		);
+		expect(coordinator.senderActorId).toBe(`agent:coordinator:${spaceId}`);
+
+		const delivered = {
+			...queued,
+			status: 'delivered' as const,
+			deliveredSessionId: 'reviewer',
+			deliveredAt: Date.now(),
+		};
+		expect(pendingMessageToDeliveryRecords(delivered, actors)).toEqual([
+			expect.objectContaining({ targetActorId: undefined, state: 'delivered' }),
+		]);
+
+		const failed = { ...queued, status: 'failed' as const };
+		expect(pendingMessageToDeliveryRecords(failed, actors)).toEqual([
+			expect.objectContaining({ targetActorId: undefined, state: 'failed' }),
+		]);
 	});
 });

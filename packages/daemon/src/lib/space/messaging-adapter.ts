@@ -154,9 +154,10 @@ export class SpaceMessageResolver implements ActorResolver {
 		});
 		let routable = matches.filter(isRoutable);
 		if (!agentName && this.context.agentName) {
-			routable = routable.filter(
+			const contextMatches = routable.filter(
 				(actor) => parseWorkerActorId(actor.actorId)?.agentName === this.context.agentName
 			);
+			if (contextMatches.length > 0) routable = contextMatches;
 		}
 		if (routable.length === 0) {
 			return { actors: [], reason: `No routable worker actor found for ${targetRef}` };
@@ -240,19 +241,25 @@ export class SpaceDeliveryFacade {
 			deliveries.push(delivery);
 		}
 
+		const failedCounts = new Map<string, number>();
 		for (const target of result.unresolved) {
-			deliveries.push(createFailedDelivery(message, target.targetRef, target.reason));
+			const occurrence = failedCounts.get(target.targetRef) ?? 0;
+			failedCounts.set(target.targetRef, occurrence + 1);
+			deliveries.push(createFailedDelivery(message, target.targetRef, target.reason, occurrence));
 		}
 
 		return { message, deliveries };
 	}
 }
 
-export function pendingMessageToMessageRecord(row: PendingAgentMessageRecord): MessageRecord {
+export function pendingMessageToMessageRecord(
+	row: PendingAgentMessageRecord,
+	actors: ActorRef[] = []
+): MessageRecord {
 	return {
 		messageId: `msg_legacy_${row.id}`,
 		spaceId: row.spaceId,
-		senderActorId: legacySenderActorId(row.sourceAgentName, row.workflowRunId),
+		senderActorId: legacySenderActorId(row, actors),
 		targets: [row.targetAgentName],
 		body: row.message,
 		kind: 'message',
@@ -298,10 +305,12 @@ function createDeliveryFromActor(
 function createFailedDelivery(
 	message: MessageRecord,
 	targetRef: string,
-	lastError: string
+	lastError: string,
+	occurrence = 0
 ): DeliveryRecord {
+	const suffix = occurrence === 0 ? '' : `_${occurrence}`;
 	return {
-		deliveryId: `delivery_${message.messageId}_${encodeURIComponent(targetRef)}_failed`,
+		deliveryId: `delivery_${message.messageId}_${encodeURIComponent(targetRef)}_failed${suffix}`,
 		messageId: message.messageId,
 		targetRef,
 		state: 'failed',
@@ -344,8 +353,10 @@ function legacyTargetActors(row: PendingAgentMessageRecord, actors: ActorRef[]):
 		const parsed = parseWorkerActorId(actor.actorId);
 		return parsed?.workflowRunId === row.workflowRunId && parsed.agentName === row.targetAgentName;
 	});
-	if (row.status === 'pending') return stableActors(matches);
-	return stableActors(matches).slice(0, 1);
+	const sorted = stableActors(matches);
+	if (row.status === 'pending') return sorted;
+	if (sorted.length === 1) return sorted;
+	return [];
 }
 
 function pendingStatusToDeliveryState(status: PendingAgentMessageRecord['status']): DeliveryState {
@@ -361,16 +372,22 @@ function pendingStatusToDeliveryState(status: PendingAgentMessageRecord['status'
 	}
 }
 
-function legacySenderActorId(sourceAgentName: string, workflowRunId: string): string {
-	if (sourceAgentName === 'human') return 'human:legacy';
+function legacySenderActorId(row: PendingAgentMessageRecord, actors: ActorRef[]): string {
+	if (row.sourceAgentName === 'human') return 'human:legacy';
 	if (
-		sourceAgentName === 'coordinator' ||
-		sourceAgentName === 'space-agent' ||
-		sourceAgentName === 'task-agent'
+		row.sourceAgentName === 'coordinator' ||
+		row.sourceAgentName === 'space-agent' ||
+		row.sourceAgentName === 'task-agent'
 	) {
-		return 'agent:coordinator:legacy';
+		return `agent:coordinator:${row.spaceId}`;
 	}
-	return `worker:${encodeURIComponent(workflowRunId)}:unknown:${encodeURIComponent(sourceAgentName)}`;
+	const matches = actors.filter((actor) => {
+		if (actor.kind !== 'worker' || !isRoutable(actor)) return false;
+		const parsed = parseWorkerActorId(actor.actorId);
+		return parsed?.workflowRunId === row.workflowRunId && parsed.agentName === row.sourceAgentName;
+	});
+	if (matches.length === 1) return matches[0].actorId;
+	return `worker:${encodeURIComponent(row.workflowRunId)}:unresolved:${encodeURIComponent(row.sourceAgentName)}`;
 }
 
 function isRoutable(actor: ActorRef): boolean {
