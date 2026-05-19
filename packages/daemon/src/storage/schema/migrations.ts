@@ -9042,6 +9042,9 @@ export function runMigration136(db: BunDatabase): void {
 			`ALTER TABLE space_agent_memory ADD COLUMN embedding_revision INTEGER NOT NULL DEFAULT 0`
 		);
 	}
+	if (!tableHasColumn(db, 'space_agent_memory', 'embedding_token')) {
+		db.exec(`ALTER TABLE space_agent_memory ADD COLUMN embedding_token TEXT NOT NULL DEFAULT ''`);
+	}
 
 	recreateMemoryVectorsWithNamedParentKey(db);
 	db.exec(

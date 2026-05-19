@@ -67,6 +67,10 @@ class DeferredKeywordEmbedder implements AgentMemoryEmbedder {
 		});
 	}
 
+	get pendingCount(): number {
+		return this.resolvers.length;
+	}
+
 	resolveNext(): void {
 		this.resolvers.shift()?.(new Float32Array());
 	}
@@ -542,6 +546,42 @@ describe('AgentMemoryRepository', () => {
 		expect(row.embedding_revision).toBe(2);
 	});
 
+	test('stale async embeddings do not write to a reused row id', async () => {
+		const embedder = new DeferredKeywordEmbedder();
+		repo = new AgentMemoryRepository(db, undefined, embedder);
+		repo.write({
+			spaceId: 'space-a',
+			key: 'deleted.memory',
+			content: 'Delete stale session records after retention expires.',
+		});
+		repo.delete('space-a', 'deleted.memory');
+		repo.write({
+			spaceId: 'space-a',
+			key: 'new.memory',
+			content: 'Store credential material only in secure storage.',
+		});
+
+		embedder.resolveNext();
+		await flushPromises();
+		embedder.resolveNext();
+		await flushPromises();
+		embedder.resolveNext();
+
+		const row = db
+			.prepare(
+				`SELECT id, embedding_revision FROM space_agent_memory WHERE space_id = ? AND key = ?`
+			)
+			.get('space-a', 'new.memory') as { id: number; embedding_revision: number };
+		expect(row.id).toBe(1);
+		expect(row.embedding_revision).toBe(1);
+		const vectorRow = db
+			.prepare(`SELECT embedding FROM memory_vectors WHERE memory_id = ?`)
+			.get(row.id) as { embedding: Buffer };
+		expect(new Float32Array(vectorRow.embedding.buffer, vectorRow.embedding.byteOffset, 3)).toEqual(
+			keywordVector('Store credential material only in secure storage.')
+		);
+	});
+
 	test('embedding failures are persisted', async () => {
 		repo = new AgentMemoryRepository(db, undefined, new FailingEmbedder());
 		repo.write({
@@ -607,6 +647,43 @@ describe('AgentMemoryRepository', () => {
 
 		const results = await repo.search('space-a', 'erase old conversation data', 5);
 		expect(results.map((result) => result.memory.key)).toEqual(['cleanup.failed']);
+	});
+
+	test('startup backfill queues pending embeddings in batches', async () => {
+		repo = new AgentMemoryRepository(db);
+		for (let index = 0; index < 30; index++) {
+			repo.write({
+				spaceId: 'space-a',
+				key: `backfill.${index.toString().padStart(2, '0')}`,
+				content: `Backfill pending memory ${index}.`,
+			});
+		}
+		const embedder = new DeferredKeywordEmbedder();
+		db.prepare(
+			`UPDATE space_agent_memory
+			 SET embedding_status = 'ready'
+			 WHERE key >= ?`
+		).run('backfill.25');
+		db.prepare(
+			`INSERT INTO memory_vectors (memory_id, embedding, dimensions, model, updated_at)
+			 SELECT id, ?, 3, ?, ? FROM space_agent_memory WHERE key >= ?`
+		).run(
+			Buffer.from(new Float32Array([0, 0, 0]).buffer),
+			embedder.model,
+			Date.now(),
+			'backfill.25'
+		);
+		repo = new AgentMemoryRepository(db, undefined, embedder);
+
+		repo.backfillPendingEmbeddings();
+		await flushPromises();
+
+		expect(embedder.pendingCount).toBe(1);
+		for (let index = 0; index < 24; index++) {
+			embedder.resolveNext();
+			await flushPromises();
+		}
+		expect(embedder.pendingCount).toBe(1);
 	});
 
 	test('vector search ranks ready vectors beyond the first 100 rows', async () => {

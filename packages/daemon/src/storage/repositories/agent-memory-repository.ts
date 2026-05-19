@@ -41,6 +41,7 @@ interface AgentMemoryRow {
 	embedding_updated_at: number | null;
 	embedding_error: string | null;
 	embedding_revision: number;
+	embedding_token: string;
 }
 
 interface AgentMemorySearchRow extends AgentMemoryRow {
@@ -64,6 +65,7 @@ const MEMORY_TAG_MAX_COUNT = 50;
 const RRF_K = 60;
 const VECTOR_CANDIDATE_LIMIT = 100;
 const EMBEDDING_ERROR_MAX_LENGTH = 500;
+const EMBEDDING_BACKFILL_BATCH_SIZE = 25;
 
 export class AgentMemoryRepository {
 	constructor(
@@ -84,6 +86,7 @@ export class AgentMemoryRepository {
 		const tagsProvided = params.tags !== undefined;
 		const tags = normalizeTags(params.tags ?? []);
 		const now = Date.now();
+		const embeddingToken = crypto.randomUUID();
 
 		// On conflict (existing row): preserve `tags` when caller did not supply them
 		// and never overwrite `created_by_session` so provenance stays with the
@@ -91,8 +94,8 @@ export class AgentMemoryRepository {
 		const row = this.db
 			.prepare(
 				`INSERT INTO space_agent_memory
-					(key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL, 1)
+					(key, space_id, content, tags, created_by_session, created_at, updated_at, access_count, last_accessed_at, embedding_status, embedding_model, embedding_updated_at, embedding_error, embedding_revision, embedding_token)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, 'pending', NULL, NULL, NULL, 1, ?)
 				 ON CONFLICT(space_id, key) DO UPDATE SET
 					content = excluded.content,
 					tags = CASE WHEN ? = 1 THEN excluded.tags ELSE space_agent_memory.tags END,
@@ -101,7 +104,8 @@ export class AgentMemoryRepository {
 					embedding_model = NULL,
 					embedding_updated_at = NULL,
 					embedding_error = NULL,
-					embedding_revision = space_agent_memory.embedding_revision + 1
+					embedding_revision = space_agent_memory.embedding_revision + 1,
+						embedding_token = excluded.embedding_token
 				 RETURNING *`
 			)
 			.get(
@@ -112,6 +116,7 @@ export class AgentMemoryRepository {
 				params.createdBySession ?? null,
 				now,
 				now,
+				embeddingToken,
 				tagsProvided ? 1 : 0
 			) as AgentMemoryRow;
 
@@ -273,45 +278,70 @@ export class AgentMemoryRepository {
 
 	backfillPendingEmbeddings(): void {
 		if (!this.embedder) return;
-		const rows = this.db
-			.prepare(
-				`SELECT m.*
-				 FROM space_agent_memory m
-				 LEFT JOIN memory_vectors v ON v.memory_id = m.id
-				 WHERE m.embedding_status IN ('pending', 'failed')
-					OR v.memory_id IS NULL
-					OR v.model != ?
-					OR v.dimensions != ?
-				 ORDER BY m.updated_at ASC, m.key ASC`
-			)
-			.all(this.embedder.model, this.embedder.dimensions) as AgentMemoryRow[];
-		for (const row of rows) this.updateEmbedding(row);
+		void this.backfillEmbeddingBatches();
 	}
 
-	private updateEmbedding(row: AgentMemoryRow): void {
+	private async backfillEmbeddingBatches(): Promise<void> {
+		if (!this.embedder) return;
+		for (;;) {
+			const rows = this.db
+				.prepare(
+					`SELECT m.*
+					 FROM space_agent_memory m
+					 LEFT JOIN memory_vectors v ON v.memory_id = m.id
+					 WHERE m.embedding_status IN ('pending', 'failed')
+						OR v.memory_id IS NULL
+						OR v.model != ?
+						OR v.dimensions != ?
+					 ORDER BY m.updated_at ASC, m.key ASC
+					 LIMIT ?`
+				)
+				.all(
+					this.embedder.model,
+					this.embedder.dimensions,
+					EMBEDDING_BACKFILL_BATCH_SIZE
+				) as AgentMemoryRow[];
+			if (rows.length === 0) return;
+			for (const row of rows) await this.updateEmbedding(row);
+		}
+	}
+
+	private updateEmbedding(row: AgentMemoryRow): Promise<void> | void {
 		const sourceRevision = row.embedding_revision;
+		const sourceToken = row.embedding_token;
 		try {
 			const embedding = this.embedText(memoryEmbeddingText(row), 'passage');
 			if (!embedding) return;
 			if (embedding instanceof Promise) {
-				embedding
-					.then((vector) => this.storeEmbedding(row.id, sourceRevision, vector))
-					.catch((error: unknown) => this.markEmbeddingFailed(row.id, sourceRevision, error));
-				return;
+				return embedding
+					.then((vector) => this.storeEmbedding(row.id, sourceRevision, sourceToken, vector))
+					.catch((error: unknown) =>
+						this.markEmbeddingFailed(row.id, sourceRevision, sourceToken, error)
+					);
 			}
-			this.storeEmbedding(row.id, sourceRevision, embedding);
+			this.storeEmbedding(row.id, sourceRevision, sourceToken, embedding);
 		} catch (error) {
-			this.markEmbeddingFailed(row.id, sourceRevision, error);
+			this.markEmbeddingFailed(row.id, sourceRevision, sourceToken, error);
 		}
 	}
 
-	private storeEmbedding(memoryId: number, sourceRevision: number, embedding: Float32Array): void {
+	private storeEmbedding(
+		memoryId: number,
+		sourceRevision: number,
+		sourceToken: string,
+		embedding: Float32Array
+	): void {
 		const now = Date.now();
 		const store = this.db.transaction(() => {
 			const current = this.db
-				.prepare(`SELECT embedding_revision FROM space_agent_memory WHERE id = ?`)
-				.get(memoryId) as { embedding_revision: number } | undefined;
-			if (!current || current.embedding_revision !== sourceRevision) return;
+				.prepare(`SELECT embedding_revision, embedding_token FROM space_agent_memory WHERE id = ?`)
+				.get(memoryId) as { embedding_revision: number; embedding_token: string } | undefined;
+			if (
+				!current ||
+				current.embedding_revision !== sourceRevision ||
+				current.embedding_token !== sourceToken
+			)
+				return;
 
 			this.db
 				.prepare(
@@ -334,27 +364,33 @@ export class AgentMemoryRepository {
 				.prepare(
 					`UPDATE space_agent_memory
 					 SET embedding_status = 'ready', embedding_model = ?, embedding_updated_at = ?, embedding_error = NULL
-					 WHERE id = ?`
+					 WHERE id = ? AND embedding_revision = ? AND embedding_token = ?`
 				)
-				.run(this.embedder?.model ?? 'unknown', now, memoryId);
+				.run(this.embedder?.model ?? 'unknown', now, memoryId, sourceRevision, sourceToken);
 		});
 		store();
 	}
 
-	private markEmbeddingFailed(memoryId: number, sourceRevision: number, error: unknown): void {
+	private markEmbeddingFailed(
+		memoryId: number,
+		sourceRevision: number,
+		sourceToken: string,
+		error: unknown
+	): void {
 		const now = Date.now();
 		this.db
 			.prepare(
 				`UPDATE space_agent_memory
 				 SET embedding_status = 'failed', embedding_model = ?, embedding_updated_at = ?, embedding_error = ?
-				 WHERE id = ? AND embedding_revision = ?`
+				 WHERE id = ? AND embedding_revision = ? AND embedding_token = ?`
 			)
 			.run(
 				this.embedder?.model ?? 'unknown',
 				now,
 				embeddingErrorMessage(error),
 				memoryId,
-				sourceRevision
+				sourceRevision,
+				sourceToken
 			);
 	}
 
