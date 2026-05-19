@@ -462,7 +462,6 @@ export class SpaceRuntimeService {
 		const { sessionManager, internalEventBus } = this.config;
 		if (!sessionManager || !internalEventBus) return;
 
-
 		const unsubCreated = internalEventBus.subscribe(
 			'space.created',
 			(event) => {
@@ -539,11 +538,10 @@ export class SpaceRuntimeService {
 			}
 			this.tearDownSpaceNotificationService(event.spaceId, 'archived');
 		};
-		const unsubSpaceArchived = internalEventBus.subscribe(
-			'space.archived',
-			handleSpaceArchived,
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
+		const unsubSpaceArchived = internalEventBus.subscribe('space.archived', handleSpaceArchived, {
+			sessionId: 'global',
+			subscriberName: 'SpaceRuntimeService.global',
+		});
 		this.unsubscribers.push(unsubSpaceArchived);
 
 		const handleSpaceDeleted = (event: DaemonInternalEventMap['space.deleted']): void => {
@@ -552,11 +550,10 @@ export class SpaceRuntimeService {
 			}
 			this.tearDownSpaceNotificationService(event.spaceId, 'deleted');
 		};
-		const unsubSpaceDeleted = internalEventBus.subscribe(
-			'space.deleted',
-			handleSpaceDeleted,
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
+		const unsubSpaceDeleted = internalEventBus.subscribe('space.deleted', handleSpaceDeleted, {
+			sessionId: 'global',
+			subscriberName: 'SpaceRuntimeService.global',
+		});
 		this.unsubscribers.push(unsubSpaceDeleted);
 
 		// When a space is updated, refresh the autonomy level in its notification
@@ -1273,10 +1270,4 @@ export class SpaceRuntimeService {
 		const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
 		return recovered.task;
 	}
-}
-
-function hasSqlExec(value: unknown): value is { exec: (sql: string) => void } {
-	return (
-		!!value && typeof value === 'object' && 'exec' in value && typeof value.exec === 'function'
-	);
 }

@@ -778,9 +778,16 @@ export class SpaceRuntime {
 		for (const node of nodes) {
 			for (const agentEntry of resolveNodeAgents(node)) {
 				for (const interest of agentEntry.eventInterests ?? []) {
-					this.registerSubscription(workflowRunId, taskId, node.id, agentEntry.name, interest.topic, {
-						subscriptionKind: 'static',
-					});
+					this.registerSubscription(
+						workflowRunId,
+						taskId,
+						node.id,
+						agentEntry.name,
+						interest.topic,
+						{
+							subscriptionKind: 'static',
+						}
+					);
 				}
 			}
 		}

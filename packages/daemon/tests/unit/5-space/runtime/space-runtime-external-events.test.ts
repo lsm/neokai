@@ -785,8 +785,15 @@ describe('SpaceRuntime external event subscriptions', () => {
 		});
 		tam.alive.add('session-updated-interests');
 
-		// Clear old interests and register new ones (simulates what a runtime
+		// Clear old dynamic interest and register new ones (simulates what a runtime
 		// caller would do after a workflow definition change)
+		runtime.unregisterSubscription(
+			run.id,
+			task.id,
+			'code',
+			'coder',
+			'github/*/*/pull_request/*.review_*'
+		);
 		runtime.registerRunInterests(run.id, task.id, workflow.nodes);
 		runtime.registerSubscription(
 			run.id,
