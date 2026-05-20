@@ -102,6 +102,7 @@ import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
 const log = new Logger('space-runtime');
+const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
 	urgent: 0,
 	high: 1,
@@ -797,6 +798,18 @@ export class SpaceRuntime {
 					`${workflowRunId}/${nodeId}/${agentName}: ${validation.reason ?? 'invalid pattern'}`
 			);
 			return;
+		}
+		const existingInterests = this.topicTrie.count(
+			(target) =>
+				target.workflowRunId === workflowRunId &&
+				target.nodeId === nodeId &&
+				target.agentName === agentName
+		);
+		if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
+			throw new Error(
+				`Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
+					`${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
+			);
 		}
 		this.topicTrie.insert(trimmed, { workflowRunId, taskId, nodeId, agentName });
 	}
