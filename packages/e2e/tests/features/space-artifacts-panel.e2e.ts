@@ -93,16 +93,16 @@ async function createSpaceWithRunAndChanges(
   return { ...ids, wsPath };
 }
 
-async function cancelRun(
+async function cancelTaskRun(
   page: Parameters<typeof waitForWebSocketConnected>[0],
-  runId: string
+  taskId: string
 ): Promise<void> {
   try {
-    await page.evaluate(async (rid) => {
+    await page.evaluate(async (tid) => {
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) return;
-      await hub.request('spaceWorkflowRun.cancel', { id: rid });
-    }, runId);
+      await hub.request('operation.invoke', { name: 'task.cancel', input: { taskId: tid } });
+    }, taskId);
   } catch {}
 }
 
@@ -138,14 +138,14 @@ test.describe('Artifacts Side Panel', () => {
   });
 
   test.afterEach(async ({ page }) => {
-    if (runId) {
-      await cancelRun(page, runId);
-      runId = '';
+    if (taskId) {
+      await cancelTaskRun(page, taskId);
     }
     if (spaceId) {
       await deleteSpace(page, spaceId);
       spaceId = '';
     }
+    runId = '';
     taskId = '';
     if (wsPath && existsSync(wsPath)) {
       try {

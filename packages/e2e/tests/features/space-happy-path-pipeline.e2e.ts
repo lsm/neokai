@@ -8,7 +8,7 @@ const RUN_TASK_LOOKUP_INTERVAL_MS = 250;
 
 async function createSpaceWithRun(
   page: Parameters<typeof waitForWebSocketConnected>[0]
-): Promise<{ spaceId: string; runId: string }> {
+): Promise<{ spaceId: string; runId: string; taskId: string }> {
   await waitForWebSocketConnected(page);
   const workspaceRoot = await getWorkspaceRoot(page);
   const wsPath = createUniqueSpaceDir(workspaceRoot, 'happy-path');
@@ -57,22 +57,22 @@ async function createSpaceWithRun(
         throw new Error(`Task ${taskRes.id} was not attached to a workflow run within 30s`);
       }
 
-      return { spaceId: spaceRes.id, runId };
+      return { spaceId: spaceRes.id, runId, taskId: taskRes.id };
     },
     { wsPath }
   );
 }
 
-async function cancelRun(
+async function cancelTaskRun(
   page: Parameters<typeof waitForWebSocketConnected>[0],
-  runId: string
+  taskId: string
 ): Promise<void> {
   try {
-    await page.evaluate(async (rid) => {
+    await page.evaluate(async (tid) => {
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) return;
-      await hub.request('spaceWorkflowRun.cancel', { id: rid });
-    }, runId);
+      await hub.request('operation.invoke', { name: 'task.cancel', input: { taskId: tid } });
+    }, taskId);
   } catch {}
 }
 
@@ -126,12 +126,14 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 
   let spaceId = '';
   let runId = '';
+  let taskId = '';
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     const ids = await createSpaceWithRun(page);
     spaceId = ids.spaceId;
     runId = ids.runId;
+    taskId = ids.taskId;
   });
 
   test.afterEach(async ({ page }) => {
@@ -140,14 +142,15 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
       await waitForWebSocketConnected(page, 5000);
     } catch {}
 
-    if (runId) {
-      await cancelRun(page, runId);
-      runId = '';
+    if (taskId) {
+      await cancelTaskRun(page, taskId);
     }
     if (spaceId) {
       await deleteSpaceViaRpc(page, spaceId);
       spaceId = '';
     }
+    runId = '';
+    taskId = '';
   });
 
   test('seeded agents and workflows are present', async ({ page }) => {
