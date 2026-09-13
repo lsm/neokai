@@ -6,6 +6,7 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-hel
 import { createUniqueSpaceDir } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+const RUN_SETTLE_WAIT_MS = 6000;
 
 function setupGitRepoWithChanges(wsPath: string): void {
   execFileSync('git', ['init'], { cwd: wsPath, stdio: 'ignore' });
@@ -97,13 +98,21 @@ async function cancelTaskRun(
   page: Parameters<typeof waitForWebSocketConnected>[0],
   taskId: string
 ): Promise<void> {
+  let accepted = false;
   try {
-    await page.evaluate(async (tid) => {
+    accepted = await page.evaluate(async (tid) => {
       const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) return;
-      await hub.request('operation.invoke', { name: 'task.cancel', input: { taskId: tid } });
+      if (!hub?.request) return false;
+      const ack = (await hub.request('operation.invoke', {
+        name: 'task.cancel',
+        input: { taskId: tid },
+      })) as { accepted?: boolean };
+      return Boolean(ack?.accepted);
     }, taskId);
   } catch {}
+  if (!accepted) {
+    await page.waitForTimeout(RUN_SETTLE_WAIT_MS);
+  }
 }
 
 async function deleteSpace(

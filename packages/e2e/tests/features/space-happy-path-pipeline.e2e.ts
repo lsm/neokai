@@ -5,6 +5,7 @@ import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helper
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 const RUN_TASK_LOOKUP_TIMEOUT_MS = 20000;
 const RUN_TASK_LOOKUP_INTERVAL_MS = 250;
+const RUN_SETTLE_WAIT_MS = 6000;
 
 async function createSpaceWithRun(
   page: Parameters<typeof waitForWebSocketConnected>[0]
@@ -67,13 +68,21 @@ async function cancelTaskRun(
   page: Parameters<typeof waitForWebSocketConnected>[0],
   taskId: string
 ): Promise<void> {
+  let accepted = false;
   try {
-    await page.evaluate(async (tid) => {
+    accepted = await page.evaluate(async (tid) => {
       const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) return;
-      await hub.request('operation.invoke', { name: 'task.cancel', input: { taskId: tid } });
+      if (!hub?.request) return false;
+      const ack = (await hub.request('operation.invoke', {
+        name: 'task.cancel',
+        input: { taskId: tid },
+      })) as { accepted?: boolean };
+      return Boolean(ack?.accepted);
     }, taskId);
   } catch {}
+  if (!accepted) {
+    await page.waitForTimeout(RUN_SETTLE_WAIT_MS);
+  }
 }
 
 async function getRunTaskId(

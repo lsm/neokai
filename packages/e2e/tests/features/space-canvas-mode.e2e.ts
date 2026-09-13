@@ -4,6 +4,7 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-hel
 import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+const RUN_SETTLE_WAIT_MS = 6000;
 
 interface CanvasTestContext {
   spaceId: string;
@@ -96,13 +97,21 @@ async function cancelTaskRun(
   taskId: string
 ): Promise<void> {
   if (!taskId) return;
+  let accepted = false;
   try {
-    await page.evaluate(async (tid) => {
+    accepted = await page.evaluate(async (tid) => {
       const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) return;
-      await hub.request('operation.invoke', { name: 'task.cancel', input: { taskId: tid } });
+      if (!hub?.request) return false;
+      const ack = (await hub.request('operation.invoke', {
+        name: 'task.cancel',
+        input: { taskId: tid },
+      })) as { accepted?: boolean };
+      return Boolean(ack?.accepted);
     }, taskId);
   } catch {}
+  if (!accepted) {
+    await page.waitForTimeout(RUN_SETTLE_WAIT_MS);
+  }
 }
 
 async function deleteSessionViaRpc(
