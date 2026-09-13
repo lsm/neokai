@@ -5,10 +5,11 @@ import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helper
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 const RUN_TASK_LOOKUP_TIMEOUT_MS = 20000;
 const RUN_TASK_LOOKUP_INTERVAL_MS = 250;
+const RUN_SETTLE_WAIT_MS = 6000;
 
 async function createSpaceWithRun(
   page: Parameters<typeof waitForWebSocketConnected>[0]
-): Promise<{ spaceId: string; runId: string }> {
+): Promise<{ spaceId: string; runId: string; taskId: string }> {
   await waitForWebSocketConnected(page);
   const workspaceRoot = await getWorkspaceRoot(page);
   const wsPath = createUniqueSpaceDir(workspaceRoot, 'happy-path');
@@ -57,23 +58,31 @@ async function createSpaceWithRun(
         throw new Error(`Task ${taskRes.id} was not attached to a workflow run within 30s`);
       }
 
-      return { spaceId: spaceRes.id, runId };
+      return { spaceId: spaceRes.id, runId, taskId: taskRes.id };
     },
     { wsPath }
   );
 }
 
-async function cancelRun(
+async function cancelTaskRun(
   page: Parameters<typeof waitForWebSocketConnected>[0],
-  runId: string
+  taskId: string
 ): Promise<void> {
+  let accepted = false;
   try {
-    await page.evaluate(async (rid) => {
+    accepted = await page.evaluate(async (tid) => {
       const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) return;
-      await hub.request('spaceWorkflowRun.cancel', { id: rid });
-    }, runId);
+      if (!hub?.request) return false;
+      const ack = (await hub.request('operation.invoke', {
+        name: 'task.cancel',
+        input: { taskId: tid },
+      })) as { accepted?: boolean };
+      return Boolean(ack?.accepted);
+    }, taskId);
   } catch {}
+  if (!accepted) {
+    await page.waitForTimeout(RUN_SETTLE_WAIT_MS);
+  }
 }
 
 async function getRunTaskId(
@@ -126,12 +135,14 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 
   let spaceId = '';
   let runId = '';
+  let taskId = '';
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     const ids = await createSpaceWithRun(page);
     spaceId = ids.spaceId;
     runId = ids.runId;
+    taskId = ids.taskId;
   });
 
   test.afterEach(async ({ page }) => {
@@ -140,14 +151,15 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
       await waitForWebSocketConnected(page, 5000);
     } catch {}
 
-    if (runId) {
-      await cancelRun(page, runId);
-      runId = '';
+    if (taskId) {
+      await cancelTaskRun(page, taskId);
     }
     if (spaceId) {
       await deleteSpaceViaRpc(page, spaceId);
       spaceId = '';
     }
+    runId = '';
+    taskId = '';
   });
 
   test('seeded agents and workflows are present', async ({ page }) => {

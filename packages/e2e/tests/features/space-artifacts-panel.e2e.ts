@@ -6,6 +6,7 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-hel
 import { createUniqueSpaceDir } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+const RUN_SETTLE_WAIT_MS = 6000;
 
 function setupGitRepoWithChanges(wsPath: string): void {
   execFileSync('git', ['init'], { cwd: wsPath, stdio: 'ignore' });
@@ -93,17 +94,25 @@ async function createSpaceWithRunAndChanges(
   return { ...ids, wsPath };
 }
 
-async function cancelRun(
+async function cancelTaskRun(
   page: Parameters<typeof waitForWebSocketConnected>[0],
-  runId: string
+  taskId: string
 ): Promise<void> {
+  let accepted = false;
   try {
-    await page.evaluate(async (rid) => {
+    accepted = await page.evaluate(async (tid) => {
       const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) return;
-      await hub.request('spaceWorkflowRun.cancel', { id: rid });
-    }, runId);
+      if (!hub?.request) return false;
+      const ack = (await hub.request('operation.invoke', {
+        name: 'task.cancel',
+        input: { taskId: tid },
+      })) as { accepted?: boolean };
+      return Boolean(ack?.accepted);
+    }, taskId);
   } catch {}
+  if (!accepted) {
+    await page.waitForTimeout(RUN_SETTLE_WAIT_MS);
+  }
 }
 
 async function deleteSpace(
@@ -138,14 +147,14 @@ test.describe('Artifacts Side Panel', () => {
   });
 
   test.afterEach(async ({ page }) => {
-    if (runId) {
-      await cancelRun(page, runId);
-      runId = '';
+    if (taskId) {
+      await cancelTaskRun(page, taskId);
     }
     if (spaceId) {
       await deleteSpace(page, spaceId);
       spaceId = '';
     }
+    runId = '';
     taskId = '';
     if (wsPath && existsSync(wsPath)) {
       try {
